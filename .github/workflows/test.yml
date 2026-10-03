@@ -1,0 +1,115 @@
+name: Linting and tests
+
+on:
+  push:
+    branches: [main, master, development]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      spark:
+        description: Run the optional real local Spark integration tests
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.13'
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run --no-sync tox -e lint,pre-commit
+
+  unit-tests:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ['3.11', '3.12', '3.13', '3.14']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+      - run: uv sync --locked --no-default-groups --group tox
+      - name: Run the installed-wheel test environment
+        shell: bash
+        run: uv run --no-sync tox -e "py${PYTHON_VERSION//./}"
+        env:
+          PYTHON_VERSION: ${{ matrix.python }}
+      - name: Upload coverage
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.14'
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  minimum-dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.11'
+      - run: uv sync --locked --no-default-groups --group tox
+      - run: uv run --no-sync tox -e py311-min
+
+  documentation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.13'
+          enable-cache: true
+      - run: uv sync --locked --no-default-groups --group tox
+      - run: uv run --no-sync tox -e docs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: documentation
+          path: docs/
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.13'
+      - run: uv build
+      - run: uvx twine check dist/*
+
+  scalene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.11'
+      - run: uv sync --locked --no-default-groups --group tox
+      - run: uv run --no-sync tox -e scalene
+
+  local-spark:
+    if: github.event_name == 'workflow_dispatch' && inputs.spark
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.11'
+      - run: uv sync --locked --no-default-groups --group tox
+      - run: uv run --no-sync tox -e spark

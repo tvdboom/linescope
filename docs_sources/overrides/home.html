@@ -1,0 +1,28 @@
+{% extends "main.html" %}
+
+{% block tabs %}
+{{ super() }}
+<section class="linescope-hero">
+  <div class="linescope-hero-inner">
+    <div class="linescope-hero-copy">
+      <p class="linescope-eyebrow">PYTHON SOURCE PROFILING</p>
+      <h1>Your code.<br>In the spotlight.</h1>
+      <p class="linescope-lead">Find the expensive line. Follow the function. Understand the Spark plan.
+      Keep your own source at the center of every investigation.</p>
+      <div class="linescope-actions">
+        <a href="{{ 'getting_started/' | url }}" class="md-button md-button--primary">Get started</a>
+        <a href="{{ 'user_guide/reports/' | url }}" class="md-button">Explore the report</a>
+      </div>
+      <p class="linescope-caption">Python 3.11–3.14 · Self-contained HTML · MIT licensed</p>
+    </div>
+    <img src="{{ 'img/logo.png' | url }}" alt="LineScope" class="linescope-logo" draggable="false">
+  </div>
+</section>
+<section class="linescope-features">
+  <article><span>01 / SOURCE</span><h2>Every line, in context.</h2><p>Browse complete source snapshots with timing heatmaps and links to your own functions and classes.</p></article>
+  <article><span>02 / NOTEBOOKS</span><h2>One session. One report.</h2><p>Capture a single cell or a whole notebook, with stable source snapshots and child notebook navigation.</p></article>
+  <article><span>03 / SPARK</span><h2>Follow the work.</h2><p>Inspect action timing and executed plans while keeping driver time separate from executor metrics.</p></article>
+</section>
+{% endblock %}
+
+{% block content %}{{ super() }}{% endblock %}

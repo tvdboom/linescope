@@ -1,0 +1,19 @@
+name: Feature request
+description: Suggest an improvement to LineScope.
+labels: [enhancement]
+body:
+  - type: textarea
+    attributes:
+      label: The problem
+      description: What profiling question is difficult to answer today?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Proposed behavior
+      description: Include a small API, CLI, or report example.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Alternatives and constraints

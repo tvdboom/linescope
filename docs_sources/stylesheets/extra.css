@@ -1,0 +1,351 @@
+/* Keep the documentation palette in sync with the LineScope application UI. */
+[data-md-color-scheme="default"] {
+    --linescope-bg: #f3f8f8;
+    --linescope-body-glow: rgb(15 118 110 / 8%);
+    --linescope-surface: #fff;
+    --linescope-surface-2: #eaf4f4;
+    --linescope-surface-3: #dceced;
+    --linescope-surface-input: #fff;
+    --linescope-header-bg: #f3f8f8;
+    --linescope-line: #dce4ef;
+    --linescope-line-strong: #c7d3e1;
+    --linescope-muted: #64748b;
+    --linescope-muted-faint: #7b899d;
+    --linescope-text: #172033;
+    --linescope-text-strong: #101827;
+    --linescope-text-soft: #46566c;
+    --linescope-blue: #0f766e;
+    --linescope-blue-2: #0f766e;
+    --linescope-code-bg: #f7f9fc;
+    --linescope-code-text: #1e293b;
+    --linescope-shadow: 0 18px 55px rgb(38 52 70 / 10%);
+    --md-primary-fg-color: var(--linescope-blue);
+    --md-primary-fg-color--light: var(--linescope-blue-2);
+    --md-primary-fg-color--dark: var(--linescope-blue);
+    --md-primary-bg-color: var(--linescope-text-strong);
+    --md-primary-bg-color--light: var(--linescope-muted);
+    --md-accent-fg-color: var(--linescope-blue);
+    --md-accent-fg-color--transparent: rgb(15 118 110 / 10%);
+    --md-accent-bg-color: var(--linescope-surface);
+    --md-accent-bg-color--light: var(--linescope-surface-2);
+    --md-default-fg-color: var(--linescope-text);
+    --md-default-fg-color--light: var(--linescope-muted);
+    --md-default-fg-color--lighter: var(--linescope-muted-faint);
+    --md-default-fg-color--lightest: var(--linescope-line);
+    --md-default-bg-color: var(--linescope-bg);
+    --md-default-bg-color--light: var(--linescope-surface);
+    --md-default-bg-color--lighter: var(--linescope-surface-2);
+    --md-default-bg-color--lightest: var(--linescope-surface-3);
+    --md-code-fg-color: var(--linescope-code-text);
+    --md-code-bg-color: var(--linescope-code-bg);
+    --md-code-bg-color--light: var(--linescope-surface-2);
+    --md-code-bg-color--lighter: var(--linescope-surface-3);
+    --md-code-hl-color: #22d3ee;
+    --md-code-hl-color--light: rgb(15 118 110 / 10%);
+    --md-typeset-color: var(--linescope-text);
+    --md-typeset-a-color: var(--linescope-blue);
+    --md-typeset-kbd-color: var(--linescope-surface-2);
+    --md-typeset-kbd-accent-color: var(--linescope-surface);
+    --md-typeset-kbd-border-color: var(--linescope-line-strong);
+    --md-typeset-mark-color: rgb(246 189 85 / 34%);
+    --md-typeset-table-color: var(--linescope-line);
+    --md-typeset-table-color--light: rgb(15 118 110 / 3.5%);
+    --md-admonition-fg-color: var(--linescope-text);
+    --md-admonition-bg-color: var(--linescope-surface);
+    --md-footer-fg-color: var(--linescope-text);
+    --md-footer-fg-color--light: var(--linescope-muted);
+    --md-footer-fg-color--lighter: var(--linescope-muted-faint);
+    --md-footer-bg-color: var(--linescope-surface-2);
+    --md-footer-bg-color--dark: var(--linescope-surface-3);
+    --md-shadow-z1: 0 0.2rem 0.5rem rgb(38 52 70 / 5%), 0 0 0.05rem rgb(38 52 70 / 10%);
+    --md-shadow-z2: 0 0.2rem 0.5rem rgb(38 52 70 / 10%), 0 0 0.05rem rgb(38 52 70 / 16%);
+    --md-shadow-z3: var(--linescope-shadow);
+}
+
+[data-md-color-scheme="slate"] {
+    --linescope-bg: #0c1821;
+    --linescope-body-glow: rgb(15 118 110 / 10%);
+    --linescope-surface: #132832;
+    --linescope-surface-2: #164e63;
+    --linescope-surface-3: #1e4050;
+    --linescope-surface-input: #0a1220;
+    --linescope-header-bg: #0c1821;
+    --linescope-line: #1c2940;
+    --linescope-line-strong: #293b5c;
+    --linescope-muted: #8290aa;
+    --linescope-muted-faint: #53617a;
+    --linescope-text: #e9effa;
+    --linescope-text-strong: #f5f8ff;
+    --linescope-text-soft: #aab8cf;
+    --linescope-blue: #22d3ee;
+    --linescope-blue-2: #67e8f9;
+    --linescope-code-bg: #0c1922;
+    --linescope-code-text: #dce7f8;
+    --linescope-shadow: 0 18px 55px rgb(0 0 0 / 24%);
+    --md-primary-fg-color: var(--linescope-blue);
+    --md-primary-fg-color--light: var(--linescope-blue-2);
+    --md-primary-fg-color--dark: var(--linescope-blue);
+    --md-primary-bg-color: var(--linescope-text-strong);
+    --md-primary-bg-color--light: var(--linescope-muted);
+    --md-accent-fg-color: var(--linescope-blue-2);
+    --md-accent-fg-color--transparent: rgb(15 118 110 / 12%);
+    --md-accent-bg-color: var(--linescope-surface);
+    --md-accent-bg-color--light: var(--linescope-surface-2);
+    --md-default-fg-color: var(--linescope-text);
+    --md-default-fg-color--light: var(--linescope-muted);
+    --md-default-fg-color--lighter: var(--linescope-muted-faint);
+    --md-default-fg-color--lightest: var(--linescope-line);
+    --md-default-bg-color: var(--linescope-bg);
+    --md-default-bg-color--light: var(--linescope-surface);
+    --md-default-bg-color--lighter: var(--linescope-surface-2);
+    --md-default-bg-color--lightest: var(--linescope-surface-3);
+    --md-code-fg-color: var(--linescope-code-text);
+    --md-code-bg-color: var(--linescope-code-bg);
+    --md-code-bg-color--light: var(--linescope-surface-2);
+    --md-code-bg-color--lighter: var(--linescope-surface-3);
+    --md-code-hl-color: var(--linescope-blue);
+    --md-code-hl-color--light: rgb(15 118 110 / 12%);
+    --md-typeset-color: var(--linescope-text);
+    --md-typeset-a-color: var(--linescope-blue-2);
+    --md-typeset-kbd-color: var(--linescope-surface-3);
+    --md-typeset-kbd-accent-color: var(--linescope-surface-2);
+    --md-typeset-kbd-border-color: var(--linescope-bg);
+    --md-typeset-mark-color: rgb(246 189 85 / 30%);
+    --md-typeset-table-color: var(--linescope-line);
+    --md-typeset-table-color--light: rgb(255 255 255 / 1.5%);
+    --md-admonition-fg-color: var(--linescope-text);
+    --md-admonition-bg-color: var(--linescope-surface);
+    --md-footer-fg-color: var(--linescope-text);
+    --md-footer-fg-color--light: var(--linescope-muted);
+    --md-footer-fg-color--lighter: var(--linescope-muted-faint);
+    --md-footer-bg-color: var(--linescope-surface);
+    --md-footer-bg-color--dark: var(--linescope-bg);
+    --md-shadow-z1: 0 0.2rem 0.5rem rgb(0 0 0 / 14%), 0 0 0.05rem rgb(0 0 0 / 18%);
+    --md-shadow-z2: 0 0.2rem 0.5rem rgb(0 0 0 / 24%), 0 0 0.05rem rgb(0 0 0 / 24%);
+    --md-shadow-z3: var(--linescope-shadow);
+}
+
+body {
+    background: radial-gradient(
+        circle at 75% -20%,
+        var(--linescope-body-glow),
+        transparent 34%
+    ), var(--linescope-bg);
+}
+
+.md-container,
+.md-main {
+    background: transparent;
+}
+
+.md-header {
+    color: var(--linescope-text);
+    background: var(--linescope-header-bg);
+    border-bottom: 1px solid var(--linescope-line);
+    box-shadow: none;
+    backdrop-filter: blur(16px);
+}
+
+.md-tabs {
+    color: var(--linescope-muted);
+    background: var(--linescope-header-bg);
+    border-bottom: 1px solid var(--linescope-line);
+}
+
+.md-tabs__link--active,
+.md-tabs__link:is(:focus, :hover) {
+    color: var(--linescope-text-strong);
+}
+
+.md-search__form {
+    background: var(--linescope-surface-input);
+    border: 1px solid var(--linescope-line);
+    border-radius: 9px;
+}
+
+.md-search__form:hover {
+    background: var(--linescope-surface-2);
+}
+
+.md-search__input::placeholder {
+    color: var(--linescope-muted);
+}
+
+.md-nav--primary .md-nav__title[for="__drawer"] {
+    color: var(--linescope-text-strong);
+    background: var(--linescope-surface);
+}
+
+/* Reset font weight in header */
+.md-ellipsis {
+    font-weight: normal;
+}
+
+/*Show line numbers in code blocks*/
+[data-linenos]:before {
+  content: attr(data-linenos);
+}
+
+/* Prevent the selection of and ... in code blocks */
+.language-pycon .gp {
+    user-select: none;
+}
+
+
+/* Table format for about page and toc methods*/
+.md-typeset__table {
+   min-width: 100%;
+}
+.md-typeset table:not([class]) {
+    display: table;
+}
+.row {
+    margin-top: 30px;
+}
+.row::after {  /* Clear floats after image containers */
+    content: "";
+    clear: both;
+    display: table;
+}
+.column {
+    float: left;
+    width: 25%;
+    padding: 2px;
+    text-align: center;
+}
+
+/* Shared properties between icons and logos */
+.column .icon, .column .logo {
+    width: 70%;
+    position: relative;
+}
+.icon:hover, .column .logo:hover {
+    transform: scale(1.1);
+}
+
+.column .logo a img {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+}
+
+.column .icon a img {
+    position: relative;
+    width: 100px;
+    height: 100px;
+}
+.column .icon a:hover {
+    color: var(--linescope-blue);
+}
+.column .icon a:active {
+    color: var(--linescope-blue);
+}
+.column .icon a:visited {
+    color: var(--linescope-blue);
+}
+.column .icon a:link {
+    color: var(--linescope-blue);
+}
+
+.support-logos {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: clamp(8px, 4vw, 40px);
+    align-items: center;
+}
+
+.support-logos a {
+    min-width: 0;
+    text-align: center;
+}
+
+.support-logos img {
+    width: 100%;
+    max-width: 200px;
+    height: auto;
+}
+
+
+/* Signature layout */
+.sign {
+    font-size: 1.1em;
+    overflow-x: auto;
+    color: var(--linescope-text-soft);
+    background: var(--linescope-surface-2);
+    border: 1px solid var(--linescope-line);
+    padding: 1%;
+    margin-bottom: 1em;
+}
+
+/* Parameter table layout */
+.table_params {
+    width: 100%;
+    font-size: 0.9em;
+    border: 1px solid var(--linescope-line);
+    overflow-wrap: break-word;
+    margin-bottom: -1em;
+}
+.td_title {
+    width: 15%;
+    color: var(--linescope-text-soft);
+    background: var(--linescope-surface-2);
+    vertical-align: top;
+    padding: 1.2em 2% 0 2%;
+    border-bottom: 1px solid var(--linescope-line);
+}
+.td_params {
+    width: 85%;
+    color: var(--linescope-text);
+    background: var(--linescope-surface);
+    padding: 1.2em 2% 0 2%;
+    border-bottom: 1px solid var(--linescope-line);
+}
+.td_params > p {
+    margin: 0;
+}
+.td_params .param {
+    margin: 0 0 1.2em 1.2em;
+}
+.td_params .param ul {
+    margin-top: -0.3em;
+}
+.td_params .param li {
+    margin-top: -0.3em;
+}
+
+/* Change table display for small screens */
+@media screen and (max-width: 725px) {
+  .td_title {
+      width: 5%;
+      writing-mode: vertical-rl;
+      font-size: 0.9em;
+      padding-top: 15px;
+      padding-left: 0.9em;
+  }
+  .td_params {
+      width: 95%;
+  }
+}
+
+/* LineScope landing page. The base styling is adapted from Backtide. */
+.linescope-hero { border-bottom: 1px solid var(--linescope-line); padding: 4rem 1.5rem; }
+.linescope-hero-inner { display: flex; align-items: center; gap: 3rem; max-width: 1150px; margin: auto; }
+.linescope-hero-copy { flex: 1; }
+.linescope-eyebrow { color: var(--linescope-blue); font-size: .7rem; letter-spacing: .2em; font-weight: 750; }
+.linescope-hero h1 { font-size: clamp(2.5rem, 5vw, 4.5rem); line-height: 1.02; letter-spacing: -.05em; margin: .5em 0; font-weight: 800; }
+.linescope-lead { max-width: 33em; color: var(--linescope-text-soft); font-size: 1rem; line-height: 1.6; }
+.linescope-logo { width: 32%; max-width: 340px; height: auto; }
+.linescope-actions { display: flex; gap: .75rem; flex-wrap: wrap; margin-top: 1.5rem; }
+.linescope-actions .md-button { display: inline-block; border: 2px solid var(--linescope-blue); border-radius: 8px; color: var(--linescope-blue); font-size: .8rem; font-weight: 700; padding: .6rem 1rem; transition: background .15s ease; }
+.linescope-actions .md-button--primary { background: var(--linescope-blue); color: var(--linescope-bg); }
+.linescope-actions .md-button:hover { background: var(--linescope-surface-3); color: var(--linescope-blue); }
+.linescope-caption { color: var(--linescope-muted); font-size: .65rem; margin-top: 1rem; }
+.linescope-features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2rem; max-width: 1150px; margin: 3rem auto; padding: 0 1.5rem; }
+.linescope-features article { border-top: 2px solid var(--linescope-blue); padding-top: 1rem; }
+.linescope-features span { color: var(--linescope-blue); font-size: .6rem; letter-spacing: .1em; }
+.linescope-features h2 { font-size: 1.05rem; font-weight: 700; }
+.linescope-features p { color: var(--linescope-text-soft); font-size: .8rem; line-height: 1.6; }
+@media (max-width: 760px) { .linescope-hero-inner { flex-direction: column-reverse; gap: 1rem; } .linescope-logo { width: 45%; } .linescope-hero { padding-top: 2rem; } .linescope-features { grid-template-columns: 1fr; } }

@@ -1,0 +1,38 @@
+name: Bug report
+description: Help us reproduce and fix a LineScope problem.
+labels: [bug]
+body:
+  - type: checkboxes
+    attributes:
+      label: Before reporting
+      options:
+        - label: I checked the documentation and existing issues.
+          required: true
+  - type: textarea
+    attributes:
+      label: What happened?
+      description: Describe the observed result and what you expected.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Minimal reproducible example
+      description: Use small generated data. Remove private source, credentials, and notebook arguments before sharing reports.
+      render: python
+      placeholder: |
+        from linescope import profile
+        with profile(backend="trace", display="none") as p:
+            sum(range(10000))
+        p.save("profile.html")
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Traceback or report behavior
+      render: text
+  - type: textarea
+    attributes:
+      label: Environment
+      description: Include Python, OS, LineScope/backend versions, notebook environment, and Spark version if relevant.
+    validations:
+      required: true
