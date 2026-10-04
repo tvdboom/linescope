@@ -25,12 +25,12 @@
 <td><img src="https://raw.githubusercontent.com/tvdboom/linescope/main/images/source.jpg" alt="LineScope full-source heatmap with clickable function calls" width="100%" /></td>
 </tr>
 <tr>
-<td><img src="https://raw.githubusercontent.com/tvdboom/linescope/main/images/functions.png" alt="LineScope function timings and source links" width="100%" /></td>
-<td><img src="https://raw.githubusercontent.com/tvdboom/linescope/main/images/notebooks.png" alt="LineScope notebook session with captured cells" width="100%" /></td>
+<td><img src="https://raw.githubusercontent.com/tvdboom/linescope/main/images/functions.jpg" alt="LineScope function timings and source links" width="100%" /></td>
+<td><img src="https://raw.githubusercontent.com/tvdboom/linescope/main/images/notebooks.jpg" alt="LineScope notebook session with captured cells" width="100%" /></td>
 </tr>
 <tr>
-<td><img src="https://raw.githubusercontent.com/tvdboom/linescope/main/images/spark.png" alt="LineScope Spark executions and physical plans" width="100%" /></td>
-<td><img src="https://raw.githubusercontent.com/tvdboom/linescope/main/images/documentation.jpg" alt="LineScope documentation" width="100%" /></td>
+<td><img src="https://raw.githubusercontent.com/tvdboom/linescope/main/images/spark.jpg" alt="LineScope Spark actions and operator costs" width="100%" /></td>
+<td><img src="https://raw.githubusercontent.com/tvdboom/linescope/main/images/files.jpg" alt="LineScope project source files and measured timings" width="100%" /></td>
 </tr>
 </table>
 
@@ -67,8 +67,8 @@ reviewing the embedded source.
 - **Honest measurements.** Keep missing metrics unknown and driver time separate
   from executor work.
 - **Portable reports.** No server or CDN needed to view the generated HTML.
-- **Pluggable collection.** Scalene sampling by default; an explicit trace
-  backend for portable use.
+- **Pluggable collection.** Trace by default, with optional process RAM and
+  Python allocation tracking; select Scalene or Tachyon for sampling.
 - **Python only.** Universal wheels, no Rust or frontend compilation, MIT
   licensed.
 
@@ -81,7 +81,8 @@ reviewing the embedded source.
 pip install linescope
 ```
 
-LineScope includes Scalene, its default sampling engine on Python 3.11–3.14.
+LineScope defaults to Trace on Python 3.11–3.15 and includes Scalene for optional
+sampling on Python 3.11–3.14.
 Notebook support and local Spark dependencies are optional:
 
 ```console
@@ -89,7 +90,9 @@ pip install "linescope[notebook]"
 pip install "linescope[spark]"
 ```
 
-In Databricks, install `linescope` and use the runtime's existing PySpark.
+In Databricks, install `linescope[databricks]` as a cluster library and use the
+runtime's existing PySpark. Child notebook source and Python measurements are
+included automatically when workspace access permits temporary copies.
 
 <br>
 
@@ -99,12 +102,13 @@ In Databricks, install `linescope` and use the runtime's existing PySpark.
 Run the bundled Python example from the checkout:
 
 ```console
-uv run python examples/script.py
+uv run python examples/script_example.py
 ```
 
-The [script](https://github.com/tvdboom/linescope/blob/main/examples/script.py)
+The [script](https://github.com/tvdboom/linescope/blob/main/examples/script_example.py)
 simulates I/O, analyzes generated sensor data, compares two rolling averages,
-and opens a report in a new browser tab. The
+and opens a report in a new browser tab. It uses Scalene with driver memory
+collection enabled on Python 3.11–3.14. The
 [documentation](https://tvdboom.github.io/linescope/latest/examples/script/)
 shows that same source file.
 
@@ -127,7 +131,32 @@ Use `profile.start()` and `profile.stop()` for several cells, or `spark=True` to
 observe supported Spark driver actions. See the
 [notebook examples](https://github.com/tvdboom/linescope/tree/main/examples/notebooks)
 and
-[local Spark example](https://github.com/tvdboom/linescope/blob/main/examples/local_spark.py).
+[local Spark example](https://github.com/tvdboom/linescope/blob/main/examples/spark_example.py).
+
+For NVIDIA CUDA profiling, run `just demo-gpu` from a checkout. See the
+[GPU example](https://tvdboom.github.io/linescope/latest/examples/gpu/) for
+setup and report interpretation.
+
+Run `just sync` once to install all dependencies, extras, and development groups.
+Every other Just recipe updates that environment as needed while retaining
+installed packages it does not require. Every bundled example has a Just recipe:
+
+```console
+just sync
+just demo-script
+just demo-package
+just demo-custom-backend
+just demo-notebook
+just demo-databricks
+just demo-spark
+just demo-spark-notebook
+just demo-gpu
+```
+
+The package example profiles the dummy `sample_package` across modules.
+Notebook recipes execute a copy in `reports` and open it in JupyterLab. Spark
+requires Java, the GPU example requires NVIDIA CUDA, and Databricks workspace
+calls require an existing workspace; its portable notebook cells run locally.
 
 <br>
 

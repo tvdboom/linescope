@@ -24,6 +24,35 @@ class _BindingKind(StrEnum):
 
     Keep unresolved bindings distinct from known definitions and imports.
 
+    Attributes
+    ----------
+    CLASS : [_BindingKind]
+        Represent a class definition or class lexical scope.
+
+    FUNCTION : [_BindingKind]
+        Represent a function definition or function scope.
+
+    METHOD : [_BindingKind]
+        Represent a method defined in a class body.
+
+    MODULE : [_BindingKind]
+        Represent a captured module and its lexical scope.
+
+    UNKNOWN : [_BindingKind]
+        Keep an unresolved or invalidated binding unavailable.
+
+    INSTANCE : [_BindingKind]
+        Represent the bound instance or class of a method.
+
+    IMPORT : [_BindingKind]
+        Represent an imported module or member binding.
+
+    ALIAS : [_BindingKind]
+        Represent an assigned expression requiring resolution.
+
+    NAMESPACE : [_BindingKind]
+        Represent an import namespace with captured submodules.
+
     """
 
     CLASS = "class"
@@ -43,6 +72,14 @@ class _RedirectKind(StrEnum):
     Global declarations target the module; nonlocal declarations target a
     containing function.
 
+    Attributes
+    ----------
+    GLOBAL : [_RedirectKind]
+        Redirect assignments to the containing module scope.
+
+    NONLOCAL : [_RedirectKind]
+        Redirect assignments to an enclosing function scope.
+
     """
 
     GLOBAL = "global"
@@ -51,6 +88,39 @@ class _RedirectKind(StrEnum):
 
 @dataclass(eq=False)
 class _Scope:
+    """Record lexical bindings and assignment redirects for one scope.
+
+    Attributes
+    ----------
+    unit : [SourceUnit]
+        Snapshot containing this lexical scope.
+
+    kind : _BindingKind
+        Scope category used by conservative name resolution.
+
+    parent : _Scope | None
+        Enclosing lexical scope, or None for a module.
+
+    qualified_name : str
+        Definition name including enclosing lexical scopes.
+
+    bindings : dict[str, list[_Binding]]
+        Candidate bindings grouped by identifier; duplicates are ambiguous.
+
+    redirects : set[str]
+        Names declared global or nonlocal in this scope.
+
+    redirect_kinds : dict[str, _RedirectKind]
+        Assignment destination category for each redirected identifier.
+
+    definition : [SymbolDefinition] | None
+        Navigable definition associated with this scope, when present.
+
+    dynamic_class : bool
+        Whether decorators or a metaclass make class lookup unsafe to infer.
+
+    """
+
     unit: SourceUnit
     kind: _BindingKind
     parent: _Scope | None = None
@@ -64,6 +134,33 @@ class _Scope:
 
 @dataclass
 class _Binding:
+    """Represent one candidate lexical name binding.
+
+    Attributes
+    ----------
+    kind : _BindingKind
+        Definition, import, alias, instance, or unresolved binding category.
+
+    scope : _Scope
+        Lexical scope used to interpret this binding.
+
+    definition : [SymbolDefinition] | None
+        Resolved project definition, when available.
+
+    expression : ast.expr | None
+        Assigned expression retained for conservative alias resolution.
+
+    module : str
+        Imported module name, or an empty string for other bindings.
+
+    member : str | None
+        Imported member name, when this is a `from` import.
+
+    level : int
+        Relative import depth; zero denotes an absolute import.
+
+    """
+
     kind: _BindingKind
     scope: _Scope
     definition: SymbolDefinition | None = None
@@ -75,6 +172,24 @@ class _Binding:
 
 @dataclass
 class _Target:
+    """Carry a conservatively resolved call navigation target.
+
+    Attributes
+    ----------
+    kind : _BindingKind
+        Resolved target category used during call navigation.
+
+    scope : _Scope
+        Lexical scope owning the target or imported namespace.
+
+    definition : [SymbolDefinition] | None
+        Navigable project definition, when one can be resolved.
+
+    module_name : str
+        Namespace module prefix used to resolve imported submodules.
+
+    """
+
     kind: _BindingKind
     scope: _Scope
     definition: SymbolDefinition | None = None
@@ -96,6 +211,22 @@ def _character_column(source: str, line: int, byte_column: int) -> int:
 
 
 def _notebook_path(unit: SourceUnit) -> str:
+    """Normalize a notebook snapshot identifier to its workspace path.
+
+    Remove cell suffixes so related cells can share conservative navigation
+    context.
+
+    Parameters
+    ----------
+    unit : [SourceUnit]
+        Captured source snapshot being inspected.
+
+    Returns
+    -------
+    str
+        Notebook workspace path without snapshot cell suffixes.
+
+    """
     path = unit.id if unit.id.startswith("notebook://") else unit.path.split(" · cell ", 1)[0]
     return path.split("#", 1)[0].removeprefix("notebook://").rstrip("/")
 
@@ -105,9 +236,61 @@ class _Collector(ast.NodeVisitor):
 
     Record lexical scope and binding changes for conservative navigation.
 
+    Attributes
+    ----------
+    scope : _Scope
+        Current lexical scope while visiting the source tree.
+
+    root : _Scope
+        Module scope owning all bindings in this source snapshot.
+
+    scopes : dict[ast.AST, _Scope]
+        Lexical scope recorded for each visited syntax node.
+
+    definitions : list[[SymbolDefinition]]
+        Shared output list receiving navigable project definitions.
+
+    assigned_attributes : set[str]
+        Attribute names whose mutation prevents reliable static navigation.
+
+    visit_FunctionDef : Callable[[ast.FunctionDef], None]
+        Visitor alias collecting synchronous function definitions.
+
+    visit_AsyncFunctionDef : Callable[[ast.AsyncFunctionDef], None]
+        Visitor alias collecting asynchronous function definitions.
+
+    visit_ClassDef : Callable[[ast.ClassDef], None]
+        Visitor alias collecting class definitions and member scopes.
+
+    visit_ListComp : Callable[[ast.ListComp], None]
+        Visitor alias tracking list-comprehension scope.
+
+    visit_SetComp : Callable[[ast.SetComp], None]
+        Visitor alias tracking set-comprehension scope.
+
+    visit_DictComp : Callable[[ast.DictComp], None]
+        Visitor alias tracking dictionary-comprehension scope.
+
+    visit_GeneratorExp : Callable[[ast.GeneratorExp], None]
+        Visitor alias tracking generator-expression scope.
+
     """
 
     def __init__(self, unit: SourceUnit, definitions: list[SymbolDefinition]) -> None:
+        """Initialize lexical collection for one captured source unit.
+
+        Append definitions to the shared output without executing source or
+        imports.
+
+        Parameters
+        ----------
+        unit : [SourceUnit]
+            Captured source snapshot being inspected.
+
+        definitions : list[SymbolDefinition]
+            Shared output list receiving resolved project definitions.
+
+        """
         self.scope = _Scope(unit, _BindingKind.MODULE)
         self.root = self.scope
         self.scopes: dict[ast.AST, _Scope] = {}
@@ -115,13 +298,48 @@ class _Collector(ast.NodeVisitor):
         self.assigned_attributes: set[str] = set()
 
     def visit(self, node: ast.AST) -> None:
+        """Record a syntax node's current scope before dispatching its visitor.
+
+        Retain scope ownership for later conservative expression resolution.
+
+        Parameters
+        ----------
+        node : ast.AST
+            Syntax or plan node being visited or resolved.
+
+        """
         self.scopes[node] = self.scope
         super().visit(node)
 
     def _bind(self, name: str, binding: _Binding | None = None) -> None:
+        """Add a candidate name binding to the current lexical scope.
+
+        Treat unspecified bindings as unresolved rather than guessing their
+        target.
+
+        Parameters
+        ----------
+        name : str
+            Identifier, method name, or binding label being inspected.
+
+        binding : _Binding | None, default=None
+            Candidate binding to record or resolve.
+
+        """
         self.scope.bindings[name].append(binding or _Binding(_BindingKind.UNKNOWN, self.scope))
 
     def _definition(self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef) -> None:
+        """Collect a function, method, or class definition and its inner scope.
+
+        Preserve lexical names and flag classes whose dynamic behavior prevents
+        safe lookup.
+
+        Parameters
+        ----------
+        node : ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
+            Syntax or plan node being visited or resolved.
+
+        """
         outer = self.scope
         kind = _BindingKind.CLASS if isinstance(node, ast.ClassDef) else _BindingKind.FUNCTION
 
@@ -189,6 +407,18 @@ class _Collector(ast.NodeVisitor):
     visit_ClassDef = _definition
 
     def _parameters(self, args: ast.arguments) -> None:
+        """Register function parameters as unresolved lexical bindings.
+
+        Include positional, keyword-only, variadic, and keyword capture
+        parameters.
+
+        Parameters
+        ----------
+        args : ast.arguments
+            Positional arguments or syntax parameters forwarded to the
+            operation.
+
+        """
         for arg in [*args.posonlyargs, *args.args, *args.kwonlyargs]:
             self._bind(arg.arg)
 
@@ -197,6 +427,16 @@ class _Collector(ast.NodeVisitor):
                 self._bind(arg.arg)
 
     def visit_Lambda(self, node: ast.Lambda) -> None:
+        """Collect a lambda's parameters and expression in a separate scope.
+
+        Evaluate default expressions in the enclosing lexical scope.
+
+        Parameters
+        ----------
+        node : ast.Lambda
+            Syntax or plan node being visited or resolved.
+
+        """
         for default in [*node.args.defaults, *node.args.kw_defaults]:
             if default:
                 self.visit(default)
@@ -211,6 +451,17 @@ class _Collector(ast.NodeVisitor):
         self,
         node: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp,
     ) -> None:
+        """Collect bindings in a comprehension's own lexical scope.
+
+        Keep the first iterable in the enclosing scope as required by Python
+        semantics.
+
+        Parameters
+        ----------
+        node : ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp
+            Syntax or plan node being visited or resolved.
+
+        """
         outer = self.scope
         # The first iterable is evaluated in the enclosing lexical scope.
         self.visit(node.generators[0].iter)
@@ -239,6 +490,16 @@ class _Collector(ast.NodeVisitor):
     visit_GeneratorExp = _comprehension
 
     def visit_Import(self, node: ast.Import) -> None:
+        """Register module imports without executing their code.
+
+        Preserve alias and top-level package binding behavior.
+
+        Parameters
+        ----------
+        node : ast.Import
+            Syntax or plan node being visited or resolved.
+
+        """
         for alias in node.names:
             module = alias.name if alias.asname else alias.name.split(".")[0]
             self._bind(
@@ -246,6 +507,17 @@ class _Collector(ast.NodeVisitor):
             )
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        """Register imported members and relative module depth.
+
+        Leave star imports unresolved rather than inferring their exported
+        names.
+
+        Parameters
+        ----------
+        node : ast.ImportFrom
+            Syntax or plan node being visited or resolved.
+
+        """
         for alias in node.names:
             if alias.name != "*":
                 self._bind(
@@ -260,18 +532,53 @@ class _Collector(ast.NodeVisitor):
                 )
 
     def _assignment(self, target: ast.expr, value: ast.expr | None) -> None:
+        """Record an assigned expression as a candidate alias binding.
+
+        Visit non-name targets so attribute mutation remains visible to
+        resolution.
+
+        Parameters
+        ----------
+        target : ast.expr
+            Assignment target or import reload target being inspected.
+
+        value : ast.expr | None
+            Measurement or serialized value to normalize or display.
+
+        """
         if isinstance(target, ast.Name):
             self._bind(target.id, _Binding(_BindingKind.ALIAS, self.scope, expression=value))
         else:
             self.visit(target)
 
     def visit_Assign(self, node: ast.Assign) -> None:
+        """Collect ordinary assignment targets and their value expression.
+
+        Retain all candidate bindings so rebinding can invalidate inferred
+        links.
+
+        Parameters
+        ----------
+        node : ast.Assign
+            Syntax or plan node being visited or resolved.
+
+        """
         for target in node.targets:
             self._assignment(target, node.value)
 
         self.visit(node.value)
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        """Collect an annotated assignment and its annotation expression.
+
+        Preserve unresolved targets when no assigned value is present.
+
+        Parameters
+        ----------
+        node : ast.AnnAssign
+            Syntax or plan node being visited or resolved.
+
+        """
         self._assignment(node.target, node.value)
 
         if node.value:
@@ -280,20 +587,60 @@ class _Collector(ast.NodeVisitor):
         self.visit(node.annotation)
 
     def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
+        """Collect a named expression's binding and value.
+
+        Use the current lexical scope for conservative alias resolution.
+
+        Parameters
+        ----------
+        node : ast.NamedExpr
+            Syntax or plan node being visited or resolved.
+
+        """
         self._assignment(node.target, node.value)
         self.visit(node.value)
 
     def visit_Name(self, node: ast.Name) -> None:
+        """Register stored or deleted names as unresolved lexical bindings.
+
+        Leave name reads available for the later resolution pass.
+
+        Parameters
+        ----------
+        node : ast.Name
+            Syntax or plan node being visited or resolved.
+
+        """
         if isinstance(node.ctx, (ast.Store, ast.Del)):
             self._bind(node.id)
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
+        """Record mutated attributes and inspect their owner expression.
+
+        Prevent navigation through names that may be replaced dynamically.
+
+        Parameters
+        ----------
+        node : ast.Attribute
+            Syntax or plan node being visited or resolved.
+
+        """
         if isinstance(node.ctx, (ast.Store, ast.Del)):
             self.assigned_attributes.add(node.attr)
 
         self.visit(node.value)
 
     def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        """Register an exception handler's bound name and visit its body.
+
+        Treat the exception value as unresolved source state.
+
+        Parameters
+        ----------
+        node : ast.ExceptHandler
+            Syntax or plan node being visited or resolved.
+
+        """
         if node.name:
             self._bind(node.name)
 
@@ -302,10 +649,30 @@ class _Collector(ast.NodeVisitor):
     def visit_Global(self, node: ast.Global) -> None:
         # Assignment through global/nonlocal is dynamic across calls. We do
         # not infer links through these declarations.
+        """Record names whose assignments redirect to the module scope.
+
+        Keep redirected identifiers out of speculative call navigation.
+
+        Parameters
+        ----------
+        node : ast.Global
+            Syntax or plan node being visited or resolved.
+
+        """
         self.scope.redirects.update(node.names)
         self.scope.redirect_kinds.update(dict.fromkeys(node.names, _RedirectKind.GLOBAL))
 
     def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
+        """Record names whose assignments redirect to an enclosing scope.
+
+        Retain redirection kinds for the mutation invalidation pass.
+
+        Parameters
+        ----------
+        node : ast.Nonlocal
+            Syntax or plan node being visited or resolved.
+
+        """
         self.scope.redirects.update(node.names)
         self.scope.redirect_kinds.update(dict.fromkeys(node.names, _RedirectKind.NONLOCAL))
 
@@ -335,16 +702,46 @@ class _Collector(ast.NodeVisitor):
                     target.bindings[name].append(_Binding(_BindingKind.UNKNOWN, target))
 
     def visit_MatchAs(self, node: ast.MatchAs) -> None:
+        """Collect an alias introduced by structural pattern matching.
+
+        Visit nested patterns to retain all potential lexical bindings.
+
+        Parameters
+        ----------
+        node : ast.MatchAs
+            Syntax or plan node being visited or resolved.
+
+        """
         if node.name:
             self._bind(node.name)
 
         self.generic_visit(node)
 
     def visit_MatchStar(self, node: ast.MatchStar) -> None:
+        """Collect the name bound by a starred sequence pattern.
+
+        Leave the matched value unresolved for static navigation.
+
+        Parameters
+        ----------
+        node : ast.MatchStar
+            Syntax or plan node being visited or resolved.
+
+        """
         if node.name:
             self._bind(node.name)
 
     def visit_MatchMapping(self, node: ast.MatchMapping) -> None:
+        """Collect a mapping pattern's rest binding and nested patterns.
+
+        Preserve unresolved pattern values without guessing definitions.
+
+        Parameters
+        ----------
+        node : ast.MatchMapping
+            Syntax or plan node being visited or resolved.
+
+        """
         if node.rest:
             self._bind(node.rest)
 
@@ -366,11 +763,29 @@ class SymbolIndex:
 
     Attributes
     ----------
+    sources : dict[str, [SourceUnit]]
+        Copy of the captured project files and notebook cells being indexed.
+
     definitions : list[[SymbolDefinition]]
         Lexical project definitions, including nested functions and methods.
 
     references : dict[tuple[str, int], list[[SymbolRef]]]
         Individually clickable call tokens grouped by source and line.
+
+    _collectors : dict[str, _Collector]
+        Per-snapshot binding collectors used for conservative resolution.
+
+    _trees : dict[str, ast.Module]
+        Successfully parsed syntax trees keyed by snapshot identifier.
+
+    _modules : dict[str, list[_Scope]]
+        Candidate module scopes grouped by importable name.
+
+    _paths : dict[str, _Scope]
+        Normalized file paths mapped to their module scopes.
+
+    _assigned_attributes : set[str]
+        Mutated attribute names excluded from inferred navigation.
 
     See Also
     --------
@@ -392,6 +807,17 @@ class SymbolIndex:
     """
 
     def __init__(self, sources: dict[str, SourceUnit]) -> None:
+        """Index definitions and references from captured source.
+
+        Resolve only unique project targets and keep dynamic or ambiguous calls
+        unlinked.
+
+        Parameters
+        ----------
+        sources : dict[str, SourceUnit]
+            Captured source snapshots keyed by stable identifiers.
+
+        """
         self.sources = dict(sources)
         self.definitions: list[SymbolDefinition] = []
         self.references: dict[tuple[str, int], list[SymbolRef]] = defaultdict(list)
@@ -408,6 +834,17 @@ class SymbolIndex:
             self._link(source_id, tree)
 
     def _collect(self, unit: SourceUnit) -> None:
+        """Parse a snapshot and collect its definitions and lexical bindings.
+
+        Retain notebook line positions while masking magic syntax and skip
+        invalid source.
+
+        Parameters
+        ----------
+        unit : [SourceUnit]
+            Captured source snapshot being inspected.
+
+        """
         source = unit.source
 
         if unit.kind == SourceKind.NOTEBOOK:
@@ -444,6 +881,28 @@ class SymbolIndex:
                     self._modules[".".join(candidate)].append(collector.root)
 
     def _module(self, name: str, scope: _Scope, level: int = 0) -> _Scope | None:
+        """Resolve an imported module to one unique captured module scope.
+
+        Return None when project snapshots are absent or candidates are
+        ambiguous.
+
+        Parameters
+        ----------
+        name : str
+            Identifier, method name, or binding label being inspected.
+
+        scope : _Scope
+            Lexical scope used for conservative resolution.
+
+        level : int, default=0
+            Relative import depth; zero represents an absolute import.
+
+        Returns
+        -------
+        _Scope | None
+            Unique captured module scope, or None when unresolved.
+
+        """
         if level:
             parent = PurePosixPath(scope.unit.path.replace("\\", "/")).parent
 
@@ -459,6 +918,22 @@ class SymbolIndex:
         return matches[0] if len(matches) == 1 else None
 
     def _peers(self, scope: _Scope) -> list[_Scope]:
+        """Find captured notebook cell scopes sharing inline execution context.
+
+        Restrict peer lookup to the current notebook and resolvable inline
+        imports.
+
+        Parameters
+        ----------
+        scope : _Scope
+            Lexical scope used for conservative resolution.
+
+        Returns
+        -------
+        list[_Scope]
+            Notebook module scopes sharing the relevant execution context.
+
+        """
         if scope.unit.kind != SourceKind.NOTEBOOK:
             return []
 
@@ -488,6 +963,28 @@ class SymbolIndex:
         ]
 
     def _name(self, name: str, scope: _Scope, seen: set[tuple[int, str]]) -> _Target | None:
+        """Resolve a lexical identifier without following ambiguous bindings.
+
+        Guard alias cycles and skip class locals when resolving function
+        closures.
+
+        Parameters
+        ----------
+        name : str
+            Identifier, method name, or binding label being inspected.
+
+        scope : _Scope
+            Lexical scope used for conservative resolution.
+
+        seen : set[tuple[int, str]]
+            Already visited identities used to prevent resolution cycles.
+
+        Returns
+        -------
+        _Target | None
+            Unique navigation target, or None when unresolved or ambiguous.
+
+        """
         key = (id(scope), name)
 
         if key in seen or name in scope.redirects:
@@ -522,6 +1019,25 @@ class SymbolIndex:
         return self._name(name, parent, seen) if parent else None
 
     def _binding(self, binding: _Binding, seen: set[tuple[int, str]]) -> _Target | None:
+        """Resolve a definition, alias, or import binding to a project target.
+
+        Keep external and missing targets unavailable instead of executing
+        imports.
+
+        Parameters
+        ----------
+        binding : _Binding
+            Candidate binding to record or resolve.
+
+        seen : set[tuple[int, str]]
+            Already visited identities used to prevent resolution cycles.
+
+        Returns
+        -------
+        _Target | None
+            Resolved binding target, or None when unavailable.
+
+        """
         if binding.kind in {
             _BindingKind.FUNCTION,
             _BindingKind.CLASS,
@@ -555,9 +1071,45 @@ class SymbolIndex:
         return None
 
     def _has_namespace(self, name: str) -> bool:
+        """Check whether captured modules exist below a namespace prefix.
+
+        Use only the already collected project module index.
+
+        Parameters
+        ----------
+        name : str
+            Identifier, method name, or binding label being inspected.
+
+        Returns
+        -------
+        bool
+            Whether any captured module belongs to the namespace.
+
+        """
         return any(candidate.startswith(f"{name}.") for candidate in self._modules)
 
     def _attribute(self, owner: _Target, attr: str, seen: set[tuple[int, str]]) -> _Target | None:
+        """Resolve a stable attribute on a known project owner.
+
+        Reject mutated names, ambiguous definitions, and dynamic class dispatch.
+
+        Parameters
+        ----------
+        owner : _Target
+            Conservatively resolved owner of the requested attribute.
+
+        attr : str
+            Attribute name being resolved.
+
+        seen : set[tuple[int, str]]
+            Already visited identities used to prevent resolution cycles.
+
+        Returns
+        -------
+        _Target | None
+            Stable project target, or None when inference is unsafe.
+
+        """
         if attr in self._assigned_attributes:
             return None
 
@@ -606,6 +1158,27 @@ class SymbolIndex:
         scope: _Scope,
         seen: set[tuple[int, str]],
     ) -> _Target | None:
+        """Resolve a supported name, attribute, or constructor expression.
+
+        Keep unsupported expression forms unavailable for source navigation.
+
+        Parameters
+        ----------
+        node : ast.expr
+            Syntax or plan node being visited or resolved.
+
+        scope : _Scope
+            Lexical scope used for conservative resolution.
+
+        seen : set[tuple[int, str]]
+            Already visited identities used to prevent resolution cycles.
+
+        Returns
+        -------
+        _Target | None
+            Resolved expression target, or None for unsupported forms.
+
+        """
         if isinstance(node, ast.Name):
             return self._name(node.id, scope, seen)
 
@@ -622,6 +1195,19 @@ class SymbolIndex:
         return None
 
     def _link(self, source_id: str, tree: ast.Module) -> None:
+        """Collect resolvable call and notebook references from a snapshot.
+
+        Link individual source tokens and preserve Unicode character offsets.
+
+        Parameters
+        ----------
+        source_id : str
+            Stable identifier of the captured source snapshot.
+
+        tree : ast.Module
+            Parsed module syntax tree for a captured snapshot.
+
+        """
         collector = self._collectors[source_id]
         unit = collector.root.unit
 
@@ -718,6 +1304,28 @@ class SymbolIndex:
             references.sort(key=lambda reference: reference.column)
 
     def _link_notebook(self, unit: SourceUnit, path: str, line: int, start: int, end: int) -> None:
+        """Link an inline notebook token to one captured notebook target.
+
+        Omit links when the workspace path cannot be resolved conservatively.
+
+        Parameters
+        ----------
+        unit : [SourceUnit]
+            Captured source snapshot being inspected.
+
+        path : str
+            File, workspace, or import search path used by this operation.
+
+        line : int
+            One-based source line used by the report link.
+
+        start : int
+            Inclusive source token character offset.
+
+        end : int
+            Exclusive source token character offset.
+
+        """
         resolved = path
 
         if not path.startswith("/") and unit.kind == SourceKind.NOTEBOOK:

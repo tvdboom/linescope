@@ -21,8 +21,8 @@ with profile(backend="trace", display="none") as session:
 session.save("linescope.html")
 ```
 
-The default collection engine is **Scalene**. This quick example explicitly uses
-the built-in trace backend, which works without optional dependencies. Read
+The default collection engine is **Trace**, which works on every supported
+Python version. Enable `memory=True` for Python allocation tracking. Read
 [Backends](user_guide/backends.md) before choosing an engine.
 
 [Get started](getting_started.md){ .md-button .md-button--primary }

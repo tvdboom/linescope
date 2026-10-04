@@ -13,6 +13,12 @@ from linescope.notebooks.ipython import load_ipython_extension, unload_ipython_e
 
 @pytest.fixture
 def ipython_shell():
+    """Provide an isolated IPython shell and restore its global instance.
+
+    Execute cells in an isolated IPython shell and inspect captured snapshots,
+    navigation, and restored instrumentation.
+
+    """
     ipython = pytest.importorskip("IPython.core.interactiveshell")
     shell = ipython.InteractiveShell.instance()
     previous = dict(shell.user_ns)
@@ -29,6 +35,12 @@ def test_multi_cell_session_captures_sources_hits_and_one_final_display(
     ipython_shell,
     monkeypatch,
 ):
+    """Verify multi cell session captures sources hits and one final display.
+
+    Execute cells in an isolated IPython shell and inspect captured snapshots,
+    navigation, and restored instrumentation.
+
+    """
     shown = []
     monkeypatch.setattr(Session, "show", lambda self: shown.append(self))
     result = ipython_shell.run_cell(
@@ -60,6 +72,12 @@ def test_multi_cell_session_captures_sources_hits_and_one_final_display(
 
 
 def test_real_cell_magic_profiles_full_source_and_preserves_namespace(ipython_shell, monkeypatch):
+    """Verify real cell magic profiles full source and preserves namespace.
+
+    Execute cells in an isolated IPython shell and inspect captured snapshots,
+    navigation, and restored instrumentation.
+
+    """
     shown = []
     monkeypatch.setattr(Session, "show", lambda self: shown.append(self))
     load_ipython_extension(ipython_shell)
@@ -87,6 +105,12 @@ def test_real_cell_magic_profiles_full_source_and_preserves_namespace(ipython_sh
 
 
 def test_cell_magic_failed_workload_still_restores_session(ipython_shell, monkeypatch):
+    """Verify cell magic failed workload still restores session.
+
+    Execute cells in an isolated IPython shell and inspect captured snapshots,
+    navigation, and restored instrumentation.
+
+    """
     shown = []
     monkeypatch.setattr(Session, "show", lambda self: shown.append(self))
     load_ipython_extension(ipython_shell)
@@ -102,6 +126,12 @@ def test_cell_magic_failed_workload_still_restores_session(ipython_shell, monkey
 
 
 def test_previous_cell_function_and_method_get_measurements_and_navigation(ipython_shell):
+    """Verify previous cell function and method get measurements and navigation.
+
+    Execute cells in an isolated IPython shell and inspect captured snapshots,
+    navigation, and restored instrumentation.
+
+    """
     definition = (
         "def earlier(value):\n"
         "    return value + 1\n"

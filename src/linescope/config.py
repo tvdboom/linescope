@@ -10,20 +10,38 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-import sys
 import tomllib
 from typing import Any
 
-from linescope.enums import Backend, DisplayMode, SparkMode
+from linescope.enums import Backend, DisplayMode
 
 
 def default_backend() -> Backend:
-    """Select the runtime's supported default collector.
+    """Select the portable default collector.
 
-    Use Trace on Python 3.15 and Scalene on earlier supported runtimes.
+    Use Trace on every supported Python version.
 
     """
-    return Backend.TRACE if sys.version_info >= (3, 15) else Backend.SCALENE
+    return Backend.TRACE
+
+
+def _validate_sample_rate(sample_rate: int | None) -> None:
+    """Validate that the requested sampling rate is a positive integer.
+
+    Reject boolean values and unsupported rates before collector startup.
+
+    Parameters
+    ----------
+    sample_rate : int | None
+        Requested sampling frequency in samples per second.
+
+    """
+    if sample_rate is not None:
+        if isinstance(sample_rate, bool) or not isinstance(sample_rate, int):
+            raise TypeError("sample_rate must be a positive integer or None")
+
+        if sample_rate <= 0:
+            raise ValueError("sample_rate must be a positive integer")
 
 
 @dataclass(frozen=True)
@@ -34,14 +52,20 @@ class Config:
     ----------
     backend : [Backend] | str, default=default_backend()
         Built-in backend member, its string value, or a registered engine
-        name. Default to Scalene on Python 3.11-3.14 and Trace on Python
-        3.15. Select `tachyon` for Python 3.15 sampling.
+        name. Default to Trace on Python 3.11-3.15. Select `scalene` for
+        Python 3.11-3.14 sampling or `tachyon` for Python 3.15 sampling.
 
     memory : bool, default=False
-        Collect Python driver memory if the backend supports it.
+        Collect process RAM and retained Python allocation changes
+        separately, using the shared memory collector.
 
     gpu : bool, default=False
         Collect supported Scalene GPU utilization and device memory.
+
+    sample_rate : int | None, default=None
+        Target samples per second for Scalene or Tachyon. None preserves
+        the backend default: 100 for Scalene and 1000 for Tachyon. Higher
+        rates increase collection overhead. Trace ignores this setting.
 
     root : str | None, default=None
         Project directory; otherwise discover the nearest `pyproject.toml`.
@@ -52,12 +76,17 @@ class Config:
     exclude : tuple[str, ...], default=()
         Package names, filesystem paths, or project-relative glob patterns.
 
-    spark : bool | [SparkMode] | str, default=[SparkMode].AUTO
-        Observe driver actions in an already loaded Spark environment.
+    spark : bool, default=True
+        Observe Spark driver actions lazily when Spark methods are used.
+        Leave PySpark unloaded and its JVM listener dormant until needed.
 
     notebooks : bool, default=True
         Snapshot notebook cells and instrument available notebook
         integrations.
+
+    child_notebooks : bool, default=True
+        Automatically snapshot and profile Databricks child notebooks using
+        temporary workspace copies when SDK access permits it.
 
     display : [DisplayMode] | str, default=[DisplayMode].END
         Display once at completion, after each cell, or never (`none`).
@@ -67,6 +96,54 @@ class Config:
 
     output : str | None, default=None
         Explicit report destination. None opens a temporary HTML report.
+
+    Attributes
+    ----------
+    backend : [Backend] | str
+        Built-in backend member, its string value, or a registered engine name.
+        Default to Trace on Python 3.11-3.15. Select `scalene` for Python
+        3.11-3.14 sampling or `tachyon` for Python 3.15 sampling.
+
+    memory : bool
+        Collect process RAM and retained Python allocation changes separately,
+        using the shared memory collector.
+
+    gpu : bool
+        Collect supported Scalene GPU utilization and device memory.
+
+    root : str | None
+        Project directory; otherwise discover the nearest `pyproject.toml`.
+
+    include : tuple[str, ...]
+        Package names, filesystem paths, or project-relative glob patterns.
+
+    exclude : tuple[str, ...]
+        Package names, filesystem paths, or project-relative glob patterns.
+
+    spark : bool
+        Observe Spark driver actions lazily when Spark methods are used. Leave
+        PySpark unloaded and its JVM listener dormant until needed.
+
+    notebooks : bool
+        Snapshot notebook cells and instrument available notebook integrations.
+
+    child_notebooks : bool
+        Automatically snapshot and profile Databricks child notebooks using
+        temporary workspace copies when SDK access permits it.
+
+    display : [DisplayMode] | str
+        Display once at completion, after each cell, or never (`none`).
+
+    inline : bool
+        Display inside a notebook cell instead of opening a new browser tab.
+
+    output : str | None
+        Explicit report destination. None opens a temporary HTML report.
+
+    sample_rate : int | None
+        Target samples per second for Scalene or Tachyon. None preserves the
+        backend default: 100 for Scalene and 1000 for Tachyon. Higher rates
+        increase collection overhead. Trace ignores this setting.
 
     See Also
     --------
@@ -90,11 +167,13 @@ class Config:
     root: str | None = None
     include: tuple[str, ...] = ()
     exclude: tuple[str, ...] = ()
-    spark: bool | SparkMode | str = SparkMode.AUTO
+    spark: bool = True
     notebooks: bool = True
+    child_notebooks: bool = True
     display: DisplayMode | str = DisplayMode.END
     inline: bool = False
     output: str | None = None
+    sample_rate: int | None = None
 
     def __post_init__(self) -> None:
         """Validate values and normalize built-in enum choices.
@@ -102,6 +181,8 @@ class Config:
         Preserve registered custom backend names as strings.
 
         """
+        _validate_sample_rate(self.sample_rate)
+
         if not isinstance(self.backend, str) or not self.backend:
             raise ValueError("backend must be a non-empty registered name")
 
@@ -113,7 +194,7 @@ class Config:
         else:
             object.__setattr__(self, "backend", backend)
 
-        for name in ("memory", "gpu", "notebooks", "inline"):
+        for name in ("memory", "gpu", "notebooks", "child_notebooks", "inline"):
             if not isinstance(getattr(self, name), bool):
                 raise TypeError(f"{name} must be a boolean")
 
@@ -122,13 +203,8 @@ class Config:
         except ValueError as error:
             raise ValueError("display must be 'end', 'cell', or 'none'") from error
 
-        if isinstance(self.spark, str):
-            try:
-                object.__setattr__(self, "spark", SparkMode(self.spark))
-            except ValueError as error:
-                raise ValueError("spark must be True, False, or 'auto'") from error
-        elif not isinstance(self.spark, bool):
-            raise ValueError("spark must be True, False, or 'auto'")
+        if not isinstance(self.spark, bool):
+            raise ValueError("spark must be True or False")
 
         for name in ("include", "exclude"):
             value = getattr(self, name)

@@ -19,7 +19,6 @@ from linescope import (
     Session,
     SessionState,
     SourceKind,
-    SparkMode,
     SymbolKind,
 )
 from linescope.backends.base import create_backend, register_backend
@@ -41,6 +40,12 @@ from linescope.source import build_navigation
 )
 @pytest.mark.parametrize("use_string", [False, True])
 def test_factory_accepts_enum_members_and_strings(member, collector, use_string):
+    """Verify factory accepts enum members and strings.
+
+    Inspect normalized enum members and their serialized values without starting
+    optional runtimes.
+
+    """
     name = member.value if use_string else member
     backend = create_backend(name, accepts=lambda _: False, on_source=lambda _: None)
     assert isinstance(backend, collector)
@@ -49,12 +54,24 @@ def test_factory_accepts_enum_members_and_strings(member, collector, use_string)
 
 @pytest.mark.parametrize("member", list(Backend))
 def test_builtin_names_cannot_be_registered(member, monkeypatch):
+    """Verify builtin names cannot be registered.
+
+    Inspect normalized enum members and their serialized values without starting
+    optional runtimes.
+
+    """
     monkeypatch.setattr("linescope.backends.base._factories", {})
     with pytest.raises(ValueError, match="already registered"):
         register_backend(member.value, TraceBackend)
 
 
 def test_unknown_backend_lists_builtins_and_registered_collectors(monkeypatch):
+    """Verify unknown backend lists builtins and registered collectors.
+
+    Inspect normalized enum members and their serialized values without starting
+    optional runtimes.
+
+    """
     monkeypatch.setattr("linescope.backends.base._factories", {})
     register_backend("custom", TraceBackend)
     with pytest.raises(ValueError, match="available: trace, scalene, tachyon, custom"):
@@ -62,7 +79,23 @@ def test_unknown_backend_lists_builtins_and_registered_collectors(monkeypatch):
 
 
 def test_registered_custom_backend_remains_a_string(tmp_path, monkeypatch):
+    """Verify registered custom backend remains a string.
+
+    Inspect normalized enum members and their serialized values without starting
+    optional runtimes.
+
+    """
+
     class CustomTrace(TraceBackend):
+        """Expose a custom registry name through the tracing collector.
+
+        Attributes
+        ----------
+        name : str
+            Collector registry name used by this example or test subclass.
+
+        """
+
         name = "custom"
 
     monkeypatch.setattr("linescope.backends.base._factories", {})
@@ -83,43 +116,71 @@ def test_registered_custom_backend_remains_a_string(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("use_strings", [False, True])
 def test_config_normalizes_fixed_choices(use_strings):
+    """Verify config normalizes fixed choices.
+
+    Inspect normalized enum members and their serialized values without starting
+    optional runtimes.
+
+    """
     config = Config(
         backend="trace" if use_strings else Backend.TRACE,
         display="cell" if use_strings else DisplayMode.CELL,
-        spark="auto" if use_strings else SparkMode.AUTO,
     )
     assert config.backend is Backend.TRACE
     assert config.display is DisplayMode.CELL
-    assert config.spark is SparkMode.AUTO
+    assert config.spark is True
 
 
 @pytest.mark.parametrize("enabled", [True, False])
 def test_explicit_spark_booleans_are_preserved(enabled):
+    """Verify explicit spark booleans are preserved.
+
+    Inspect normalized enum members and their serialized values without starting
+    optional runtimes.
+
+    """
     assert Config(spark=enabled).spark is enabled
 
 
-@pytest.mark.parametrize(
-    ("version", "expected"), [((3, 14), Backend.SCALENE), ((3, 15), Backend.TRACE)]
-)
-def test_default_backend_is_an_enum(version, expected, monkeypatch):
-    monkeypatch.setattr("linescope.config.sys.version_info", version)
-    assert default_backend() is expected
+@pytest.mark.parametrize("version", [(3, minor) for minor in range(11, 16)])
+def test_default_backend_is_trace_on_every_supported_runtime(version, monkeypatch):
+    """Verify Trace is the default on every supported runtime.
+
+    Inspect normalized enum members and their serialized values without starting
+    optional runtimes.
+
+    """
+    monkeypatch.setattr(sys, "version_info", version)
+    assert default_backend() is Backend.TRACE
+    assert Config().backend is Backend.TRACE
 
 
 def test_project_and_global_config_normalize_strings(tmp_path, monkeypatch):
+    """Verify project and global config normalize strings.
+
+    Inspect normalized enum members and their serialized values without starting
+    optional runtimes.
+
+    """
     monkeypatch.setattr("linescope.config._overrides", {})
     (tmp_path / "pyproject.toml").write_text(
-        '[tool.linescope]\nbackend="trace"\ndisplay="none"\nspark="auto"\n', encoding="utf-8"
+        '[tool.linescope]\nbackend="trace"\ndisplay="none"\nspark=false\n', encoding="utf-8"
     )
     config = resolve_config(root=str(tmp_path))
     assert config.backend is Backend.TRACE
     assert config.display is DisplayMode.NONE
-    assert config.spark is SparkMode.AUTO
+    assert config.spark is False
     configure(root=str(tmp_path), display=DisplayMode.CELL)
     assert resolve_config().display is DisplayMode.CELL
 
 
 def test_session_states_and_failure_cleanup_use_enums(tmp_path):
+    """Verify session states and failure cleanup use enums.
+
+    Inspect normalized enum members and their serialized values without starting
+    optional runtimes.
+
+    """
     config = Config(
         backend=Backend.TRACE,
         root=str(tmp_path),
@@ -132,6 +193,12 @@ def test_session_states_and_failure_cleanup_use_enums(tmp_path):
     assert session.state is SessionState.CREATED
 
     def workload():
+        """Execute the controlled workload while collection is active.
+
+        Inspect normalized enum members and their serialized values without
+        starting optional runtimes.
+
+        """
         assert session.state is SessionState.RUNNING
         raise ValueError("workload failed")
 
@@ -149,6 +216,12 @@ def test_session_states_and_failure_cleanup_use_enums(tmp_path):
 
 
 def test_model_strings_normalize_and_serialize_as_string_values():
+    """Verify model strings normalize and serialize as string values.
+
+    Inspect normalized enum members and their serialized values without starting
+    optional runtimes.
+
+    """
     source = SourceUnit("cell", "cell.py", "def work(): pass\nwork()\n", "notebook")
     symbol = SymbolDefinition("function", "work", source.id, 1)
     run = ProfileRun(status="reference", source=source)

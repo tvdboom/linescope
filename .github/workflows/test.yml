@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      pythonVersion:
+        description: Default Python version for pipeline jobs
+        type: string
+        default: '3.14'
       spark:
         description: Run the optional real local Spark integration tests
         type: boolean
@@ -14,6 +18,9 @@ on:
 permissions:
   contents: read
 
+env:
+  PYTHON_VERSION: ${{ inputs.pythonVersion || '3.14' }}
+
 jobs:
   pre-commit:
     runs-on: ubuntu-latest
@@ -21,7 +28,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:
-          python-version: '3.13'
+          python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
       - run: uv sync --locked --no-default-groups --group tox
       - run: uv run --no-sync tox -e pre-commit
@@ -37,7 +44,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:
-          python-version: ${{ matrix.python }}
+          python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
       - run: uv sync --locked --no-default-groups --group tox
       - name: Run the installed-wheel test environment
@@ -54,11 +61,13 @@ jobs:
 
   minimum-dependencies:
     runs-on: ubuntu-latest
+    env:
+      PYTHON_VERSION: '3.11'
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:
-          python-version: '3.11'
+          python-version: ${{ env.PYTHON_VERSION }}
       - run: uv sync --locked --no-default-groups --group tox
       - run: uv run --no-sync tox -e py311-min
 
@@ -72,11 +81,11 @@ jobs:
           java-version: '17'
       - uses: astral-sh/setup-uv@v6
         with:
-          python-version: '3.13'
+          python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
       - run: uv sync --locked --no-default-groups --group tox
       - name: Execute all example notebooks
-        run: uv run --no-sync tox -e notebooks
+        run: uv run --no-sync tox -e notebooks -x 'testenv:notebooks.base_python=${{ env.PYTHON_VERSION }}'
 
   package:
     runs-on: ubuntu-latest
@@ -84,7 +93,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:
-          python-version: '3.13'
+          python-version: ${{ env.PYTHON_VERSION }}
       - run: uv build
       - run: uvx twine check dist/*
 
@@ -94,10 +103,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:
-          # Exercise the minimum supported Python with the real native collector.
-          python-version: '3.11'
+          python-version: ${{ env.PYTHON_VERSION }}
       - run: uv sync --locked --no-default-groups --group tox
-      - run: uv run --no-sync tox -e scalene
+      - run: uv run --no-sync tox -e scalene -x 'testenv:scalene.base_python=${{ env.PYTHON_VERSION }}'
 
   local-spark:
     if: github.event_name == 'workflow_dispatch' && inputs.spark
@@ -110,10 +118,9 @@ jobs:
           java-version: '17'
       - uses: astral-sh/setup-uv@v6
         with:
-          # Exercise the minimum supported Python with the real Spark integration.
-          python-version: '3.11'
+          python-version: ${{ env.PYTHON_VERSION }}
       - run: uv sync --locked --no-default-groups --group tox
-      - run: uv run --no-sync tox -e spark
+      - run: uv run --no-sync tox -e spark -x 'testenv:spark.base_python=${{ env.PYTHON_VERSION }}'
 
   documentation:
     runs-on: ubuntu-latest
@@ -124,7 +131,7 @@ jobs:
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v6
         with:
-          python-version: '3.13'
+          python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
       - run: uv sync --locked --no-default-groups --group tox
       - run: uv run --no-sync tox -e docs

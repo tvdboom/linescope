@@ -11,29 +11,35 @@ from __future__ import annotations
 import ast
 from contextlib import ExitStack
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 import re
 from tempfile import NamedTemporaryFile
 import threading
 from time import perf_counter_ns
 from types import TracebackType
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
 import warnings
 import webbrowser
 
-from linescope.backends.base import ProfilerBackend, create_backend
+from linescope.backends.base import ProfilerBackend, RawLine, create_backend
 from linescope.config import Config, resolve_config
 from linescope.enums import Backend, DisplayMode, RunStatus, SessionState, SourceKind, SymbolKind
 from linescope.model import (
     BackendCapabilities,
     FunctionStats,
     LineStats,
+    MemorySample,
     ProfileResult,
     ProfileRun,
     SourceLocation,
+    SourceUnit,
     SparkExecution,
 )
 from linescope.source import SourceRegistry, build_navigation
+
+if TYPE_CHECKING:
+    from linescope.memory import ProcessMemoryCollector
 
 _session_lock = threading.Lock()
 
@@ -51,12 +57,45 @@ class Session:
 
     Attributes
     ----------
-    result : [ProfileResult]
-        Captured source, run relationships, and finalized measurements after
-        stop.
+    config : [Config]
+        Validated options retained for this profiling session.
 
-    state : SessionState
-        `created`, `running`, or `stopped`. A session can run only once.
+    registry : [SourceRegistry]
+        Project discovery, frozen source snapshots, and notebook aliases.
+
+    result : [ProfileResult]
+        Captured source, run tree, and the latest normalized measurements.
+
+    state : [SessionState]
+        Lifecycle state; a session starts once and remains stopped.
+
+    _backend : [ProfilerBackend] | None
+        Collector owned by this session, once startup begins.
+
+    _memory : ProcessMemoryCollector | None
+        Owned RAM and Python allocation collector with a source-linked RAM
+        timeline, when enabled.
+
+    _resources : ExitStack | None
+        Cleanup stack owning installed integrations and the session lock.
+
+    _started : int
+        Monotonic nanosecond timestamp recorded when collection starts.
+
+    _owner : int
+        Identifier of the thread that owns collection and cleanup.
+
+    _references : dict[tuple[str, int], [LineStats]]
+        Notebook and Spark links retained when measurements are refreshed.
+
+    _notebook_path : str | None
+        Original workspace path supplied for generated child notebooks.
+
+    _notebook_sources : list[[SourceUnit]]
+        Precaptured child cells reused by notebook source capture.
+
+    launch_root : Path
+        Working directory at construction, used for report navigation.
 
     See Also
     --------
@@ -81,6 +120,19 @@ class Session:
     """
 
     def __init__(self, config: Config | None = None, **options: Any) -> None:
+        """Initialize validated options, source ownership, and session state.
+
+        Instrumentation is installed only when the session starts.
+
+        Parameters
+        ----------
+        config : [Config] | None, default=None
+            Validated session options, mutually exclusive with keyword options.
+
+        **options : Any
+            Configuration or factory keyword options forwarded to the owner.
+
+        """
         if config is not None and options:
             raise TypeError("Pass a Config or keyword options, not both")
 
@@ -92,11 +144,14 @@ class Session:
         self.state: SessionState = SessionState.CREATED
 
         self._backend: ProfilerBackend | None = None
+        self._memory: ProcessMemoryCollector | None = None
         self._resources: ExitStack | None = None
         self._started = 0
         self._owner = 0
 
         self._references: dict[tuple[str, int], LineStats] = {}
+        self._notebook_path: str | None = None
+        self._notebook_sources: list[SourceUnit] = []
         self.launch_root = Path.cwd().resolve()
 
     def __enter__(self) -> Self:
@@ -164,9 +219,16 @@ class Session:
                 self.config.backend,
                 accepts=self.registry.accepts,
                 on_source=self.registry.snapshot,
-                memory=self.config.memory,
+                # The shared collector owns RAM and Python allocation tracking.
+                memory=False,
                 root=str(self.registry.root),
                 **({"gpu": True} if self.config.gpu else {}),
+                **(
+                    {"sample_rate": self.config.sample_rate}
+                    if self.config.sample_rate is not None
+                    and self.config.backend in {Backend.SCALENE, Backend.TACHYON}
+                    else {}
+                ),
             )
 
             if (
@@ -186,7 +248,7 @@ class Session:
                 resources.callback(integration.stop)
                 integration.start()
 
-            if self.config.spark is not False:
+            if self.config.spark:
                 from linescope.spark import SparkIntegration
 
                 spark = SparkIntegration(self)
@@ -194,9 +256,24 @@ class Session:
                 spark.start()
 
             self._started = perf_counter_ns()
+            if self.config.memory:
+                from linescope.memory import ProcessMemoryCollector
+
+                self._memory = ProcessMemoryCollector(
+                    self.registry.accepts, self.registry.snapshot
+                )
+                # Final allocations follow cleanup of both trace collectors.
+                resources.callback(self._memory.finish_allocations)
             resources.callback(self._backend.stop)
             self._backend.start()
             self.result.capabilities = self._backend.capabilities
+            if self._memory is not None:
+                resources.callback(self._memory.stop_tracing)
+                self._memory.start()
+                self.result.capabilities = replace(self.result.capabilities, memory=True)
+            sample_rate = getattr(self._backend, "sample_rate", None)
+            if self.result.capabilities.sampled and sample_rate is not None:
+                self.result.root_run.metadata["sample_rate"] = sample_rate
             self.state = SessionState.RUNNING
             self._resources = resources
         except BaseException:
@@ -206,10 +283,30 @@ class Session:
         return self
 
     def _refresh(self) -> None:
+        """Rebuild normalized measurements from the latest collector snapshot.
+
+        Preserve notebook and Spark references without accumulating measured
+        costs twice.
+
+        """
         if self._backend is None:
             return
 
         raw = self._backend.result()
+        if self._memory is not None:
+            allocations, allocation_warnings = self._memory.allocations()
+            # Custom collectors can reuse their raw result; leave it untouched.
+            raw = replace(
+                raw,
+                lines=[
+                    *raw.lines,
+                    *(
+                        RawLine(filename, number, memory=stats)
+                        for (filename, number), stats in allocations.items()
+                    ),
+                ],
+                warnings=[*raw.warnings, *allocation_warnings],
+            )
         # Notebook and Spark links survive refreshes; measured costs are
         # rebuilt from the backend snapshot rather than added a second time.
         lines = deepcopy(self._references)
@@ -228,6 +325,9 @@ class Session:
 
             if measurement.hits is not None:
                 line.hits = (line.hits or 0) + measurement.hits
+
+            if measurement.samples is not None:
+                line.samples = (line.samples or 0) + measurement.samples
 
             if measurement.memory is not None:
                 if line.memory is None:
@@ -255,10 +355,33 @@ class Session:
                             line.gpu.peak_memory_bytes or 0, measurement.gpu.peak_memory_bytes
                         )
 
+        if self._memory is not None:
+            memory_lines, samples, memory_warnings, compressed = self._memory.snapshot()
+            for (filename, number), stats in memory_lines.items():
+                source = self.registry.snapshot(filename)
+                if source is not None:
+                    key = (source.id, number)
+                    lines.setdefault(key, LineStats(SourceLocation(*key))).ram = stats
+
+            timeline = []
+            for sample in samples:
+                source = self.registry.snapshot(sample.filename) if sample.filename else None
+                location = SourceLocation(source.id, sample.line) if source is not None else None
+                timeline.append(MemorySample(sample.elapsed_ns, sample.rss_bytes, location))
+            self.result.root_run.memory_samples = timeline
+            self.result.root_run.metadata["memory_timeline_compressed"] = compressed
+            for warning in memory_warnings:
+                if warning not in self.result.warnings:
+                    self.result.warnings.append(warning)
+
         symbols, navigation = build_navigation(self.registry.sources)
 
+        child_sources = self._child_source_ids()
+        own_sources = {source_id for source_id, _line in lines}
+
         for key, calls in navigation.items():
-            lines.setdefault(key, LineStats(SourceLocation(*key))).calls = calls
+            if key[0] not in child_sources or key[0] in own_sources:
+                lines.setdefault(key, LineStats(SourceLocation(*key))).calls = calls
 
         self.result.symbols = symbols
         self.result.root_run.lines = sorted(
@@ -278,9 +401,32 @@ class Session:
         lines: dict[tuple[str, int], LineStats],
         calls: dict[tuple[str, str, int], int],
     ) -> list[FunctionStats]:
+        """Index function costs from visible source lines and exact call counts.
+
+        Exclude nested definitions and keep unsupported call counts unavailable.
+
+        Parameters
+        ----------
+        lines : dict[tuple[str, int], LineStats]
+            Visible source line measurements keyed by snapshot and line.
+
+        calls : dict[tuple[str, str, int], int]
+            Exact invocation counts keyed by filename, qualified name, and line.
+
+        Returns
+        -------
+        list[FunctionStats]
+            Function measurements derived from accepted project source.
+
+        """
         functions = []
+        child_sources = self._child_source_ids()
+        own_sources = {source_id for source_id, _line in lines}
 
         for unit in self.registry.sources.values():
+            if unit.id in child_sources and unit.id not in own_sources:
+                continue
+
             source = unit.source
 
             if unit.kind == SourceKind.NOTEBOOK:
@@ -317,8 +463,8 @@ class Session:
                     if item is not node
                     and isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
                 ]
-                measurements = [
-                    value.wall_time_ns
+                own_lines = [
+                    value
                     for (source_id, number), value in lines.items()
                     if source_id == unit.id
                     and node.body[0].lineno <= number <= (node.end_lineno or node.lineno)
@@ -326,8 +472,11 @@ class Session:
                         item.lineno <= number <= (item.end_lineno or item.lineno)
                         for item in nested
                     )
-                    and value.wall_time_ns is not None
                 ]
+                measurements = [
+                    value.wall_time_ns for value in own_lines if value.wall_time_ns is not None
+                ]
+                samples = [value.samples for value in own_lines if value.samples is not None]
                 count = None
 
                 if self.result.capabilities.hit_counts:
@@ -352,10 +501,35 @@ class Session:
                         definition.line,
                         sum(measurements) if measurements else None,
                         count,
+                        sum(samples)
+                        if samples or self.result.capabilities.sample_counts
+                        else None,
                     )
                 )
 
         return functions
+
+    def _child_source_ids(self) -> set[str]:
+        """Collect source identifiers owned by separate child notebook runs.
+
+        Traverse nested children so refreshes preserve each run's measurement
+        ownership.
+
+        Returns
+        -------
+        set[str]
+            Snapshot identifiers retained by separate child runs.
+
+        """
+        sources: set[str] = set()
+        pending = list(self.result.root_run.children)
+
+        while pending:
+            run = pending.pop()
+            sources.update(run.metadata.get("child_source_ids", []))
+            pending.extend(run.children)
+
+        return sources
 
     def stop(self) -> ProfileResult:
         """Finalize measurements and restore instrumentation.
@@ -510,10 +684,14 @@ class Session:
             if get_ipython() is None:
                 raise RuntimeError("Inline display requires an active IPython notebook")
 
+            # srcdoc inherits the notebook URL, so pin fragment links to the report.
+            # Set the base before the report's CSP rejects subsequent base changes.
+            inline_html = html.replace("<head>", '<head><base href="about:srcdoc">', 1)
+
             # An iframe isolates report CSS and scripts from the notebook itself.
             display(
                 HTML(
-                    f'<iframe title="LineScope report" srcdoc="{escape(html, quote=True)}" '
+                    f'<iframe title="LineScope report" srcdoc="{escape(inline_html, quote=True)}" '
                     'style="width:100%;height:760px;border:0" '
                     'sandbox="allow-scripts allow-same-origin"></iframe>'
                 )
@@ -537,6 +715,11 @@ class Session:
 class ProfileController:
     """Offer callable contexts and explicit notebook-wide start/stop ergonomics.
 
+    Attributes
+    ----------
+    _session : [Session] | None
+        Most recent explicit session, or None before `start` is called.
+
     See Also
     --------
     - linescope:configure
@@ -546,6 +729,11 @@ class ProfileController:
     """
 
     def __init__(self) -> None:
+        """Initialize a controller without an explicit profiling session.
+
+        Retain a session only after an explicit `start` succeeds.
+
+        """
         self._session: Session | None = None
 
     def __call__(self, **options: Any) -> Session:
@@ -625,6 +813,16 @@ class ProfileController:
         return session
 
     def _current(self) -> Session:
+        """Return the most recent explicit session.
+
+        Raise `RuntimeError` when no explicit session has been started.
+
+        Returns
+        -------
+        [Session]
+            Current owned observer or session, when available.
+
+        """
         if self._session is None:
             raise RuntimeError("Call profile.start() first")
 

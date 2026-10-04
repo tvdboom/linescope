@@ -147,6 +147,12 @@ class TestScaleneSetup:
         monkeypatch.setattr(scalene.sys, "version_info", python_version)
 
         def missing(_):
+            """Simulate an unavailable optional Scalene dependency.
+
+            Use controlled Scalene components for adapter checks; explicitly
+            marked cases exercise real supported sampling.
+
+            """
             raise PackageNotFoundError
 
         monkeypatch.setattr(scalene, "version", missing)
@@ -179,6 +185,12 @@ class TestScaleneSetup:
             monkeypatch.setenv("LC_ALL", existing)
 
         def package(_):
+            """Provide controlled optional Scalene components for setup tests.
+
+            Use controlled Scalene components for adapter checks; explicitly
+            marked cases exercise real supported sampling.
+
+            """
             os.environ["LC_ALL"] = "POSIX"
             return SimpleNamespace()
 
@@ -224,6 +236,12 @@ class TestScaleneSetup:
         backend = ScaleneBackend(accepts=lambda _: True, on_source=lambda _: None)
 
         def start():
+            """Provide the controlled behavior used by this test.
+
+            Start the controlled collector or simulate its configured startup
+            failure.
+
+            """
             try:
                 backend.start()
             except RuntimeError as error:
@@ -255,93 +273,76 @@ class TestScaleneSetup:
         assert backend.result().lines == []
 
 
-class TestMemoryBootstrap:
-    """Check memory bootstrap.
+class TestProcessMemoryMode:
+    """Verify CLI process RAM needs no native allocator bootstrap.
 
-    Tests for exact CLI argument propagation into the preloaded interpreter.
+    Check shared RAM observation without requesting native allocator startup or
+    modifying preload settings.
 
     """
 
-    def test_bootstrap_preserves_args_and_environment(self, monkeypatch):
-        """Check bootstrap preserves args and environment.
-
-        The workload executes once in a child with native startup settings.
-
-        """
-        from linescope import cli
-
-        monkeypatch.setattr(cli.sys, "platform", "linux")
-        monkeypatch.delenv("LINESCOPE_MEMORY_BOOTSTRAPPED", raising=False)
-        monkeypatch.setenv("PROJECT_SETTING", "preserved")
-        monkeypatch.setattr(
-            scalene, "memory_preload_environment", lambda: {"LD_PRELOAD": "libscalene.so"}
-        )
-        captured = {}
-
-        def run(command, **kwargs):
-            captured.update(command=command, **kwargs)
-            return SimpleNamespace(returncode=7)
-
-        monkeypatch.setattr(cli.subprocess, "run", run)
-        args = ["--memory", "path with spaces.py", "--argument", "value"]
-        assert cli._memory_bootstrap({"backend": "scalene", "memory": True}, args) == 7
-        assert captured["command"] == [
-            sys.executable,
-            "-c",
-            "from linescope.cli import main; raise SystemExit(main())",
-            *args,
-        ]
-        assert captured["env"]["PROJECT_SETTING"] == "preserved"
-        assert captured["env"]["LINESCOPE_MEMORY_BOOTSTRAPPED"] == "1"
-        assert captured["env"]["LD_PRELOAD"] == "libscalene.so"
-
-    def test_bootstrap_guard(self, monkeypatch):
-        """Check bootstrap guard.
-
-        The reexecuted interpreter cannot recursively relaunch itself.
-
-        """
-        from linescope import cli
-
-        monkeypatch.setenv("LINESCOPE_MEMORY_BOOTSTRAPPED", "1")
-        assert cli._memory_bootstrap({"backend": "scalene", "memory": True}, []) is None
-
-    @pytest.mark.parametrize("status", [0, 9])
-    def test_bootstrap_launches_cli_and_preserves_workload_exit(
-        self, tmp_path, monkeypatch, status
+    @pytest.mark.parametrize("backend", ["trace", "scalene", "tachyon"])
+    def test_ram_uses_shared_collector_without_preloading(
+        self,
+        tmp_path,
+        monkeypatch,
+        backend,
     ):
-        from linescope import cli
+        """Collect RAM independently of the selected timing engine.
 
-        monkeypatch.setattr(cli.sys, "platform", "linux")
-        monkeypatch.delenv("LINESCOPE_MEMORY_BOOTSTRAPPED", raising=False)
-        monkeypatch.setattr(scalene, "memory_preload_environment", dict)
-        script = tmp_path / "workload.py"
-        script.write_text(f"raise SystemExit({status})\n", encoding="utf-8")
-        report = tmp_path / "profile.html"
-        arguments = [
-            "--backend",
-            "trace",
-            "--display",
-            "none",
-            "--no-spark",
-            "--no-notebooks",
-            "-o",
-            str(report),
-            str(script),
-        ]
-        assert cli._memory_bootstrap({"backend": "scalene", "memory": True}, arguments) == status
-        assert report.is_file()
-
-    @pytest.mark.parametrize("options", [{"memory": False}, {"backend": "trace", "memory": True}])
-    def test_other_modes_do_not_bootstrap(self, options):
-        """Check other modes do not bootstrap.
-
-        Native preloading belongs exclusively to Scalene memory mode.
+        Use controlled Scalene components for adapter checks; explicitly marked
+        cases exercise real supported sampling.
 
         """
-        from linescope import cli
+        from click.testing import CliRunner
 
-        assert cli._memory_bootstrap(options, []) is None
+        from linescope import cli
+        from linescope.backends.trace import TraceBackend
+
+        def controlled_backend(_name, **options):
+            """Supply portable timing while preserving process RAM options.
+
+            Use controlled Scalene components for adapter checks; explicitly
+            marked cases exercise real supported sampling.
+
+            """
+            assert options["memory"] is False
+            return TraceBackend(**options)
+
+        def forbidden_preload():
+            """Reject unnecessary native allocator initialization.
+
+            Use controlled Scalene components for adapter checks; explicitly
+            marked cases exercise real supported sampling.
+
+            """
+            pytest.fail("Process RAM must not require native preloading")
+
+        monkeypatch.setattr("linescope.api.create_backend", controlled_backend)
+        monkeypatch.setattr(scalene, "memory_preload_environment", forbidden_preload)
+        script = tmp_path / "workload.py"
+        script.write_text("value = bytearray(100_000)\n", encoding="utf-8")
+        report = tmp_path / "profile.html"
+        result = CliRunner().invoke(
+            cli.main,
+            [
+                "--backend",
+                backend,
+                "--memory",
+                "--display",
+                "none",
+                "--no-spark",
+                "--no-notebooks",
+                "-o",
+                str(report),
+                str(script),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        html = report.read_text(encoding="utf-8")
+        assert "RAM after" in html
+        assert 'id="memory"' in html
+        assert "Driver memory" not in html
 
 
 def run_probe(tmp_path, source, *, preload=False):
@@ -383,8 +384,9 @@ class TestRealScalene:
     """
 
     def test_cpu_repeated_sessions_and_cleanup(self, tmp_path):
-        """Real samples attribute blocking calls and restore every installed
-        hook.
+        """Check the expected behavior in this regression case.
+
+        Real samples attribute blocking calls and restore every installed hook.
 
         """
         result = run_probe(
@@ -396,8 +398,10 @@ original = (
     os.execvp, threading.Thread.join, threading.Lock, sys.executable, os.environ.get("LC_ALL")
 )
 reports = []
-for duration in (0.15, 0.25):
-    backend = ScaleneBackend(accepts=lambda f: f == __file__, on_source=lambda f: None)
+for rate, duration in ((100, 0.15), (250, 0.25)):
+    backend = ScaleneBackend(
+        accepts=lambda f: f == __file__, on_source=lambda f: None, sample_rate=rate
+    )
     backend.start()
     time.sleep(duration)
     backend.stop()
@@ -405,6 +409,7 @@ for duration in (0.15, 0.25):
     reports.append({
         "time": sum(line.wall_time_ns or 0 for line in report.lines),
         "hits": [line.hits for line in report.lines], "warnings": report.warnings,
+        "samples": sum(line.samples or 0 for line in report.lines),
     })
 assert original == (
     os.execvp, threading.Thread.join, threading.Lock, sys.executable, os.environ.get("LC_ALL")
@@ -416,6 +421,7 @@ print(json.dumps(reports))
         )
         assert all(0 < report["time"] < 2_000_000_000 for report in result)
         assert all(all(hit is None for hit in report["hits"]) for report in result)
+        assert all(report["samples"] > 0 for report in result)
         assert all(
             not any("failed" in warning for warning in report["warnings"]) for report in result
         )
@@ -455,8 +461,9 @@ print(json.dumps(reports))
         )
 
     def test_source_snapshot_precedes_mutation(self, tmp_path):
-        """Call observation freezes original code before the source edits
-        itself.
+        """Check the expected behavior in this regression case.
+
+        Call observation freezes original code before the source edits itself.
 
         """
         result = run_probe(
@@ -507,7 +514,7 @@ with profile(
     time.sleep(0.15)
 report = session.html()
 print(json.dumps({
-    "source": __file__ in str(session.result.sources), "preview": "Sampled estimates" in preview,
+    "source": __file__ in str(session.result.sources), "preview": "Estimated time" in preview,
     "report": "time.sleep" in report,
     "time": sum(line.wall_time_ns or 0 for line in session.result.root_run.lines),
     "state": session.state,

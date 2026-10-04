@@ -21,15 +21,22 @@ Use the built-in trace collector and Scalene adapter as concrete references for
 the collection and normalization contract. Registration is process-local; it
 does not change the installed package or project defaults.
 
-For a minimal runnable registration example, subclass the existing collector.
+For a minimal runnable registration example, subclass the Scalene collector.
 Its constructor already accepts the backend factory keywords, and its
-measurements keep their original semantics:
+measurements keep their original semantics.
+
+This demo enables driver memory collection and requires Python 3.11–3.14.
+On Linux and macOS, prepare the [memory allocator
+environment](../user_guide/backends.md#memory) before starting Python.
 
 ```console
-uv run python examples/custom_backend.py
+just demo-custom-backend
+uv run python examples/custom_backend_example.py
 ```
 
-:: example: custom_backend.py
+The Just recipe also opens the saved `custom-backend.html` report.
+
+:: example: custom_backend_example.py
 
 A new measurement engine can instead implement the `ProfilerBackend` protocol
 and return `RawBackendResult` records. Its factory accepts `accepts`,

@@ -3,8 +3,10 @@ profile.html
 profile.json
 linescope.html
 spark.html
+gpu.html
 notebook.html
 custom-backend.html
+package.html
 reports/
 spark-warehouse/
 metastore_db/

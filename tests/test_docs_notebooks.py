@@ -22,20 +22,36 @@ bs4 = pytest.importorskip("bs4")
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 NOTEBOOKS = [
-    ("quickstart", "LineScope notebook quickstart", "notebook", "%%profile --backend trace"),
-    ("databricks", "LineScope in Databricks", "databricks", "%load_ext linescope"),
-    ("local_spark", "LineScope with local Spark", "spark", 'values.groupBy().sum("id").collect()'),
+    (
+        "notebook_example",
+        "LineScope notebook quickstart",
+        "notebook",
+        "%%profile --backend scalene",
+    ),
+    ("databricks_example", "LineScope in Databricks", "databricks", "%load_ext linescope"),
+    (
+        "spark_example",
+        "LineScope with local Spark",
+        "spark",
+        'values.groupBy().sum("id").collect()',
+    ),
 ]
 
 
 @pytest.fixture(scope="module")
 def notebook_site(tmp_path_factory):
+    """Build notebook documentation without executing example cells.
+
+    Build the documentation without executing notebook cells and inspect
+    preserved source, output, and navigation.
+
+    """
     build_dir = tmp_path_factory.mktemp("notebook-docs")
     docs_dir = build_dir / "sources"
     site_dir = build_dir / "site"
     shutil.copytree(REPO_ROOT / "docs_sources", docs_dir)
 
-    notebook_path = docs_dir / "examples/notebooks/quickstart.ipynb"
+    notebook_path = docs_dir / "examples/notebooks/notebook_example.ipynb"
     notebook = nbformat.read(notebook_path, as_version=4)
     notebook.cells.append(
         nbformat.v4.new_code_cell(
@@ -54,6 +70,12 @@ def notebook_site(tmp_path_factory):
     nbformat.write(notebook, notebook_path)
 
     def reject_execution(*_args, **_kwargs):
+        """Reject unexpected notebook execution during documentation builds.
+
+        Build the documentation without executing notebook cells and inspect
+        preserved source, output, and navigation.
+
+        """
         pytest.fail("Documentation must not execute notebook cells")
 
     with pytest.MonkeyPatch.context() as patch:
@@ -86,6 +108,12 @@ def test_notebooks_render_in_navigation_with_source_downloads(
     guide,
     source,
 ):
+    """Verify notebooks render in navigation with source downloads.
+
+    Build the documentation without executing notebook cells and inspect
+    preserved source, output, and navigation.
+
+    """
     docs_dir, site_dir = notebook_site
     page_path = site_dir / "examples/notebooks" / name / "index.html"
     page = bs4.BeautifulSoup(page_path.read_text(encoding="utf-8"), "html.parser")
@@ -119,9 +147,15 @@ def test_notebooks_render_in_navigation_with_source_downloads(
 
 
 def test_notebook_saved_outputs_and_heading_links_survive_build(notebook_site):
+    """Verify notebook saved outputs and heading links survive build.
+
+    Build the documentation without executing notebook cells and inspect
+    preserved source, output, and navigation.
+
+    """
     _, site_dir = notebook_site
     page = bs4.BeautifulSoup(
-        (site_dir / "examples/notebooks/quickstart/index.html").read_text(encoding="utf-8"),
+        (site_dir / "examples/notebooks/notebook_example/index.html").read_text(encoding="utf-8"),
         "html.parser",
     )
     assert page.select_one(".jupyter-wrapper strong").get_text() == "Saved notebook output"
@@ -133,6 +167,12 @@ def test_notebook_saved_outputs_and_heading_links_survive_build(notebook_site):
 
 @pytest.mark.parametrize("name", [item[0] for item in NOTEBOOKS])
 def test_documentation_notebooks_match_runnable_examples(name):
+    """Verify documentation notebooks match runnable examples.
+
+    Build the documentation without executing notebook cells and inspect
+    preserved source, output, and navigation.
+
+    """
     example = REPO_ROOT / "examples/notebooks" / f"{name}.ipynb"
     documentation = REPO_ROOT / "docs_sources/examples/notebooks" / f"{name}.ipynb"
     assert json.loads(example.read_text(encoding="utf-8")) == json.loads(
@@ -143,16 +183,24 @@ def test_documentation_notebooks_match_runnable_examples(name):
 @pytest.mark.parametrize(
     ("page", "example"),
     [
-        ("getting_started", "script.py"),
-        ("examples/script", "script.py"),
+        ("getting_started", "script_example.py"),
+        ("examples/script", "script_example.py"),
         ("examples/package", "sample_package/__main__.py"),
         ("examples/package", "sample_package/helpers.py"),
-        ("examples/backend", "custom_backend.py"),
-        ("examples/spark", "local_spark.py"),
-        ("examples/databricks", "databricks_notebook.py"),
+        ("examples/package", "package_example.py"),
+        ("examples/backend", "custom_backend_example.py"),
+        ("examples/spark", "spark_example.py"),
+        ("examples/gpu", "gpu_example.py"),
+        ("examples/databricks", "databricks_example.py"),
     ],
 )
 def test_documentation_displays_complete_runnable_source(notebook_site, page, example):
+    """Verify documentation displays complete runnable source.
+
+    Build the documentation without executing notebook cells and inspect
+    preserved source, output, and navigation.
+
+    """
     _, site_dir = notebook_site
     rendered = bs4.BeautifulSoup(
         (site_dir / page / "index.html").read_text(encoding="utf-8"), "html.parser"

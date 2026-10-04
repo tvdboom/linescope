@@ -17,6 +17,20 @@ class Order:
 
     Keep records immutable while comparing aggregation strategies.
 
+    Attributes
+    ----------
+    region : str
+        Sales region associated with this example order.
+
+    product : str
+        Product category purchased by the customer.
+
+    quantity : int
+        Number of items included in this order.
+
+    price_cents : int
+        Unit price in integer cents used by the example calculation.
+
     """
 
     region: str

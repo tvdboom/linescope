@@ -65,8 +65,32 @@ class SourceRegistry:
 
     Attributes
     ----------
+    root : Path
+        Resolved project root used for file discovery and relative rules.
+
+    include : tuple[str, ...]
+        Package names, paths, or glob patterns selecting project source.
+
+    exclude : tuple[str, ...]
+        Exclusion rules applied before include rules.
+
     sources : dict[str, [SourceUnit]]
-        Snapshots keyed by stable source identifiers.
+        Complete frozen source snapshots keyed by stable identifiers.
+
+    _aliases : dict[str, str]
+        Runtime notebook filenames mapped to stable snapshot identifiers.
+
+    _accepted : dict[str, bool]
+        Cached project ownership decisions for runtime filenames.
+
+    _included_paths : tuple[Path, ...]
+        Candidate package and filesystem paths resolved without imports.
+
+    _library_roots : tuple[Path, ...]
+        Standard-library and installed-package roots excluded from capture.
+
+    _own_root : Path
+        LineScope package directory excluded from project snapshots.
 
     See Also
     --------
@@ -90,6 +114,22 @@ class SourceRegistry:
         include: Iterable[str] = (),
         exclude: Iterable[str] = (),
     ) -> None:
+        """Initialize project discovery rules and frozen snapshot storage.
+
+        Resolve inclusion candidates without importing project packages.
+
+        Parameters
+        ----------
+        root : str | Path | None, default=None
+            Project root used for source ownership or collector setup.
+
+        include : Iterable[str], default=()
+            Package, path, or glob rules selecting project source.
+
+        exclude : Iterable[str], default=()
+            Rules excluding source before inclusions are applied.
+
+        """
         self.root = Path(root).expanduser().resolve() if root else discover_root()
         self.include = tuple(include)
         self.exclude = tuple(exclude)
@@ -105,6 +145,22 @@ class SourceRegistry:
         self._own_root = Path(__file__).resolve().parents[1]
 
     def _package_paths(self, rules: tuple[str, ...]) -> tuple[Path, ...]:
+        """Resolve inclusion rules to candidate package and filesystem paths.
+
+        Skip glob patterns and locate packages without executing their
+        initializers.
+
+        Parameters
+        ----------
+        rules : tuple[str, ...]
+            Project source inclusion rules resolved without imports.
+
+        Returns
+        -------
+        tuple[Path, ...]
+            Candidate filesystem locations for inclusion rules.
+
+        """
         paths = []
 
         for rule in rules:
@@ -135,6 +191,24 @@ class SourceRegistry:
         return tuple(paths)
 
     def _matches(self, path: Path, rule: str) -> bool:
+        """Match a file against a package name, path, or glob rule.
+
+        Consider project-relative and normalized filesystem paths.
+
+        Parameters
+        ----------
+        path : Path
+            File, workspace, or import search path used by this operation.
+
+        rule : str
+            One package, path, or glob rule used for source selection.
+
+        Returns
+        -------
+        bool
+            Whether the path matches the supplied source selection rule.
+
+        """
         normalized = rule.replace("\\", "/").rstrip("/")
         full = path.as_posix()
 
@@ -192,6 +266,22 @@ class SourceRegistry:
         return accepted
 
     def _accepts_file(self, filename: str) -> bool:
+        """Apply project inclusion and exclusion rules to a runtime filename.
+
+        Hide LineScope, environments, standard libraries, and third-party
+        internals.
+
+        Parameters
+        ----------
+        filename : str
+            Runtime filename being observed or resolved.
+
+        Returns
+        -------
+        bool
+            Whether the file belongs in captured project source.
+
+        """
         if filename.startswith("<") or "://" in filename:
             return False
 

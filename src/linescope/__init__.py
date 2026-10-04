@@ -15,7 +15,6 @@ from linescope.enums import (
     RunStatus,
     SessionState,
     SourceKind,
-    SparkMode,
     SymbolKind,
 )
 
@@ -53,7 +52,6 @@ __all__ = [
     "Session",
     "SessionState",
     "SourceKind",
-    "SparkMode",
     "SymbolKind",
     "__version__",
     "configure",

@@ -21,6 +21,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.fixture(scope="module")
 def api_site(tmp_path_factory):
+    """Build the API documentation site in a temporary output directory.
+
+    Build documentation in a temporary directory and inspect the generated API
+    links and method labels.
+
+    """
     build_dir = tmp_path_factory.mktemp("api-docs")
     docs_dir = build_dir / "sources"
     site_dir = build_dir / "site"
@@ -66,6 +72,12 @@ def api_site(tmp_path_factory):
     ],
 )
 def test_api_type_references_render_as_clickable_links(api_site, page, name, target):
+    """Verify api type references render as clickable links.
+
+    Build documentation in a temporary directory and inspect the generated API
+    links and method labels.
+
+    """
     rendered = bs4.BeautifulSoup(
         (api_site / "api" / page / "index.html").read_text(encoding="utf-8"), "html.parser"
     )
@@ -75,6 +87,12 @@ def test_api_type_references_render_as_clickable_links(api_site, page, name, tar
 
 
 def test_see_also_renders_with_links_and_descriptions(api_site):
+    """Verify see also renders with links and descriptions.
+
+    Build documentation in a temporary directory and inspect the generated API
+    links and method labels.
+
+    """
     rendered = bs4.BeautifulSoup(
         (api_site / "api/profiling/session/index.html").read_text(encoding="utf-8"),
         "html.parser",
@@ -91,6 +109,12 @@ def test_see_also_renders_with_links_and_descriptions(api_site):
 
 
 def test_method_table_preserves_code_labels_and_targets(api_site):
+    """Verify method table preserves code labels and targets.
+
+    Build documentation in a temporary directory and inspect the generated API
+    links and method labels.
+
+    """
     rendered = bs4.BeautifulSoup(
         (api_site / "api/backends/tachyonbackend/index.html").read_text(encoding="utf-8"),
         "html.parser",

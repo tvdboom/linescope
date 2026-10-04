@@ -15,6 +15,17 @@ class Backend(StrEnum):
 
     Registered custom backends continue to use their own string names.
 
+    Attributes
+    ----------
+    TRACE : [Backend]
+        Measure explicit Python trace events in the calling thread.
+
+    SCALENE : [Backend]
+        Collect scoped CPU, memory, and optional GPU sampling data.
+
+    TACHYON : [Backend]
+        Sample Python 3.15 stacks from a separate process.
+
     """
 
     TRACE = "trace"
@@ -27,6 +38,17 @@ class DisplayMode(StrEnum):
 
     Display at completion, after each notebook cell, or only on request.
 
+    Attributes
+    ----------
+    END : [DisplayMode]
+        Display one report when profiling completes.
+
+    CELL : [DisplayMode]
+        Display the current report after each notebook cell.
+
+    NONE : [DisplayMode]
+        Display reports only when explicitly requested.
+
     """
 
     END = "end"
@@ -34,20 +56,21 @@ class DisplayMode(StrEnum):
     NONE = "none"
 
 
-class SparkMode(StrEnum):
-    """Select automatic observation of an already loaded Spark environment.
-
-    Explicit enablement and disablement continue to use booleans.
-
-    """
-
-    AUTO = "auto"
-
-
 class SessionState(StrEnum):
     """Track the lifecycle of a single profiling session.
 
     A session starts once and remains stopped after cleanup.
+
+    Attributes
+    ----------
+    CREATED : [SessionState]
+        Represent a session whose collection has not started.
+
+    RUNNING : [SessionState]
+        Represent a session with active instrumentation.
+
+    STOPPED : [SessionState]
+        Represent a finalized session after cleanup.
 
     """
 
@@ -61,6 +84,14 @@ class SourceKind(StrEnum):
 
     Both kinds preserve the full source snapshot for reporting.
 
+    Attributes
+    ----------
+    PYTHON : [SourceKind]
+        Identify a snapshotted project Python file.
+
+    NOTEBOOK : [SourceKind]
+        Identify captured notebook or cell source.
+
     """
 
     PYTHON = "python"
@@ -71,6 +102,20 @@ class SymbolKind(StrEnum):
     """Classify a statically resolved project definition.
 
     Definitions identify functions, classes, methods, or notebooks.
+
+    Attributes
+    ----------
+    FUNCTION : [SymbolKind]
+        Identify a function definition outside a class body.
+
+    CLASS : [SymbolKind]
+        Identify a project class definition.
+
+    METHOD : [SymbolKind]
+        Identify a function defined in a class body.
+
+    NOTEBOOK : [SymbolKind]
+        Identify a captured notebook navigation target.
 
     """
 
@@ -85,8 +130,42 @@ class RunStatus(StrEnum):
 
     Inline notebook references belong to their parent's execution.
 
+    Attributes
+    ----------
+    SUCCESS : [RunStatus]
+        Mark a workload that completed successfully.
+
+    FAILED : [RunStatus]
+        Mark a workload that raised an execution error.
+
+    REFERENCE : [RunStatus]
+        Mark an inline notebook reference owned by its parent.
+
     """
 
     SUCCESS = "success"
     FAILED = "failed"
     REFERENCE = "reference"
+
+
+class NotebookCollection(StrEnum):
+    """Describe the data captured for a separate notebook invocation.
+
+    Distinguish source snapshots and collected profiles from parent waits.
+
+    Attributes
+    ----------
+    WAIT_ONLY : [NotebookCollection]
+        Record only the parent waiting for a child invocation.
+
+    SOURCE_ONLY : [NotebookCollection]
+        Include child source without child measurements.
+
+    MERGED : [NotebookCollection]
+        Include separately collected child measurements.
+
+    """
+
+    WAIT_ONLY = "parent wait only"
+    SOURCE_ONLY = "child source only"
+    MERGED = "child profile merged"

@@ -19,6 +19,33 @@ from linescope.model import BackendCapabilities, GPUStats, MemoryStats
 class RawLine:
     """Carry a measurement before source ownership and navigation are applied.
 
+    `samples` counts observed project thread frames. Keep it None when the
+    collector cannot supply counts; samples are independent of `hits`.
+
+    Attributes
+    ----------
+    filename : str
+        Runtime filename awaiting project ownership and snapshot resolution.
+
+    line : int
+        One-based source line reported by the collector.
+
+    wall_time_ns : int | None
+        Collected driver line time, or None when unavailable.
+
+    hits : int | None
+        Exact line execution count, or None when unsupported.
+
+    memory : [MemoryStats] | None
+        Collected allocation measurements, or None when unavailable.
+
+    gpu : [GPUStats] | None
+        Collected GPU work, or None when unavailable.
+
+    samples : int | None
+        Collected sampling observations, or None when unsupported; never exact
+        hits.
+
     See Also
     --------
     - linescope.model:LineStats
@@ -33,11 +60,23 @@ class RawLine:
     hits: int | None = None
     memory: MemoryStats | None = None
     gpu: GPUStats | None = None
+    samples: int | None = None
 
 
 @dataclass
 class RawBackendResult:
     """Return only collector measurements, independent of the report renderer.
+
+    Attributes
+    ----------
+    lines : list[[RawLine]]
+        Collector measurements before source attribution and navigation.
+
+    warnings : list[str]
+        Honest diagnostics about collection limits or failures.
+
+    function_calls : dict[tuple[str, str, int], int]
+        Exact call counts keyed by filename, qualified name, and first line.
 
     See Also
     --------
@@ -54,6 +93,14 @@ class RawBackendResult:
 
 class ProfilerBackend(Protocol):
     """Define the minimal pluggable measurement lifecycle.
+
+    Attributes
+    ----------
+    name : [Backend] | str
+        Built-in backend identifier or registered custom collector name.
+
+    capabilities : [BackendCapabilities]
+        Measurements supported by this collector.
 
     See Also
     --------

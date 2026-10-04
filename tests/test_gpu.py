@@ -25,6 +25,12 @@ from tests.test_scalene import payload, run_probe
 
 
 def test_gpu_normalization_keeps_wall_time_separate_and_unknowns():
+    """Verify gpu normalization keeps wall time separate and unknowns.
+
+    Use controlled accelerator data unless the case explicitly checks real
+    supported device sampling.
+
+    """
     result = normalize_scalene(
         payload({"gpu_time_ns": 123000, "n_gpu_peak_memory_mb": 2}), gpu=True
     )
@@ -37,6 +43,12 @@ def test_gpu_normalization_keeps_wall_time_separate_and_unknowns():
 
 
 def test_missing_device_is_diagnostic_instead_of_fabricated_gpu(monkeypatch):
+    """Verify missing device is diagnostic instead of fabricated gpu.
+
+    Use controlled accelerator data unless the case explicitly checks real
+    supported device sampling.
+
+    """
     collector = ScaleneBackend(accepts=lambda _: True, on_source=lambda _: None, gpu=True)
     monkeypatch.setattr("linescope.backends.scalene.sys.platform", "linux")
     monkeypatch.setattr(
@@ -50,6 +62,12 @@ def test_missing_device_is_diagnostic_instead_of_fabricated_gpu(monkeypatch):
 
 
 def test_supported_device_passes_measurements_to_processor(monkeypatch):
+    """Verify supported device passes measurements to processor.
+
+    Use controlled accelerator data unless the case explicitly checks real
+    supported device sampling.
+
+    """
     collector = ScaleneBackend(accepts=lambda _: True, on_source=lambda _: None, gpu=True)
     monkeypatch.setattr("linescope.backends.scalene.sys.platform", "win32")
     device = SimpleNamespace(has_gpu=lambda: True, get_stats=lambda: (0.5, 16))
@@ -58,9 +76,10 @@ def test_supported_device_passes_measurements_to_processor(monkeypatch):
     assert collector.capabilities.gpu
     samples = []
     collector._time = lambda: "current"
-    collector._frames = lambda _predicate: ["frame"]
+    frame = SimpleNamespace(f_code=SimpleNamespace(co_filename="project.py"), f_lineno=3)
+    collector._frames = lambda _predicate: [(frame, 1, frame)]
     collector._previous = "previous"
-    collector._sleeping = {}
+    collector._sleeping = {1: False}
     collector._processor = SimpleNamespace(process_cpu_sample=lambda *args: samples.append(args))
     collector._collect_sample()
     assert samples[0][2:4] == (0.5, 16)
@@ -69,6 +88,12 @@ def test_supported_device_passes_measurements_to_processor(monkeypatch):
 
 
 def test_gpu_report_columns_and_filename_labels(tmp_path):
+    """Verify gpu report columns and filename labels.
+
+    Use controlled accelerator data unless the case explicitly checks real
+    supported device sampling.
+
+    """
     path = tmp_path / "jobs" / "worker.py"
     source = SourceUnit(str(path), str(path), "compute()\n")
     line = LineStats(SourceLocation(source.id, 1), wall_time_ns=1000, gpu=GPUStats(500, 4096))
@@ -93,6 +118,12 @@ def test_gpu_report_columns_and_filename_labels(tmp_path):
 
 @pytest.mark.parametrize("name", ["trace", "tachyon"])
 def test_unsupported_gpu_request_releases_session_lock(name):
+    """Verify unsupported gpu request releases session lock.
+
+    Use controlled accelerator data unless the case explicitly checks real
+    supported device sampling.
+
+    """
     for _ in range(2):
         with pytest.raises(ValueError, match="GPU"):
             Session(backend=name, gpu=True, notebooks=False, spark=False).start()
@@ -100,6 +131,12 @@ def test_unsupported_gpu_request_releases_session_lock(name):
 
 @pytest.mark.scalene
 def test_real_device_sampling_exports_gpu_metrics_and_cleans_up(tmp_path):
+    """Verify real device sampling exports gpu metrics and cleans up.
+
+    Use controlled accelerator data unless the case explicitly checks real
+    supported device sampling.
+
+    """
     result = run_probe(
         tmp_path,
         """

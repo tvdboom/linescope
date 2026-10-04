@@ -40,10 +40,20 @@ def include_examples(markdown: str) -> str:
     fences: list[str] = []
 
     def protect_fence(match: re.Match[str]) -> str:
+        """Replace fenced code with a placeholder before expanding includes.
+
+        Restore literal example directives unchanged after rendering.
+
+        """
         fences.append(match.group())
         return f"\x00EXAMPLE_FENCE_{len(fences) - 1}\x00"
 
     def include(match: re.Match[str]) -> str:
+        """Expand one example directive with its current repository source.
+
+        Reject missing files and paths outside the owned examples directory.
+
+        """
         indent, filename = match.groups()
         path = (EXAMPLES_DIR / filename.strip()).resolve()
         if not path.is_relative_to(EXAMPLES_DIR.resolve()):

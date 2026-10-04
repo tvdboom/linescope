@@ -1,7 +1,7 @@
 """LineScope.
 
 Author: Mavs
-Description: Register a custom backend using the portable trace collector.
+Description: Register a custom backend using the Scalene sampling collector.
 
 """
 
@@ -11,17 +11,22 @@ from pathlib import Path
 import re
 
 from linescope import profile, register_backend
-from linescope.backends.trace import TraceBackend
+from linescope.backends.scalene import ScaleneBackend
 
 
-class ProjectTrace(TraceBackend):
-    """Compute project trace.
+class ProjectScalene(ScaleneBackend):
+    """Collect project samples.
 
-    Collect trace measurements under a project-specific backend name.
+    Collect Scalene measurements under a project-specific backend name.
+
+    Attributes
+    ----------
+    name : str
+        Collector registry name used by this example or test subclass.
 
     """
 
-    name = "project-trace"
+    name = "project-scalene"
 
 
 def main() -> None:
@@ -30,15 +35,16 @@ def main() -> None:
     Register the collector and save a report.
 
     """
-    register_backend("project-trace", ProjectTrace)
+    register_backend("project-scalene", ProjectScalene)
 
     with profile(
-        backend="project-trace", display="none", root=str(Path(__file__).parent)
+        backend="project-scalene", memory=True, display="none", root=str(Path(__file__).parent)
     ) as session:
+        # Keep a visible allocation workload practical for per-line RAM collection.
         documents = [
             f"Document {number}: Python profiling makes repeated work visible. "
             "Compare collection backends, inspect source, and improve the expensive lines."
-            for number in range(4000)
+            for number in range(1_000)
         ]
         tokenized = [re.findall(r"[a-z]+", document.lower()) for document in documents]
         frequencies = Counter(word for words in tokenized for word in words)

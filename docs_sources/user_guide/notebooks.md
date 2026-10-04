@@ -57,7 +57,8 @@ walkthrough.
 
 ## Databricks
 
-Install LineScope into the cluster or notebook environment, then load the
+Install `linescope[databricks]` as a cluster library so it is available in child
+notebooks too, then load the
 IPython extension and use the cell magic or explicit start/stop API. Keep the
 Databricks-provided PySpark version; the LineScope `spark` extra is intended for
 environments that need their own local installation.
@@ -85,17 +86,38 @@ shell; LineScope does not fetch remote notebook source.
 
 ### `dbutils.notebook.run`
 
-This API creates a separate child execution. The parent can observe its path,
-calling location, elapsed wait, success/failure, and safe correlation metadata.
-It cannot directly trace line events in another process. Child runs appear under
-the parent run; sensitive arguments are redacted at the integration boundary.
-All argument values and returned content are omitted; the return type/length can
-be retained without storing the result itself.
+Calls made while profiling automatically include the child notebook's source
+and, for Python notebooks, independently collected line measurements in the
+parent HTML. No profiler cells or manual result merging are required in the
+original child notebook. Nested child calls follow the same collection path.
 
-The [correlation API](../api/notebooks/childcontext.md) supports explicitly
-merging a separately collected child result. Automatic remote
-installation/bootstrap and transport are deployment concerns in this release.
-Parent wait time is never presented as child line-level profiling.
+LineScope exports all child cells, creates a temporary sibling notebook with
+profiler startup and cleanup cells, and runs that copy with the original
+arguments. The child writes a JSON profile to a reserved workspace file. The
+parent merges it and deletes both temporary objects after success or failure.
+`dbutils.notebook.exit` keeps its original value; a failed cell finalizes the
+available child measurements. The child uses the parent's backend and metric
+options, and its report source keeps the original notebook path.
+
+Automatic collection uses the Databricks SDK's runtime authentication and needs
+permission to export the original notebook and create/delete objects in its
+folder. Relative calls keep their original folder. The running notebook's
+context API exposes the temporary copy's path, and inserted cells change cell
+positions. Use `child_notebooks=False` for workloads that depend on those
+values.
+Kernel restarts, hard termination, and unavailable child libraries can prevent
+profile finalization. Non-Python notebooks include source with unknown line
+measurements. Reports record collection and cleanup limitations as warnings.
+
+If preparation is unavailable, the original notebook runs once and any captured
+source remains readable. Parent wait time is kept separate from child line
+measurements. Argument values, return content, and exception messages are
+omitted from invocation metadata; reports still contain the user's source
+snapshots.
+
+Use `profile.start(child_notebooks=False)` to retain parent-side observation
+only. The [correlation API](../api/notebooks/childcontext.md) also supports
+merging profiles collected through a separate deployment or artifact store.
 
 Use the [Databricks example](../examples/databricks.md) and the manual
 acceptance checklist in [testing](../development.md#testing) to validate your

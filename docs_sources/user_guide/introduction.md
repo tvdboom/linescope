@@ -88,11 +88,12 @@ Place project defaults in the nearest `pyproject.toml`:
 ```toml
 [tool.linescope]
 backend = "scalene"
+sample_rate = 250
 include = ["mypackage"]
 exclude = ["tests", "generated"]
 memory = false
 gpu = false
-spark = "auto"
+spark = true
 notebooks = true
 display = "end"
 inline = false
@@ -118,10 +119,11 @@ only the code that belongs to your investigation.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `backend` | automatic | Scalene before 3.15; Trace on 3.15 |
+| `backend` | `"trace"` | Trace on every supported Python version |
+| `sample_rate` | `None` | Target samples/sec; Scalene 100, Tachyon 1000 |
 | `memory` | `False` | Request Python-driver memory metrics |
 | `gpu` | `False` | Request supported [GPU](gpu.md) metrics |
-| `spark` | `"auto"` | Detect Spark; `True` requests integration explicitly |
+| `spark` | `True` | Observe Spark lazily; `False` disables integration |
 | `notebooks` | `True` | Capture supported notebook sources |
 | `display` | `"end"` | Show at stop; also `"cell"` or `"none"` |
 | `inline` | `False` | Display in a cell; otherwise open a browser tab |

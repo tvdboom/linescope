@@ -8,6 +8,9 @@ Description: Notebook lifecycle, source, and Databricks correlation checks.
 from __future__ import annotations
 
 import linecache
+from pathlib import Path
+import subprocess
+import sys
 import threading
 from types import SimpleNamespace
 
@@ -28,23 +31,121 @@ from linescope.notebooks.ipython import (
 )
 
 
+def test_notebook_types_do_not_import_optional_dependencies():
+    """Verify notebook types do not import optional dependencies.
+
+    Use controlled notebook utilities and event callbacks to inspect capture and
+    correlation without a remote workspace.
+
+    """
+    script = """
+import importlib.abc
+import sys
+
+class BlockOptionalImports(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split('.')[0] in {'databricks', 'IPython', 'pyspark', 'dbruntime'}:
+            raise ModuleNotFoundError(fullname)
+
+sys.meta_path.insert(0, BlockOptionalImports())
+
+from linescope import Session
+from linescope.notebooks.databricks import DatabricksIntegration
+from linescope.notebooks.ipython import NotebookIntegration
+from linescope.notebooks.remote import ChildCollector, PreparedChild, WorkspaceStore
+
+session = Session(backend='trace', notebooks=False, spark=False, display='none')
+integration = NotebookIntegration(session)
+assert integration.shell is None
+integration.start()
+integration.stop()
+assert not any(name.split('.')[0] in {'databricks', 'IPython', 'pyspark', 'dbruntime'}
+               for name in sys.modules)
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).parent,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
 class Registry:
+    """Capture notebook snapshots and runtime aliases for integration tests.
+
+    Attributes
+    ----------
+    sources : dict[str, [SourceUnit]]
+        Captured notebook source snapshots keyed by identifier.
+
+    aliases : dict[str, [SourceUnit]]
+        Compiler filenames mapped to their captured source snapshots.
+
+    """
+
     def __init__(self):
+        """Initialize the controlled test state and recorded observations.
+
+        Retain only the state needed to observe arguments, results, and cleanup
+        in the surrounding test.
+
+        """
         self.sources = {}
         self.aliases = {}
 
     def register(self, source, filename=None):
+        """Record a source snapshot or shell callback for later assertions.
+
+        Retain the exact source or callback identity supplied by the
+        integration.
+
+        """
         self.sources[source.id] = source
         if filename:
             self.aliases[filename] = source
         return source
 
     def snapshot(self, filename):
+        """Return the source associated with a recorded runtime filename.
+
+        Return None when the requested runtime alias was never captured.
+
+        """
         return self.aliases.get(filename)
 
 
 class Session:
+    """Retain controlled integration results and observed source locations.
+
+    Attributes
+    ----------
+    registry : object
+        Minimal source registry used by the integration under test.
+
+    config : SimpleNamespace
+        Controlled session options used by notebook hook tests.
+
+    result : [ProfileResult]
+        Normalized result receiving observed notebook or Spark runs.
+
+    locations : list[Any]
+        Source locations supplied when child runs or actions are attached.
+
+    shows : int
+        Number of report display requests observed by the test double.
+
+    """
+
     def __init__(self, display="end"):
+        """Initialize the controlled test state and recorded observations.
+
+        Retain only the state needed to observe arguments, results, and cleanup
+        in the surrounding test.
+
+        """
         self.registry = Registry()
         self.config = SimpleNamespace(display=display)
         self.result = ProfileResult(
@@ -54,25 +155,68 @@ class Session:
         self.shows = 0
 
     def add_child_run(self, child, location):
+        """Attach a controlled child run and record its source location.
+
+        Use controlled notebook utilities and event callbacks to inspect capture
+        and correlation without a remote workspace.
+
+        """
         self.result.root_run.children.append(child)
         self.locations.append(location)
 
     def show(self):
+        """Record a report display request without opening a browser.
+
+        Count the request while leaving display behavior under test control.
+
+        """
         self.shows += 1
 
 
 class Events:
+    """Emulate shell event registration and cleanup.
+
+    Attributes
+    ----------
+    callbacks : dict[str, list[Callable[..., Any]]]
+        Registered shell callbacks grouped by event name.
+
+    """
+
     def __init__(self):
+        """Initialize the controlled test state and recorded observations.
+
+        Retain only the state needed to observe arguments, results, and cleanup
+        in the surrounding test.
+
+        """
         self.callbacks = {}
 
     def register(self, name, callback):
+        """Record a source snapshot or shell callback for later assertions.
+
+        Retain the exact source or callback identity supplied by the
+        integration.
+
+        """
         self.callbacks.setdefault(name, []).append(callback)
 
     def unregister(self, name, callback):
+        """Remove the callback owned by the integration under test.
+
+        Preserve unrelated registrations while removing the requested callback.
+
+        """
         self.callbacks[name].remove(callback)
 
 
 def shell():
+    """Provide a controlled notebook shell with reversible event hooks.
+
+    Keep event registrations, compiler aliases, and namespace changes available
+    for cleanup assertions.
+
+    """
     value = SimpleNamespace(
         events=Events(),
         user_ns={},
@@ -85,6 +229,12 @@ def shell():
 
 
 def test_capture_preserves_full_cell_and_compiler_alias():
+    """Verify capture preserves full cell and compiler alias.
+
+    Use controlled notebook utilities and event callbacks to inspect capture and
+    correlation without a remote workspace.
+
+    """
     session = Session()
     adapter = NotebookIntegration(session, shell())
     source = adapter.capture("# full cell\nx = 4\n", filename="<cell-7>")
@@ -95,6 +245,12 @@ def test_capture_preserves_full_cell_and_compiler_alias():
 
 
 def test_edited_cell_keeps_previous_snapshot():
+    """Verify edited cell keeps previous snapshot.
+
+    Use controlled notebook utilities and event callbacks to inspect capture and
+    correlation without a remote workspace.
+
+    """
     session = Session()
     adapter = NotebookIntegration(session, shell())
     first = adapter.capture("x=1", cell_id="stable")
@@ -104,6 +260,12 @@ def test_edited_cell_keeps_previous_snapshot():
 
 
 def test_multiple_cells_default_end_does_not_display():
+    """Verify multiple cells default end does not display.
+
+    Use controlled notebook utilities and event callbacks to inspect capture and
+    correlation without a remote workspace.
+
+    """
     session = Session()
     ipython = shell()
     adapter = NotebookIntegration(session, ipython)
@@ -124,6 +286,12 @@ def test_multiple_cells_default_end_does_not_display():
 
 
 def test_start_captures_current_cell_and_live_display_is_explicit(monkeypatch):
+    """Verify start captures current cell and live display is explicit.
+
+    Use controlled notebook utilities and event callbacks to inspect capture and
+    correlation without a remote workspace.
+
+    """
     session = Session("cell")
     ipython = shell()
     ipython.history_manager.input_hist_raw = ["", "profile.start()\nx=4"]
@@ -145,6 +313,12 @@ def test_start_captures_current_cell_and_live_display_is_explicit(monkeypatch):
     "filename", ["<command-123456-789>", "/root/.ipykernel/42/command-123456-789.py"]
 )
 def test_databricks_current_cell_uses_actual_cached_command_source(monkeypatch, filename):
+    """Verify databricks current cell uses actual cached command source.
+
+    Use controlled notebook utilities and event callbacks to inspect capture and
+    correlation without a remote workspace.
+
+    """
     session = Session()
     ipython = shell()
     source = "with profile():\n    answer = 42\n"
@@ -167,6 +341,12 @@ def test_databricks_current_cell_uses_actual_cached_command_source(monkeypatch, 
 
 
 def test_inline_run_has_navigable_reference_without_fake_measurements():
+    """Verify inline run has navigable reference without fake measurements.
+
+    Use controlled notebook utilities and event callbacks to inspect capture and
+    correlation without a remote workspace.
+
+    """
     session = Session()
     adapter = NotebookIntegration(session, shell())
     adapter.path = "/Workspace/project/main"
@@ -182,12 +362,24 @@ def test_inline_run_has_navigable_reference_without_fake_measurements():
 
 @pytest.mark.parametrize("source", ["%run -i script.py", '%run "unterminated', "%run", "x=1"])
 def test_unresolved_inline_run_is_not_guessed(source):
+    """Verify unresolved inline run is not guessed.
+
+    Use controlled notebook utilities and event callbacks to inspect capture and
+    correlation without a remote workspace.
+
+    """
     session = Session()
     NotebookIntegration(session, shell()).capture(source)
     assert session.result.root_run.children == []
 
 
 def test_parameters_never_expose_values():
+    """Verify parameters never expose values.
+
+    Use controlled notebook utilities and event callbacks to inspect capture and
+    correlation without a remote workspace.
+
+    """
     data = safe_parameters({"password": "secret", "date": "sensitive", "API_KEY": "123"})
     assert data == {"password": "[redacted]", "date": "[value omitted]", "API_KEY": "[redacted]"}
     assert safe_parameters("something") == {}
@@ -203,18 +395,48 @@ def test_parameters_never_expose_values():
     ],
 )
 def test_notebook_path_resolution(path, parent, expected):
+    """Verify notebook path resolution.
+
+    Use controlled notebook utilities and event callbacks to inspect capture and
+    correlation without a remote workspace.
+
+    """
     assert resolve_notebook_path(path, parent) == expected
 
 
 def test_restricted_notebook_context_returns_unknown():
+    """Verify restricted notebook context returns unknown.
+
+    Use controlled notebook utilities and event callbacks to inspect capture and
+    correlation without a remote workspace.
+
+    """
     assert notebook_path(SimpleNamespace()) is None
 
 
 def test_dbutils_success_preserves_call_result_and_restores_descriptor():
+    """Verify dbutils success preserves call result and restores descriptor.
+
+    Use controlled notebook utilities and event callbacks to inspect capture and
+    correlation without a remote workspace.
+
+    """
     calls = []
 
     class Notebook:
+        """Emulate notebook invocation or exit behavior for integration tests.
+
+        Expose a controlled notebook API for invocation and exit cleanup.
+
+        """
+
         def run(self, *args, **kwargs):
+            """Run the controlled workload or simulated notebook invocation.
+
+            Use controlled notebook utilities and event callbacks to inspect
+            capture and correlation without a remote workspace.
+
+            """
             calls.append((args, kwargs))
             return "private returned value"
 
@@ -238,7 +460,19 @@ def test_dbutils_success_preserves_call_result_and_restores_descriptor():
 
 
 def test_dbutils_exception_propagates_and_metadata_omits_message():
+    """Verify dbutils exception propagates and metadata omits message.
+
+    Use controlled notebook utilities and event callbacks to inspect capture and
+    correlation without a remote workspace.
+
+    """
+
     def failing(*args):
+        """Provide the controlled behavior used by this test.
+
+        Raise a controlled workload error to exercise instrumentation cleanup.
+
+        """
         del args
         raise ValueError("sensitive exception detail")
 
@@ -257,6 +491,12 @@ def test_dbutils_exception_propagates_and_metadata_omits_message():
 
 
 def test_dbutils_honors_explicit_child_context_once_without_mutating_arguments():
+    """Check the expected behavior in this regression case.
+
+    Verify dbutils honors explicit child context once without mutating
+    arguments.
+
+    """
     dbutils = SimpleNamespace(notebook=SimpleNamespace(run=lambda *_args: "ok"))
     session = Session()
     context = ChildContext.create(session.result.root_run.id)
@@ -276,6 +516,12 @@ def test_dbutils_honors_explicit_child_context_once_without_mutating_arguments()
 
 
 def test_dbutils_ignores_other_thread_and_preserves_later_patch():
+    """Verify dbutils ignores other thread and preserves later patch.
+
+    Use controlled notebook utilities and event callbacks to inspect capture and
+    correlation without a remote workspace.
+
+    """
     dbutils = SimpleNamespace(notebook=SimpleNamespace(run=lambda *_args: "ok"))
     session = Session()
     adapter = DatabricksIntegration(session, dbutils)
@@ -286,6 +532,12 @@ def test_dbutils_ignores_other_thread_and_preserves_later_patch():
     assert session.result.root_run.children == []
 
     def replacement(*args):
+        """Simulate a later notebook patch whose ownership must be preserved.
+
+        Keep later instrumentation distinguishable from the observer-owned
+        patch.
+
+        """
         del args
         return "new"
 
@@ -295,6 +547,12 @@ def test_dbutils_ignores_other_thread_and_preserves_later_patch():
 
 
 def test_child_context_tokens_and_immutable_merge():
+    """Verify child context tokens and immutable merge.
+
+    Use controlled notebook utilities and event callbacks to inspect capture and
+    correlation without a remote workspace.
+
+    """
     parent = Session().result
     context = ChildContext.create(parent.root_run.id)
     assert context != ChildContext.create(parent.root_run.id)
@@ -320,6 +578,12 @@ def test_child_context_tokens_and_immutable_merge():
 
 @pytest.mark.parametrize("failure", ["unknown", "parent", "correlation", "collision"])
 def test_child_merge_rejects_ambiguous_or_conflicting_data(failure):
+    """Verify child merge rejects ambiguous or conflicting data.
+
+    Use controlled notebook utilities and event callbacks to inspect capture and
+    correlation without a remote workspace.
+
+    """
     parent, child = Session().result, Session().result
     parent.root_run.children.append(ProfileRun(id="call"))
     if failure == "parent":
@@ -334,6 +598,12 @@ def test_child_merge_rejects_ambiguous_or_conflicting_data(failure):
 
 
 def test_extension_restores_existing_magic():
+    """Verify extension restores existing magic.
+
+    Use controlled notebook utilities and event callbacks to inspect capture and
+    correlation without a remote workspace.
+
+    """
     old = object()
     ipython = SimpleNamespace(magics_manager=SimpleNamespace(magics={"cell": {"profile": old}}))
     ipython.register_magic_function = lambda func, kind, name: ipython.magics_manager.magics[

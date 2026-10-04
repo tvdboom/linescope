@@ -38,6 +38,17 @@ LINESCOPE_URL = "https://github.com/tvdboom/linescope/blob/main/src/"
 # Mapping of keywords to urls
 # Usage in docs: [anchor][key] or [key][] -> [anchor][value]
 CUSTOM_URLS = {
+    "apiclient": (
+        "https://github.com/databricks/databricks-sdk-py/blob/main/databricks/sdk/core.py"
+    ),
+    "dbutils": "https://docs.databricks.com/aws/en/dev-tools/databricks-utils",
+    "dbutilsnotebook": (
+        "https://docs.databricks.com/aws/en/dev-tools/databricks-utils#notebook-utility-dbutilsnotebook"
+    ),
+    "executioninfo": (
+        "https://ipython.readthedocs.io/en/stable/api/generated/"
+        "IPython.core.interactiveshell.html#IPython.core.interactiveshell.ExecutionInfo"
+    ),
     "databricks-16-4-lts": ("https://docs.databricks.com/aws/en/release-notes/runtime/16.4lts"),
     "code-of-conduct": (
         "https://github.com/tvdboom/linescope/blob/main/.github/CODE_OF_CONDUCT.md"
@@ -63,13 +74,17 @@ CUSTOM_URLS = {
 # These names resolve to API pages through MkDocs autorefs. Keep container
 # punctuation outside the reference, for example list[[SourceUnit]].
 LINKED_TYPES = {
+    "ApiClient",
     "Backend",
     "BackendCapabilities",
     "ChildContext",
     "Config",
     "DatabricksIntegration",
+    "DBUtils",
+    "DBUtils.notebook",
     "DataFrame",
     "DisplayMode",
+    "ExecutionInfo",
     "FunctionStats",
     "GPUStats",
     "InteractiveShell",
@@ -95,7 +110,6 @@ LINKED_TYPES = {
     "SparkExecutionStats",
     "SparkIntegration",
     "SparkOperator",
-    "SparkMode",
     "SparkSession",
     "SymbolDefinition",
     "SymbolIndex",
@@ -118,7 +132,7 @@ check_is_dataclass = lambda obj: is_dataclass(obj)
 
 
 class AutoDocs:
-    """Parses an object to documentation in markdown/html.
+    """Parse an object into Markdown and HTML documentation.
 
     The docstring should follow the numpydoc style[^1]. Blocks should
     start with `::`. The following blocks are accepted:
@@ -146,6 +160,32 @@ class AutoDocs:
     method : str | None, default=None
         Method of `obj` to parse.
 
+    Attributes
+    ----------
+    blocks : tuple[str, ...]
+        Supported NumPy section markers and the end-of-docstring pattern.
+
+    obj : object
+        Class, function, command, or bound member being documented.
+
+    _parent_cls : type | None
+        Parent class retained when documenting one of its members.
+
+    _parent_anchor : str
+        Parent class anchor prefix used by member links.
+
+    method : str | None
+        Selected member name, or None when documenting the object itself.
+
+    module : str
+        Import module used for source links and package-specific rendering.
+
+    name : str
+        Object name displayed in signatures and documentation anchors.
+
+    doc : str
+        Resolved object docstring parsed into documentation sections.
+
     References
     ----------
     [1] https://numpydoc.readthedocs.io/en/latest/format.html
@@ -165,6 +205,12 @@ class AutoDocs:
     )
 
     def __init__(self, obj: type[object], method: str | None = None):
+        """Resolve an object's docstring and retain its documentation context.
+
+        Raise `ValueError` when no docstring is available for the selected
+        object.
+
+        """
         if method:
             self.obj = getattr(obj, method)
             self._parent_cls = obj
@@ -175,7 +221,11 @@ class AutoDocs:
             self._parent_anchor = ""
 
         self.method = method
-        self.module = obj.__module__
+        self.module = (
+            obj.callback.__module__
+            if isinstance(obj, Command) and obj.callback is not None
+            else obj.__module__
+        )
 
         if isinstance(self.obj, Command):  # Cli commands have no __name__
             self.name = str(self.obj.name)
@@ -218,7 +268,9 @@ class AutoDocs:
             obj = getattr(importlib.import_module(module), name)
             # Public controllers expose a callable instance of the class
             # documented on the API page, such as profile / profiler.
-            return AutoDocs(obj if hasattr(obj, "__name__") else type(obj))
+            return AutoDocs(
+                obj if isinstance(obj, Command) or hasattr(obj, "__name__") else type(obj)
+            )
 
     @staticmethod
     def parse_body(body: str) -> str:
@@ -341,7 +393,8 @@ class AutoDocs:
 
         if url:
             try:
-                line = getsourcelines(self.obj)[1]
+                source = self.obj.callback if isinstance(self.obj, Command) else self.obj
+                line = getsourcelines(source)[1]
                 url = f"<span style='float:right'><a href={url}#L{line}>[source]</a></span>"
             except (OSError, TypeError):  # Unavailable source
                 url = ""
@@ -712,6 +765,12 @@ def render(markdown: str, **kwargs) -> str:  # noqa: ARG001
     fences = []
 
     def protect_fence(match):
+        """Replace a fenced code block with a stable rendering placeholder.
+
+        Preserve literal directives for restoration after documentation
+        expansion.
+
+        """
         fences.append(match.group())
         return f"\x00LINESCOPE_FENCE_{len(fences) - 1}\x00"
 
@@ -897,6 +956,11 @@ def custom_autorefs(markdown: str, autodocs: AutoDocs | None = None) -> str:
     # References belong to prose. Leave literal code and explicit links intact,
     # including square brackets used by Python's container annotations.
     def masker(text: str) -> str:
+        """Mask code and explicit links without changing offsets.
+
+        Restrict custom API reference detection to prose.
+
+        """
         pattern = r"```.*?```|`[^`\n]*`|!?\[[^\]\n]*\]\([^\n]*?\)"
         return re.sub(pattern, lambda match: " " * len(match.group()), text, flags=re.S)
 

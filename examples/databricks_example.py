@@ -11,13 +11,13 @@ workspace.
 # MAGIC %load_ext linescope
 
 # COMMAND ----------
-# MAGIC %%profile --backend trace --inline
+# MAGIC %%profile --backend scalene --memory --inline
 # MAGIC total = sum(value * value for value in range(10_000))
 
 # COMMAND ----------
 from linescope import profile
 
-session = profile.start(backend="trace", spark=True, display="end", inline=True)
+session = profile.start(backend="scalene", memory=True, spark=True, display="end", inline=True)
 
 # COMMAND ----------
 values = list(range(10_000))

@@ -11,19 +11,42 @@ from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
 import dis
+from pathlib import Path
 import sys
 import threading
 from time import perf_counter_ns
+import tracemalloc
 from types import FrameType
 from typing import Any
 
 from linescope.backends.base import RawBackendResult, RawLine
 from linescope.enums import Backend
-from linescope.model import BackendCapabilities
+from linescope.model import BackendCapabilities, MemoryStats
 
 
 @dataclass
 class _Frame:
+    """Track timing ownership for one accepted Python frame.
+
+    Attributes
+    ----------
+    filename : str
+        Runtime filename of the accepted project frame.
+
+    line : int
+        Current one-based line, or zero before its first line event.
+
+    started : int
+        Monotonic timestamp of the most recent timing boundary.
+
+    parent : int | None
+        Nearest accepted caller's frame identity, when present.
+
+    active : bool
+        Whether time should accrue to this frame's current line.
+
+    """
+
     filename: str
     line: int
     started: int
@@ -36,8 +59,11 @@ class TraceBackend:
 
     External calls remain charged to the calling project line. Calls into
     another visible project frame pause the caller, avoiding double-counted
-    line totals. Tracing adds overhead and does not collect executor workers
-    or memory.
+    line totals. Optional memory snapshots report net retained Python
+    allocations by allocation site, including the nearest project caller
+    for library allocations. Per-line peaks and untracked native allocations
+    stay unavailable. Tracing adds overhead and does not collect executor
+    workers.
 
     Parameters
     ----------
@@ -48,14 +74,85 @@ class TraceBackend:
         Snapshot a filename on first observation, owned by the session.
 
     memory : bool, default=False
-        Must be false; this backend does not fabricate allocation
-        measurements.
+        Collect net retained Python allocation changes with `tracemalloc`.
+        Preserve an existing memory tracer, including its traceback depth
+        and peak. New tracers capture up to 25 frames. Memory snapshots cover
+        the process, including allocations from other Python threads.
 
     gpu : bool, default=False
         Must be false; GPU collection requires Scalene.
 
     root : str | None, default=None
         Accepted for consistency with collector factories.
+
+    on_interval : Callable[[str, int], None] | None, default=None
+        Observe completed project line intervals for optional integrations.
+
+    Attributes
+    ----------
+    name : [Backend] | str
+        Backend identifier used in configuration and reports.
+
+    accepts : Callable[[str], bool]
+        Predicate deciding whether a runtime file belongs to the project.
+
+    on_source : Callable[[str], Any]
+        Session callback that snapshots accepted source on observation.
+
+    on_interval : Callable[[str, int], None] | None
+        Optional callback observing completed project line timing intervals.
+
+    memory : bool
+        Whether net retained Python allocations are collected with
+        `tracemalloc`.
+
+    capabilities : [BackendCapabilities]
+        Exact tracing support and any requested Python allocation tracking.
+
+    _package_root : Path
+        Profiler package directory excluded from memory attribution.
+
+    _owns_tracemalloc : bool
+        Whether this collector started the process memory tracer.
+
+    _memory_baseline : dict[tuple[str, int], int] | None
+        Retained allocation bytes at startup, or None when unavailable.
+
+    _memory_deltas : dict[tuple[str, int], int] | None
+        Final net allocation changes by project line, when available.
+
+    _memory_warnings : list[str]
+        Diagnostics about unavailable Python allocation measurements.
+
+    _running : bool
+        Whether this collector currently owns active tracing.
+
+    _frames : dict[int, _Frame]
+        Accepted frame timing states keyed by frame identity.
+
+    _lines : dict[tuple[str, int], [RawLine]]
+        Accumulated line times and exact execution counts.
+
+    _calls : dict[tuple[str, str, int], int]
+        Exact function calls keyed by filename, qualified name, and line.
+
+    _old_frames : list[tuple[FrameType, Any]]
+        Already active frames and their original local trace callbacks.
+
+    _suspended : dict[int, FrameType]
+        Yielded generator or coroutine frames awaiting resumption.
+
+    _previous_trace : Any
+        Global trace callback preserved for forwarding and restoration.
+
+    _previous_locals : dict[int, Any]
+        Previous local trace callbacks keyed by frame identity.
+
+    _traced_frames : dict[int, FrameType]
+        Observed frames whose trace callbacks need restoration.
+
+    _owner : int
+        Identifier of the thread that started this collector.
 
     See Also
     --------
@@ -66,7 +163,6 @@ class TraceBackend:
     """
 
     name: Backend | str = Backend.TRACE
-    capabilities = BackendCapabilities(hit_counts=True, memory=False, sampled=False)
 
     def __init__(
         self,
@@ -76,11 +172,35 @@ class TraceBackend:
         memory: bool = False,
         root: str | None = None,
         gpu: bool = False,
+        on_interval: Callable[[str, int], None] | None = None,
     ) -> None:
-        del root
-        if memory:
-            raise ValueError("The trace backend cannot measure memory; use backend='scalene'.")
+        """Initialize trace accounting and optional allocation tracking.
 
+        Reject GPU requests because tracing cannot supply those measurements.
+
+        Parameters
+        ----------
+        accepts : Callable[[str], bool]
+            Predicate identifying accepted project runtime filenames.
+
+        on_source : Callable[[str], Any]
+            Callback capturing accepted source snapshots.
+
+        memory : bool, default=False
+            Whether retained Python allocation collection is requested.
+
+        root : str | None, default=None
+            Project root used for source ownership or collector setup.
+
+        gpu : bool, default=False
+            Whether supported GPU collection is requested.
+
+        on_interval : Callable[[str, int], None] | None, default=None
+            Observe completed project line intervals for optional
+            integrations.
+
+        """
+        del root
         if gpu:
             raise ValueError(
                 "The trace backend cannot measure GPU metrics; use backend='scalene'."
@@ -88,6 +208,14 @@ class TraceBackend:
 
         self.accepts = accepts
         self.on_source = on_source
+        self.on_interval = on_interval
+        self.memory = memory
+        self.capabilities = BackendCapabilities(hit_counts=True, memory=memory, sampled=False)
+        self._package_root = Path(__file__).resolve().parents[1]
+        self._owns_tracemalloc = False
+        self._memory_baseline: dict[tuple[str, int], int] | None = None
+        self._memory_deltas: dict[tuple[str, int], int] | None = None
+        self._memory_warnings: list[str] = []
         self._running = False
         self._frames: dict[int, _Frame] = {}
         self._lines: dict[tuple[str, int], RawLine] = {}
@@ -99,8 +227,91 @@ class TraceBackend:
         self._traced_frames: dict[int, FrameType] = {}
         self._owner = 0
 
+    def _memory_totals(self) -> dict[tuple[str, int], int] | None:
+        """Snapshot retained Python allocations by project line.
+
+        Keep profiler-owned work excluded and return None if the memory tracer
+        stopped.
+
+        Returns
+        -------
+        dict[tuple[str, int], int] | None
+            Retained allocation bytes by project line, or None if unavailable.
+
+        """
+        if not tracemalloc.is_tracing():
+            warning = "Python memory tracing stopped during collection; memory is unavailable."
+            if warning not in self._memory_warnings:
+                self._memory_warnings.append(warning)
+            return None
+
+        snapshot = tracemalloc.take_snapshot()
+        totals: dict[tuple[str, int], int] = {}
+        internal: dict[str, bool] = {}
+        accepted: dict[str, bool] = {}
+
+        for statistic in snapshot.statistics("traceback"):
+            for frame in reversed(statistic.traceback):
+                filename = frame.filename
+                if filename not in internal:
+                    internal[filename] = Path(filename).is_relative_to(self._package_root)
+
+                # Stop at profiler-owned work, but allow its CLI frames below
+                # a workload's own allocation or external-library call.
+                if internal[filename]:
+                    break
+
+                if filename not in accepted:
+                    accepted[filename] = self.accepts(filename)
+
+                if accepted[filename] and frame.lineno > 0:
+                    key = (filename, frame.lineno)
+                    totals[key] = totals.get(key, 0) + statistic.size
+                    break
+
+        return totals
+
+    def _memory_changes(self) -> dict[tuple[str, int], int] | None:
+        """Calculate net retained allocation changes from the startup snapshot.
+
+        Keep measurements unavailable when either memory snapshot is absent.
+
+        Returns
+        -------
+        dict[tuple[str, int], int] | None
+            Net retained allocation bytes by project line, or None if
+            unavailable.
+
+        """
+        if self._memory_baseline is None:
+            return None
+
+        totals = self._memory_totals()
+        if totals is None:
+            return None
+
+        return {
+            key: totals.get(key, 0) - self._memory_baseline.get(key, 0)
+            for key in totals.keys() | self._memory_baseline.keys()
+        }
+
     def _settle(self, state: _Frame, now: int) -> None:
+        """Charge the active line since its last timing boundary.
+
+        Reset the boundary even when the frame is paused or has no visible line.
+
+        Parameters
+        ----------
+        state : _Frame
+            Frame timing state whose interval is being settled.
+
+        now : int
+            Current monotonic timestamp in nanoseconds.
+
+        """
         if state.active and state.line > 0:
+            if self.on_interval is not None:
+                self.on_interval(state.filename, state.line)
             key = (state.filename, state.line)
             value = self._lines.setdefault(key, RawLine(*key, wall_time_ns=0, hits=0))
             value.wall_time_ns = (value.wall_time_ns or 0) + max(0, now - state.started)
@@ -108,6 +319,28 @@ class TraceBackend:
         state.started = now
 
     def _trace(self, frame: FrameType, event: str, arg: Any) -> Any:
+        """Process a trace event while forwarding any existing trace callback.
+
+        Pause accepted callers during project child work and preserve generator
+        suspension accounting.
+
+        Parameters
+        ----------
+        frame : FrameType
+            Observed Python frame used for source attribution.
+
+        event : str
+            Interpreter event identifying the observation being processed.
+
+        arg : Any
+            Payload supplied by the interpreter trace or profile callback.
+
+        Returns
+        -------
+        Any
+            Trace callback retained for subsequent events in this frame.
+
+        """
         key = id(frame)
         previous = self._previous_locals.get(key)
 
@@ -198,18 +431,30 @@ class TraceBackend:
         self._previous_trace = sys.gettrace()
         self._owner = threading.get_ident()
         self._running = True
-        frame = sys._getframe(1)
+        try:
+            if self.memory:
+                self._owns_tracemalloc = not tracemalloc.is_tracing()
+                if self._owns_tracemalloc:
+                    tracemalloc.start(25)
+                self._memory_baseline = self._memory_totals()
+                if self._memory_baseline is not None:
+                    for filename in {key[0] for key in self._memory_baseline}:
+                        self.on_source(filename)
 
-        while frame is not None:
-            if self.accepts(frame.f_code.co_filename):
-                self.on_source(frame.f_code.co_filename)
-                self._old_frames.append((frame, frame.f_trace))
-                self._previous_locals[id(frame)] = frame.f_trace
-                frame.f_trace = self._trace
+            frame = sys._getframe(1)
+            while frame is not None:
+                if self.accepts(frame.f_code.co_filename):
+                    self.on_source(frame.f_code.co_filename)
+                    self._old_frames.append((frame, frame.f_trace))
+                    self._previous_locals[id(frame)] = frame.f_trace
+                    frame.f_trace = self._trace
 
-            frame = frame.f_back
+                frame = frame.f_back
 
-        sys.settrace(self._trace)
+            sys.settrace(self._trace)
+        except BaseException:
+            self.stop()
+            raise
 
     def stop(self) -> None:
         """Release trace hooks while retaining finalized measurements.
@@ -224,24 +469,59 @@ class TraceBackend:
         if threading.get_ident() != self._owner:
             raise RuntimeError("Stop profiling from the thread that started it")
 
+        try:
+            self._release_trace()
+        finally:
+            self._finish_memory()
+
+    def _release_trace(self) -> None:
+        """Restore trace hooks and release frame references before snapshots.
+
+        Allow the shared collector to finalize memory after other collectors
+        release their own references to suspended frames.
+
+        """
+        if not self._running:
+            return
+
+        if threading.get_ident() != self._owner:
+            raise RuntimeError("Stop profiling from the thread that started it")
+
         now = perf_counter_ns()
         self._running = False
         sys.settrace(self._previous_trace)
 
-        for state in self._frames.values():
-            self._settle(state, now)
+        try:
+            for state in self._frames.values():
+                self._settle(state, now)
+        finally:
+            for frame, previous in self._old_frames:
+                frame.f_trace = previous
+            for key, frame in self._traced_frames.items():
+                frame.f_trace = self._previous_locals.get(key)
+            self._old_frames.clear()
+            self._frames.clear()
+            self._suspended.clear()
+            self._traced_frames.clear()
+            self._previous_locals.clear()
 
-        for frame, previous in self._old_frames:
-            frame.f_trace = previous
+    def _finish_memory(self) -> None:
+        """Finalize allocations after trace cleanup and release owned tracing.
 
-        for key, frame in self._traced_frames.items():
-            frame.f_trace = self._previous_locals.get(key)
+        Preserve an existing allocation tracer, including on snapshot failure.
 
-        self._old_frames.clear()
-        self._frames.clear()
-        self._suspended.clear()
-        self._traced_frames.clear()
-        self._previous_locals.clear()
+        """
+        if self._memory_baseline is None and not self._owns_tracemalloc:
+            return
+
+        try:
+            self._memory_deltas = self._memory_changes()
+        finally:
+            self._memory_baseline = None
+            # Existing tracers belong to the caller; never stop or reset them.
+            if self._owns_tracemalloc:
+                tracemalloc.stop()
+                self._owns_tracemalloc = False
 
     def result(self) -> RawBackendResult:
         """Return a detached copy of collected line and function measurements.
@@ -250,13 +530,28 @@ class TraceBackend:
         state.
 
         """
-        return RawBackendResult(
-            deepcopy(list(self._lines.values())),
-            [
-                (
-                    "Trace instrumentation measures the calling thread; it increases execution"
-                    " overhead."
-                )
-            ],
-            dict(self._calls),
-        )
+        lines = {key: deepcopy(value) for key, value in self._lines.items()}
+        warnings = [
+            ("Trace instrumentation measures the calling thread; it increases execution overhead.")
+        ]
+
+        if self.memory:
+            deltas = self._memory_changes() if self._running else self._memory_deltas
+            if deltas is not None:
+                for key, value in lines.items():
+                    value.memory = MemoryStats(delta_bytes=deltas.get(key, 0))
+                for key, delta in deltas.items():
+                    if delta != 0 and key not in lines:
+                        self.on_source(key[0])
+                        lines[key] = RawLine(*key, memory=MemoryStats(delta_bytes=delta))
+
+            warnings.append(
+                "Trace memory measures net retained Python allocations by allocation site across"
+                " all Python threads. Library allocations use the nearest project frame in the"
+                " captured traceback. Temporary allocations freed between snapshots, untracked"
+                " native allocations, and per-line peaks are unavailable. Existing tracemalloc"
+                " traceback depth is preserved and can limit library attribution."
+            )
+            warnings.extend(self._memory_warnings)
+
+        return RawBackendResult(list(lines.values()), warnings, dict(self._calls))

@@ -23,6 +23,24 @@ from linescope import profile
 
 @dataclass(frozen=True)
 class Reading:
+    """Represent one generated weather observation in the profiling example.
+
+    Attributes
+    ----------
+    station : str
+        Weather station identifier associated with this reading.
+
+    minute : int
+        Minute index within the generated observation period.
+
+    temperature : float
+        Generated temperature used by the example aggregation.
+
+    humidity : float
+        Generated relative humidity used by the example aggregation.
+
+    """
+
     station: str
     minute: int
     temperature: float
@@ -146,12 +164,11 @@ def main() -> None:
     Run the pipeline and open one HTML report in a new browser tab.
 
     """
-    with profile(backend="trace", root=str(Path(__file__).parent), spark=False):
-        source = generate_csv()
+    with profile(backend="scalene", memory=True, root=str(Path(__file__).parent), spark=False):
+        # Keep line-by-line RAM collection practical while retaining repeated work.
+        source = generate_csv(stations=8, minutes=300)
         readings = load_readings(source)
-        summaries = analyze(group_readings(readings))
-    for summary in summaries:
-        print(summary)
+        analyze(group_readings(readings))
 
 
 if __name__ == "__main__":

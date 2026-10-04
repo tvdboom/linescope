@@ -21,6 +21,12 @@ pytestmark = [
 
 @pytest.fixture(scope="module")
 def spark():
+    """Provide a local Spark session for explicitly marked integration tests.
+
+    Run only as an explicitly selected local Spark integration and inspect
+    existing workload actions and collected metadata.
+
+    """
     pyspark = pytest.importorskip("pyspark.sql")
     session = (
         pyspark.SparkSession.builder.master("local[2]")
@@ -38,6 +44,12 @@ def spark():
 
 
 def test_local_spark_observes_lazy_join_aggregate_aqe_and_multiple_actions(spark, tmp_path):
+    """Verify local spark observes lazy join aggregate aqe and multiple actions.
+
+    Run only as an explicitly selected local Spark integration and inspect
+    existing workload actions and collected metadata.
+
+    """
     from linescope import profile
 
     with profile(backend="trace", spark=True, display="none") as session:
@@ -81,6 +93,12 @@ def test_local_spark_observes_lazy_join_aggregate_aqe_and_multiple_actions(spark
 
 
 def test_local_spark_parquet_write_and_scan(spark, tmp_path):
+    """Verify local spark parquet write and scan.
+
+    Run only as an explicitly selected local Spark integration and inspect
+    existing workload actions and collected metadata.
+
+    """
     from linescope import profile
 
     if os.name == "nt" and not os.environ.get("HADOOP_HOME"):
@@ -101,6 +119,12 @@ def test_local_spark_parquet_write_and_scan(spark, tmp_path):
     reason="Only applies to Windows without Hadoop native tools.",
 )
 def test_local_spark_failed_write_preserves_error_and_records_failure(spark, tmp_path):
+    """Verify local spark failed write preserves error and records failure.
+
+    Run only as an explicitly selected local Spark integration and inspect
+    existing workload actions and collected metadata.
+
+    """
     from linescope import profile
 
     with pytest.raises(Exception, match=r"HADOOP_HOME|winutils"):

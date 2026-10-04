@@ -1,9 +1,24 @@
 # Profile a package
 
-The repository includes `examples/sample_package`, with a job and helper module:
+Run the package example from a checkout with Just installed:
 
 ```console
-uv run linescope --backend trace --include examples -m examples.sample_package
+just demo-package
+```
+
+The recipe runs `examples/package_example.py` and opens `package.html`. The
+runner profiles the dummy `sample_package`, which has a job and helper module.
+It includes both modules and the runner in the report, so you can follow calls
+across files without adding profiling code to the package.
+The runner processes 200,000 orders to give the sampling collector sustained
+work and allocations. Short lines can still have unavailable measurements.
+
+:: example: package_example.py
+
+You can also profile the package entry point with the CLI:
+
+```console
+uv run linescope --backend scalene --memory -m examples.sample_package
 ```
 
 The entry point calls two functions defined in the helper module. These are the
@@ -25,5 +40,5 @@ For your own package:
 
 ```console
 uv pip install -e .
-linescope --backend trace --include mypackage -m mypackage.job --limit 1000
+linescope --memory --include mypackage -m mypackage.job --limit 1000
 ```

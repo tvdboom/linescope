@@ -10,37 +10,53 @@ pip install linescope
 
 Run the bundled script from the checkout, or save the same code as `demo.py`:
 
-:: example: script.py
+:: example: script_example.py
 
 ```console
-uv run python examples/script.py
+uv run python examples/script_example.py
 ```
 
 A report opens in a new browser tab. Choose a file and click `load_readings`,
 `rolling_slow`, or `rolling_fast` to visit its definition. Time spent inside
 `sleep` belongs to your source line; standard-library internals are hidden. A
-trace run measures elapsed intervals and has more instrumentation overhead than
-sampling, so treat very short timings accordingly.
+Scalene run estimates line time by sampling and collects driver memory. Very
+short lines may receive no samples. Use Python 3.11–3.14 for this demo. The
+[shared memory collector](user_guide/backends.md#memory) needs no allocator
+preload.
 
-## Use the default sampling engine
+## Use the default collector
+
+Trace is the default on Python 3.11–3.15. Enable process RAM and Python
+allocation tracking without native allocator setup:
+
+```console
+linescope --memory -m examples.sample_package
+```
+
+Trace records line hits and wall intervals, plus net retained Python allocation
+changes when requested. Python allocation peaks stay unavailable; observed
+process RAM peaks are separate. See
+[backends](user_guide/backends.md) for the feature comparison and memory scope.
+
+## Use sampling
 
 Scalene is installed with LineScope on Python 3.11–3.14:
 
 ```console
-linescope --backend scalene --include examples -m examples.sample_package
+linescope --backend scalene --memory -m examples.sample_package
 ```
 
 The [sample package](examples/package.md) has no explicit profiling block, so
 the CLI controls collection. The adapter uses Scalene 2.3, including CPU
-sampling on Windows. Memory collection has additional native startup
-requirements; see [memory](user_guide/backends.md#memory). For Windows memory
-profiling, use Python 3.12 or newer with a supported Scalene binary wheel.
+sampling on Windows. Memory uses the shared collector; see
+[memory](user_guide/backends.md#memory) for its scope and limitations.
 
 ## Notebooks and Spark
 
 ```console
 pip install "linescope[notebook]"
 pip install "linescope[spark]"
+pip install "linescope[databricks]"
 ```
 
 In an existing Spark or Databricks environment, install LineScope without

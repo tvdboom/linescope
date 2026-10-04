@@ -12,12 +12,13 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass
 from uuid import uuid4
 
+from linescope.enums import NotebookCollection, RunStatus
 from linescope.model import ProfileResult
 
 
 @dataclass(frozen=True)
 class ChildContext:
-    """Portable correlation information for a child notebook.
+    """Carry portable correlation information for a child notebook.
 
     Transport these values through your own approved notebook parameters
     or artifact store. LineScope does not silently change notebook arguments.
@@ -29,6 +30,14 @@ class ChildContext:
 
     parent_id : str
         Parent profile run identifier.
+
+    Attributes
+    ----------
+    correlation_id : str
+        Unique token linking a child profile to its parent invocation.
+
+    parent_id : str
+        Identifier of the parent run that owns the child execution.
 
     See Also
     --------
@@ -157,12 +166,20 @@ def merge_child(parent: ProfileResult, child: ProfileResult, correlation_id: str
             replacement = deepcopy(child.root_run)
             replacement.id = invocation.id
             replacement.parent_id = owner.id
+            if invocation.status == RunStatus.FAILED:
+                replacement.status = invocation.status
+
             replacement.metadata = {**invocation.metadata, **replacement.metadata}
             replacement.metadata["correlation_id"] = correlation_id
             replacement.metadata["parent_wait_time_ns"] = invocation.elapsed_ns
-            replacement.metadata["collection"] = "child profile merged"
+            replacement.metadata["collection"] = (
+                NotebookCollection.MERGED
+                if child.capabilities.line_time
+                else NotebookCollection.SOURCE_ONLY
+            )
             replacement.metadata["child_backend"] = child.backend
             replacement.metadata["child_capabilities"] = asdict(child.capabilities)
+            replacement.metadata["child_source_ids"] = list(child.sources)
 
             for nested in replacement.children:
                 if nested.parent_id == child.root_run.id:

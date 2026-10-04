@@ -137,7 +137,6 @@ nav:
       - enums:
           - Backend: api/enums/backend.md
           - DisplayMode: api/enums/displaymode.md
-          - SparkMode: api/enums/sparkmode.md
           - SessionState: api/enums/sessionstate.md
           - SourceKind: api/enums/sourcekind.md
           - SymbolKind: api/enums/symbolkind.md
@@ -149,6 +148,8 @@ nav:
           - SymbolDefinition: api/model/symboldefinition.md
           - SymbolRef: api/model/symbolref.md
           - MemoryStats: api/model/memorystats.md
+          - ProcessMemoryStats: api/model/processmemorystats.md
+          - MemorySample: api/model/memorysample.md
           - LineStats: api/model/linestats.md
           - FunctionStats: api/model/functionstats.md
           - SparkExecutionStats: api/model/sparkexecutionstats.md
@@ -176,14 +177,16 @@ nav:
   - Examples:
       - Python script: examples/script.md
       - Package profiling: examples/package.md
+      - Memory growth: examples/memory.md
       - Notebook session: examples/notebook.md
       - Databricks notebooks: examples/databricks.md
       - Local Spark: examples/spark.md
+      - GPU workload: examples/gpu.md
       - Custom backend: examples/backend.md
       - Rendered notebooks:
-          - Notebook quickstart: examples/notebooks/quickstart.ipynb
-          - Databricks: examples/notebooks/databricks.ipynb
-          - Local Spark: examples/notebooks/local_spark.ipynb
+          - Notebook quickstart: examples/notebooks/notebook_example.ipynb
+          - Databricks: examples/notebooks/databricks_example.ipynb
+          - Local Spark: examples/notebooks/spark_example.ipynb
   - Development: development.md
   - FAQ: faq.md
   - Dependencies: dependencies.md

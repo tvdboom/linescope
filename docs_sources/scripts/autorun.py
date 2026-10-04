@@ -64,6 +64,12 @@ def execute(src: str) -> tuple[list[list[str]], list[str]]:
         original_hook = sys.displayhook
 
         def display(value: object) -> None:
+            """Capture an executable example's displayed expression value.
+
+            Preserve output for rendering while suppressing None expression
+            results.
+
+            """
             if value is not None:
                 print(repr(value))  # noqa: T201 - capture Python's display transcript
 

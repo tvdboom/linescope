@@ -50,6 +50,22 @@ def parse_plan(plan: Any, *, max_nodes: int = 1000) -> list[SparkOperator]:
     seen: set[str] = set()
 
     def visit(node: Any) -> SparkOperator | None:
+        """Normalize a physical plan node while bounding recursive traversal.
+
+        Avoid cycles and unwrap supported AQE or query-stage nodes without
+        forcing execution.
+
+        Parameters
+        ----------
+        node : Any
+            Syntax or plan node being visited or resolved.
+
+        Returns
+        -------
+        [SparkOperator] | None
+            Normalized result of this operation.
+
+        """
         if node is None or len(seen) >= max_nodes:
             return None
 

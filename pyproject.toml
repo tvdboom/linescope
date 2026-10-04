@@ -22,15 +22,23 @@ classifiers = [
     "Topic :: Software Development :: Debuggers",
     "Operating System :: OS Independent",
 ]
-dependencies = ["scalene>=2.3,<2.4; python_version < '3.15'"]
+dependencies = [
+    "click>=8.4.2",
+    "psutil>=5.9",
+    "scalene>=2.3,<2.4; python_version < '3.15'",
+]
 
 [project.optional-dependencies]
 notebook = ["ipython>=8.20", "ipykernel>=6.29"]
+databricks = ["linescope[notebook]", "databricks-sdk"]
 spark = ["pyspark>=3.5"]
-full = ["linescope[notebook,spark]"]
+full = ["linescope[notebook,spark,databricks]"]
 
 [dependency-groups]
 demo = ["jupyterlab>=4.4,<5", "nbconvert>=7.16,<8"]
+gpu = [
+    "torch>=2.8,<3; python_version < '3.15' and (sys_platform == 'linux' or sys_platform == 'win32')",
+]
 dev = [
     {include-group = "demo"},
     {include-group = "docs"},
@@ -41,7 +49,6 @@ dev = [
     {include-group = "utils"},
 ]
 docs = [
-    "click>=8.1",
     "mike>=2.1",
     "mkdocs>=1.6,<2",
     "mkdocs-autorefs>=1.4",
@@ -52,7 +59,7 @@ docs = [
     "pyyaml>=6",
     "regex>=2024.11.6",
 ]
-lint = ["ruff>=0.11", "ty>=0.0.1"]
+lint = ["databricks-sdk", "ruff>=0.11", "ty>=0.0.1"]
 pre-commit = ["pre-commit>=4.2", "pre-commit-uv>=4.1"]
 test = [
     "pytest>=8.3",
@@ -82,6 +89,14 @@ source-include = [
     "mkdocs.yml",
     "uv.lock",
 ]
+
+[tool.uv.sources]
+torch = {index = "pytorch-cu128"}
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
 
 [tool.ruff]
 cache-dir = ".cache/ruff"

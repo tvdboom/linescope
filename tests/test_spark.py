@@ -30,64 +30,199 @@ from linescope.spark.plans import capture_query, parse_plan
 
 
 class Plan:
+    """Expose a controlled Spark physical plan through a JVM-like interface.
+
+    Attributes
+    ----------
+    name : str
+        Controlled physical operator name returned by the fake JVM interface.
+
+    node_id : int
+        Controlled node identifier used to detect repeated plan nodes.
+
+    nodes : tuple[Plan, ...]
+        Child plan nodes returned by the fake JVM interface.
+
+    values : dict[str, Any]
+        Controlled raw operator metrics returned by the test double.
+
+    """
+
     def __init__(self, name="Filter", node_id=1, children=(), metrics=None):
+        """Initialize the controlled test state and recorded observations.
+
+        Retain only the state needed to observe arguments, results, and cleanup
+        in the surrounding test.
+
+        """
         self.name, self.node_id, self.nodes = name, node_id, children
         self.values = metrics or {}
 
     def nodeName(self):
+        """Return the controlled physical operator name.
+
+        Keep the operator label stable across plan normalization checks.
+
+        """
         return self.name
 
     def id(self):
+        """Return the controlled plan or query identifier.
+
+        Keep identifiers stable so cycle handling and query correlation can be
+        checked.
+
+        """
         return self.node_id
 
     def children(self):
+        """Return the controlled child plan nodes without executing Spark.
+
+        Preserve the supplied child order for recursive plan capture.
+
+        """
         return self.nodes
 
     def metrics(self):
+        """Return raw controlled operator metrics and unit metadata.
+
+        Retain unavailable values rather than substituting fabricated
+        measurements.
+
+        """
         return self.values
 
     def simpleString(self, max_fields):
+        """Return a controlled operator description for plan capture.
+
+        Ignore display limits because the test description is already bounded.
+
+        """
         del max_fields
         return self.name + " description"
 
     def toString(self):
+        """Return controlled physical plan text.
+
+        Provide plan text without consulting a real JVM.
+
+        """
         return self.name + " physical plan"
 
 
 class Query:
+    """Expose controlled query plans for Spark observation tests.
+
+    Attributes
+    ----------
+    plan : Plan
+        Controlled executed physical plan returned by this query.
+
+    analyzed : Callable[[], Plan]
+        Alias supplying a logical plan for the analyzed-plan stage.
+
+    optimizedPlan : Callable[[], Plan]
+        Alias supplying a logical plan for the optimized-plan stage.
+
+    sparkPlan : Callable[[], Plan]
+        Alias supplying a plan for the pre-execution physical stage.
+
+    """
+
     def __init__(self, plan):
+        """Initialize the controlled test state and recorded observations.
+
+        Retain only the state needed to observe arguments, results, and cleanup
+        in the surrounding test.
+
+        """
         self.plan = plan
 
     def id(self):
+        """Return the controlled plan or query identifier.
+
+        Keep identifiers stable so cycle handling and query correlation can be
+        checked.
+
+        """
         return 17
 
     def executedPlan(self):
+        """Return the controlled executed physical plan.
+
+        Preserve the exact fake plan object supplied by the case.
+
+        """
         return self.plan
 
     def logical(self):
+        """Return a controlled logical plan for preparation-stage assertions.
+
+        Avoid Spark execution while exposing preparation-stage metadata.
+
+        """
         return Plan("logical")
 
     analyzed = optimizedPlan = sparkPlan = logical
 
 
 class Session:
+    """Retain controlled integration results and observed source locations.
+
+    Attributes
+    ----------
+    registry : object
+        Minimal source registry used by the integration under test.
+
+    result : [ProfileResult]
+        Normalized result receiving observed notebook or Spark runs.
+
+    locations : list[Any]
+        Source locations supplied when child runs or actions are attached.
+
+    """
+
     def __init__(self):
+        """Initialize the controlled test state and recorded observations.
+
+        Retain only the state needed to observe arguments, results, and cleanup
+        in the surrounding test.
+
+        """
         self.registry = SimpleNamespace(snapshot=lambda _filename: None)
         self.result = ProfileResult(ProfileRun(), {}, "trace", BackendCapabilities())
         self.locations = []
 
     def add_spark_execution(self, execution, locations):
+        """Attach an observed action and record its source references.
+
+        Use controlled JVM-like plans and method wrappers to inspect action
+        attribution without Java or a Spark cluster.
+
+        """
         self.result.root_run.spark_executions.append(execution)
         self.locations.append(locations)
 
 
 def integration(session=None):
+    """Provide a Spark observer with controlled session and JVM behavior.
+
+    Use controlled JVM-like plans and method wrappers to inspect action
+    attribution without Java or a Spark cluster.
+
+    """
     observer = SparkIntegration(session or Session(), spark=SimpleNamespace())
     observer._listener_attempted = True
     return observer
 
 
 def test_scala_iteration_and_missing_collection():
+    """Verify scala iteration and missing collection.
+
+    Use controlled JVM-like plans and method wrappers to inspect action
+    attribution without Java or a Spark cluster.
+
+    """
     values = iter([1, 2])
     remaining = [2]
     iterator = SimpleNamespace(
@@ -100,6 +235,12 @@ def test_scala_iteration_and_missing_collection():
 
 
 def test_operator_metrics_preserve_raw_units_and_unknowns():
+    """Verify operator metrics preserve raw units and unknowns.
+
+    Use controlled JVM-like plans and method wrappers to inspect action
+    attribution without Java or a Spark cluster.
+
+    """
     metric = SimpleNamespace(
         name=lambda: SimpleNamespace(get=lambda: "output rows"),
         value=lambda: 123,
@@ -112,6 +253,12 @@ def test_operator_metrics_preserve_raw_units_and_unknowns():
 
 
 def test_aqe_final_plan_and_query_stage_are_unwrapped():
+    """Verify aqe final plan and query stage are unwrapped.
+
+    Use controlled JVM-like plans and method wrappers to inspect action
+    attribution without Java or a Spark cluster.
+
+    """
     scan = Plan("Scan parquet", 3)
     stage = Plan("ShuffleQueryStage", 2)
     stage.plan = lambda: scan
@@ -128,6 +275,12 @@ def test_aqe_final_plan_and_query_stage_are_unwrapped():
 
 
 def test_plan_cycles_and_size_are_bounded():
+    """Verify plan cycles and size are bounded.
+
+    Use controlled JVM-like plans and method wrappers to inspect action
+    attribution without Java or a Spark cluster.
+
+    """
     parent, child = Plan("parent", 1), Plan("child", 2)
     parent.nodes, child.nodes = [child], [parent]
     assert parse_plan(parent)[0].children[0].children == []
@@ -136,6 +289,12 @@ def test_plan_cycles_and_size_are_bounded():
 
 
 def test_nonfinal_and_input_plan_fallback_are_explicit():
+    """Verify nonfinal and input plan fallback are explicit.
+
+    Use controlled JVM-like plans and method wrappers to inspect action
+    attribution without Java or a Spark cluster.
+
+    """
     plan = Plan("AdaptiveSparkPlan")
     plan.executedPlan = lambda: Plan("Filter", 2)
     plan.isFinalPlan = lambda: False
@@ -146,6 +305,12 @@ def test_nonfinal_and_input_plan_fallback_are_explicit():
 
 
 def test_aqe_initial_physical_plan_preferred_over_unprepared_plan():
+    """Verify aqe initial physical plan preferred over unprepared plan.
+
+    Use controlled JVM-like plans and method wrappers to inspect action
+    attribution without Java or a Spark cluster.
+
+    """
     plan = Plan("AdaptiveSparkPlan")
     plan.executedPlan = lambda: Plan("final aggregate", 2)
     plan.initialPlan = lambda: Plan("initial exchanges", 3)
@@ -158,6 +323,12 @@ def test_aqe_initial_physical_plan_preferred_over_unprepared_plan():
 
 
 def test_record_action_invokes_callback_once_and_preserves_result():
+    """Verify record action invokes callback once and preserves result.
+
+    Use controlled JVM-like plans and method wrappers to inspect action
+    attribution without Java or a Spark cluster.
+
+    """
     observer = integration()
     frame = SimpleNamespace(_jdf=SimpleNamespace(queryExecution=lambda: Query(Plan())))
     calls = []
@@ -174,9 +345,21 @@ def test_record_action_invokes_callback_once_and_preserves_result():
 
 
 def test_action_error_preserved_and_missing_jvm_is_supported():
+    """Verify action error preserved and missing jvm is supported.
+
+    Use controlled JVM-like plans and method wrappers to inspect action
+    attribution without Java or a Spark cluster.
+
+    """
     observer = integration()
 
     def fail():
+        """Raise a controlled error for the failure path under test.
+
+        Keep the original exception observable so cleanup cannot silently
+        replace it.
+
+        """
         raise RuntimeError("original")
 
     with pytest.raises(RuntimeError, match="original"):
@@ -189,6 +372,12 @@ def test_action_error_preserved_and_missing_jvm_is_supported():
 
 
 def test_malformed_plan_metadata_never_discards_action_or_result():
+    """Verify malformed plan metadata never discards action or result.
+
+    Use controlled JVM-like plans and method wrappers to inspect action
+    attribution without Java or a Spark cluster.
+
+    """
     observer = integration()
     metric = SimpleNamespace(value=lambda: "not numeric")
     frame = SimpleNamespace(
@@ -200,6 +389,12 @@ def test_malformed_plan_metadata_never_discards_action_or_result():
 
 
 def test_listener_replaces_input_fallback_with_actual_query():
+    """Verify listener replaces input fallback with actual query.
+
+    Use controlled JVM-like plans and method wrappers to inspect action
+    attribution without Java or a Spark cluster.
+
+    """
     observer = integration()
     observer._active = True
     frame = SimpleNamespace(_jdf=SimpleNamespace(queryExecution=lambda: Query(Plan("input"))))
@@ -214,6 +409,12 @@ def test_listener_replaces_input_fallback_with_actual_query():
 
 
 def test_listener_never_guesses_between_ambiguous_actions():
+    """Verify listener never guesses between ambiguous actions.
+
+    Use controlled JVM-like plans and method wrappers to inspect action
+    attribution without Java or a Spark cluster.
+
+    """
     observer = integration()
     observer._active = True
     observer.record_action(object(), "count", lambda: 1)
@@ -226,6 +427,12 @@ def test_listener_never_guesses_between_ambiguous_actions():
 
 
 def test_stage_counts_and_missing_retention():
+    """Verify stage counts and missing retention.
+
+    Use controlled JVM-like plans and method wrappers to inspect action
+    attribution without Java or a Spark cluster.
+
+    """
     stage = SimpleNamespace(name="aggregate", numTasks=8, numCompletedTasks=8, numFailedTasks=0)
     tracker = SimpleNamespace(
         getJobInfo=lambda job: SimpleNamespace(stageIds=[2, 3]) if job == 1 else None,
@@ -239,6 +446,12 @@ def test_stage_counts_and_missing_retention():
 
 
 def test_optional_stage_metrics_distinguish_wall_cumulative_and_task_quantiles():
+    """Check the expected behavior in this regression case.
+
+    Verify optional stage metrics distinguish wall cumulative and task
+    quantiles.
+
+    """
     stage = SimpleNamespace(name="aggregate", numTasks=8, numCompletedTasks=8, numFailedTasks=0)
     tracker = SimpleNamespace(
         getJobInfo=lambda _job: SimpleNamespace(stageIds=[2]), getStageInfo=lambda _stage_id: stage
@@ -284,6 +497,11 @@ def test_optional_stage_metrics_distinguish_wall_cumulative_and_task_quantiles()
 
 
 def test_execution_executor_time_deduplicates_stages_and_excludes_reused_work():
+    """Check the expected behavior in this regression case.
+
+    Verify execution executor time deduplicates stages and excludes reused work.
+
+    """
     tracker = SimpleNamespace(getJobInfo=lambda _job: SimpleNamespace(stageIds=[1, 2]))
     context = SimpleNamespace(statusTracker=lambda: tracker)
     stages = [
@@ -305,6 +523,12 @@ def test_execution_executor_time_deduplicates_stages_and_excludes_reused_work():
 
 @pytest.mark.parametrize("fault", ["missing_stage", "missing_metric", "overlap", "unknown_job"])
 def test_execution_executor_time_stays_unknown_when_status_is_incomplete(fault):
+    """Verify execution executor time stays unknown when status is incomplete.
+
+    Use controlled JVM-like plans and method wrappers to inspect action
+    attribution without Java or a Spark cluster.
+
+    """
     tracker = SimpleNamespace(
         getJobInfo=lambda _job: None if fault == "unknown_job" else SimpleNamespace(stageIds=[1])
     )
@@ -327,21 +551,51 @@ def test_execution_executor_time_stays_unknown_when_status_is_incomplete(fault):
 
 
 def test_automatic_wrappers_preserve_laziness_lineage_multiple_actions_and_restore(monkeypatch):
+    """Check the expected behavior in this regression case.
+
+    Verify automatic wrappers preserve laziness lineage multiple actions and
+    restore.
+
+    """
     calls = []
 
     class DataFrame:
+        """Emulate lazy transformations and observed Spark actions.
+
+        Return controlled lazy transformation and action results for wrapper
+        assertions.
+
+        """
+
         def filter(self, condition):
+            """Return a lazy transformed DataFrame without triggering an action.
+
+            Retain transformation lineage for attribution when a later action
+            runs.
+
+            """
             del condition
             calls.append("filter")
             return DataFrame()
 
         def count(self):
+            """Provide the controlled behavior used by this test.
+
+            Return a controlled Spark action result for observation assertions.
+
+            """
             calls.append("count")
             return 10
 
     original = DataFrame.count
 
     def install():
+        """Install controlled Spark method wrappers for lifecycle assertions.
+
+        Use controlled JVM-like plans and method wrappers to inspect action
+        attribution without Java or a Spark cluster.
+
+        """
         _install_class(DataFrame, {"filter"}, "transform")
         _install_class(DataFrame, {"count"}, "action")
 
@@ -366,8 +620,26 @@ def test_automatic_wrappers_preserve_laziness_lineage_multiple_actions_and_resto
 
 
 def test_wrappers_ignore_other_threads_and_restore_nested_sessions(monkeypatch):
+    """Verify wrappers ignore other threads and restore nested sessions.
+
+    Use controlled JVM-like plans and method wrappers to inspect action
+    attribution without Java or a Spark cluster.
+
+    """
+
     class Frame:
+        """Provide a minimal DataFrame stand-in for action observation tests.
+
+        Keep callbacks distinguishable for thread and session ownership checks.
+
+        """
+
         def count(self):
+            """Provide the controlled behavior used by this test.
+
+            Return a controlled Spark action result for observation assertions.
+
+            """
             return 1
 
     original = Frame.count
@@ -396,17 +668,60 @@ def test_wrappers_ignore_other_threads_and_restore_nested_sessions(monkeypatch):
 
 
 def test_writer_uses_owning_dataframe_and_does_not_duplicate_nested_action(monkeypatch):
+    """Verify writer uses owning dataframe and does not duplicate nested action.
+
+    Use controlled JVM-like plans and method wrappers to inspect action
+    attribution without Java or a Spark cluster.
+
+    """
+
     class Frame:
+        """Provide a minimal DataFrame stand-in for action observation tests.
+
+        Attributes
+        ----------
+        _jdf : SimpleNamespace
+            Fake JVM DataFrame exposing a controlled executed query.
+
+        """
+
         _jdf = SimpleNamespace(queryExecution=lambda: Query(Plan("Scan")))
 
     class Writer:
+        """Emulate nested Spark write actions and their DataFrame ownership.
+
+        Attributes
+        ----------
+        _df : Frame
+            Owning DataFrame used to correlate nested writer actions.
+
+        """
+
         def __init__(self, frame):
+            """Initialize the controlled test state and recorded observations.
+
+            Retain only the state needed to observe arguments, results, and
+            cleanup in the surrounding test.
+
+            """
             self._df = frame
 
         def save(self):
+            """Simulate a Spark write action through its owning DataFrame.
+
+            Keep nested writes observable without introducing a real Spark
+            action.
+
+            """
             return self.parquet()
 
         def parquet(self):
+            """Provide the controlled behavior used by this test.
+
+            Delegate a simulated parquet write through the controlled save
+            action.
+
+            """
             return "written"
 
     monkeypatch.setattr(

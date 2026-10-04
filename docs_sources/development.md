@@ -11,13 +11,18 @@ profiling.
 ```console
 git clone https://github.com/tvdboom/linescope.git
 cd linescope
-uv sync --locked
+uv sync --locked --all-extras --all-groups
 uv run pre-commit install
 ```
 
 The source lives under `src/linescope`. This is a pure Python package. Normal
 development needs no Rust toolchain, Node installation, [Java] runtime, or Spark
 cluster. Optional integrations have their own environments.
+
+The lint group installs `databricks-sdk` for its official `dbutils` stubs and
+SDK client annotations. Integration types are imported under `TYPE_CHECKING`
+with postponed annotations, so they add no runtime imports to LineScope.
+Normal package installations do not include the development groups.
 
 ## Everyday checks
 
@@ -34,6 +39,14 @@ hygiene checks.
 `just` is optional: `uv tool install rust-just`, then `just --list`. The package
 named `rust-just` supplies the task-runner binary; LineScope itself contains no
 Rust code.
+
+Run `just sync` to install all project dependencies, extras, and dependency
+groups, including development tools, notebook demos, Spark, Databricks, and
+CUDA-enabled PyTorch where supported. Other recipes use `uv run` with its
+default inexact sync: they update dependencies when the project changes and
+retain installed packages they do not require. Pre-commit's type checker also
+uses inexact synchronization. Tox and pre-commit still manage their own isolated
+tool environments.
 
 Use Backtide's NumPy-style docstrings with an imperative summary, a description,
 and `Parameters`, `Returns`, and `See Also` sections where useful. Separate
@@ -186,8 +199,12 @@ original exception.
 Databricks itself requires a manual workspace check: profile a cell, several
 cells, inline `%run`, a child notebook call, and a Spark action. Verify source
 identity, one final report, child relationships, parameter redaction, and
-available final plans. Mock tests cannot validate workspace access policies or
-every Databricks runtime variation.
+available final plans. For automatic child collection, check full source and
+line measurements after normal completion, a failed cell, and notebook exit.
+Check nested calls, relative paths, original argument/return values, and removal
+of temporary sibling notebooks and profile files. Restricted workspace access
+must retain available source and honest warnings. Mock tests cannot validate
+workspace access policies or every Databricks runtime variation.
 
 For report acceptance, open a generated HTML file and verify file, symbol,
 Spark, and notebook links, browser back/forward navigation, light/dark styling,
@@ -270,7 +287,8 @@ notebooks** navigation in `mkdocs.yml`. Link to the `.ipynb` path from Markdown
 to open its rendered page. The plugin's `include_source` option copies the
 original notebook beside that page, and `overrides/main.html` uses `page.nb_url`
 for the download button. Markdown guides can set `notebook` metadata to the
-download path, for example `examples/notebooks/quickstart/quickstart.ipynb`.
+download path, for example
+`examples/notebooks/notebook_example/notebook_example.ipynb`.
 
 ### Theme
 
@@ -278,8 +296,6 @@ download path, for example `examples/notebooks/quickstart/quickstart.ipynb`.
 `overrides/home.html` provides the branded landing page. The shared stylesheet
 applies teal and cyan colors in light and dark modes. Reports have their own
 embedded assets and do not depend on MkDocs.
-
-![The LineScope Material documentation home page](img/documentation.jpg)
 
 Versioned publication uses `mike`; see [releasing](#releasing).
 

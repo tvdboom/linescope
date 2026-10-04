@@ -14,6 +14,7 @@ from linescope.model import (
     BackendCapabilities,
     LineStats,
     MemoryStats,
+    ProcessMemoryStats,
     ProfileResult,
     ProfileRun,
     SourceLocation,
@@ -24,11 +25,21 @@ from tests.test_render import ReportDOM, cell_values
 
 
 def test_merged_child_uses_its_own_memory_and_sampling_capabilities():
+    """Verify merged child uses its own memory and sampling capabilities.
+
+    Render controlled parent and child profiles and inspect metric ownership
+    without mutating input snapshots.
+
+    """
     parent = SourceUnit("parent", "parent.py", "invoke_child()\n")
     child = SourceUnit("child", "child.py", "value = 1\n# unobserved\n")
     child_run = ProfileRun(
         source=child,
-        lines=[LineStats(SourceLocation(child.id, 1), 2_000_000, memory=MemoryStats(1024, 2048))],
+        lines=[
+            LineStats(
+                SourceLocation(child.id, 1), 2_000_000, ram=ProcessMemoryStats(2048, 1024, 4096)
+            )
+        ],
         metadata={
             "child_backend": "scalene",
             "child_capabilities": asdict(BackendCapabilities(sampled=True, memory=True)),
@@ -57,17 +68,49 @@ def test_merged_child_uses_its_own_memory_and_sampling_capabilities():
         if "child.py" in "".join(item.text() for item in page.find_all("h1"))
     )
     assert "Python time" in parent_page.text()
-    assert "Driver memory" not in parent_page.text()
+    assert "RAM after" not in parent_page.text()
     assert "Estimated time" in child_page.text()
-    assert "Driver memory Δ" in child_page.text()
+    assert "RAM change" in child_page.text()
+    assert [button.attributes["data-order"] for button in parent_page.find_all("button")] == [
+        "line",
+        "time",
+    ]
+    assert [button.attributes["data-order"] for button in child_page.find_all("button")] == [
+        "line",
+        "time",
+        "memory",
+    ]
     rows = child_page.find_all("tr", css="source-row")
-    assert cell_values(rows[0])[1:6] == ["2.00 ms", "—", "—", "+1.0 KiB", "2.0 KiB"]
-    assert cell_values(rows[1])[1:6] == ["—", "—", "—", "—", "—"]
+    assert [header.text() for header in parent_page.find_all("th")] == [
+        "Line",
+        "Python time",
+        "Hits",
+        "Avg / hit",
+        "Source",
+    ]
+    assert [header.text() for header in child_page.find_all("th")] == [
+        "Line",
+        "Estimated time",
+        "RAM after",
+        "RAM change",
+        "Peak RAM",
+        "Python allocation Δ",
+        "Source",
+    ]
+    assert cell_values(rows[0])[1:5] == ["2.00 ms", "2.0 KiB", "+1.0 KiB", "4.0 KiB"]
+    assert cell_values(rows[1])[1:5] == ["—"] * 4
+    assert cell_values(rows[0])[5] == "—"
+    assert cell_values(rows[1])[5] == "—"
     assert "Mixed collection" in document.text()
     assert "Observed lines" in document.text()
 
 
 def test_shared_snapshot_combines_child_measurements_without_mutating_inputs():
+    """Check the expected behavior in this regression case.
+
+    Verify shared snapshot combines child measurements without mutating inputs.
+
+    """
     unit = SourceUnit("shared", "shared.py", "work()\n")
     parent_line = LineStats(SourceLocation(unit.id, 1), 2_000_000, 2, MemoryStats(100, 1000))
     child_line = LineStats(SourceLocation(unit.id, 1), 3_000_000, 3, MemoryStats(-50, 2000))
@@ -78,7 +121,7 @@ def test_shared_snapshot_combines_child_measurements_without_mutating_inputs():
     document = ReportDOM(render_html(result)).root
     rows = document.find_all("tr", css="source-row")
     assert len(rows) == 1
-    assert cell_values(rows[0])[1:6] == ["5.00 ms", "5", "1.00 ms", "+50 B", "2.0 KiB"]
+    assert cell_values(rows[0])[1:7] == ["5.00 ms", "5", "1.00 ms", "—", "—", "—"]
     assert parent_line.wall_time_ns == 2_000_000
     assert parent_line.hits == 2
     assert parent_line.memory == MemoryStats(100, 1000)
@@ -87,8 +130,64 @@ def test_shared_snapshot_combines_child_measurements_without_mutating_inputs():
     assert cell_values(document.find_all("tr", css="source-row")[0])[2:4] == ["—", "—"]
 
 
+def test_shared_trace_and_sampling_sources_preserve_known_counts():
+    """Verify shared trace and sampling sources preserve known counts.
+
+    Render controlled parent and child profiles and inspect metric ownership
+    without mutating input snapshots.
+
+    """
+    unit = SourceUnit("shared", "shared.py", "traced()\nsampled()\n# unobserved\n")
+    parent_line = LineStats(SourceLocation(unit.id, 1), 2000, hits=2)
+    child_line = LineStats(SourceLocation(unit.id, 2), 3000, samples=3)
+    child = ProfileRun(
+        lines=[child_line],
+        metadata={
+            "child_backend": "scalene",
+            "child_capabilities": asdict(BackendCapabilities(sampled=True, sample_counts=True)),
+        },
+    )
+    result = ProfileResult(
+        ProfileRun(lines=[parent_line], children=[child]),
+        {unit.id: unit},
+        "trace",
+        BackendCapabilities(hit_counts=True),
+    )
+    table = ReportDOM(render_html(result)).root.find_all("table", css="source-table")[0]
+    assert [header.text() for header in table.find_all("th")] == [
+        "Line",
+        "Estimated time",
+        "Hits",
+        "Avg / hit",
+        "Samples",
+        "Source",
+    ]
+    rows = table.find_all("tr", css="source-row")
+    assert cell_values(rows[0])[1:5] == ["2.0 µs", "2", "1.0 µs", "—"]
+    assert cell_values(rows[1])[1:5] == ["3.0 µs", "—", "—", "3"]
+    assert cell_values(rows[2])[1:5] == ["—"] * 4
+
+    # Counts become unavailable when collectors contribute to the same line.
+    child_line.location = SourceLocation(unit.id, 1)
+    table = ReportDOM(render_html(result)).root.find_all("table", css="source-table")[0]
+    assert [header.text() for header in table.find_all("th")] == [
+        "Line",
+        "Estimated time",
+        "Source",
+    ]
+    assert cell_values(table.find_all("tr", css="source-row")[0]) == ["1", "5.0 µs", "traced()"]
+    assert parent_line.hits == 2
+    assert child_line.samples == 3
+
+
 @pytest.mark.parametrize("override", [False, True])
 def test_nested_runs_inherit_nearest_ancestor_capabilities(override):
+    """Verify nested runs inherit nearest ancestor capabilities.
+
+    Render controlled parent and child profiles and inspect metric ownership
+    without mutating input snapshots.
+
+    """
     trace = BackendCapabilities(hit_counts=True)
     sampled = BackendCapabilities(sampled=True, memory=True)
     units = {
@@ -122,12 +221,12 @@ def test_nested_runs_inherit_nearest_ancestor_capabilities(override):
         if override:
             assert "Python time" in page.text()
             assert "Estimated time" not in page.text()
-            assert "Driver memory" not in page.text()
+            assert "RAM after" not in page.text()
             assert cell_values(page.find_all("tr", css="source-row")[1])[1:4] == ["—", "0", "—"]
         else:
             assert "Estimated time" in page.text()
-            assert "Driver memory Δ" in page.text()
-            assert cell_values(page.find_all("tr", css="source-row")[1])[1:6] == ["—"] * 5
+            assert "RAM change" in page.text()
+            assert cell_values(page.find_all("tr", css="source-row")[1])[1:4] == ["—"] * 3
     assert "Python time" in pages["sibling.py"].text()
-    assert "Driver memory" not in pages["sibling.py"].text()
+    assert "RAM after" not in pages["sibling.py"].text()
     assert cell_values(pages["sibling.py"].find_all("tr", css="source-row")[1])[2] == "0"

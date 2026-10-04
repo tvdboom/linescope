@@ -5,6 +5,9 @@ GPU work is a separate measurement domain from Python-driver time and memory. A
 Python line that launches device work can return before that work finishes, so
 driver line timings alone do not describe GPU execution.
 
+Run the [GPU example](../examples/gpu.md) for a complete CUDA workload and a
+`just demo-gpu` recipe.
+
 ## Collection support
 
 The Python API accepts `gpu=True`, and the CLI and notebook cell magic accept

@@ -10,9 +10,11 @@ you have any other questions, don't hesitate to create a new
     Python 3.15 offers Trace and Tachyon. See the [dependencies] page.
 
 ??? faq "Which backend should I choose?"
-    Scalene is installed with LineScope and is the default on Python 3.11–3.14.
-    Trace is portable and is the default on Python 3.15. Tachyon provides
-    Python 3.15 sampling. See [backends](user_guide/backends.md).
+    Trace is the default on Python 3.11–3.15. All backends support optional
+    process RAM and retained Python allocation tracking. Select Scalene for
+    Python 3.11–3.14 sampling or GPU collection. Tachyon provides Python 3.15
+    sampling. See
+    [backends](user_guide/backends.md).
 
 ??? faq "Does a missing time mean a line never ran?"
     No. Sampling may miss short lines. Hit counts are shown only when

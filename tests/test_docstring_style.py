@@ -22,6 +22,12 @@ MARKDOWN_FILES = sorted((ROOT / "docs_sources").rglob("*.md"))
 
 @pytest.mark.parametrize("path", PYTHON_FILES, ids=lambda path: path.relative_to(ROOT).as_posix())
 def test_docstrings_follow_repository_conventions(path):
+    """Verify docstrings follow repository conventions.
+
+    Inspect repository source directly so style requirements also cover
+    interfaces exempted from Ruff docstring linting.
+
+    """
     source = path.read_text(encoding="utf-8")
     tree = ast.parse(source)
     module_doc = ast.get_docstring(tree)
@@ -33,8 +39,7 @@ def test_docstrings_follow_repository_conventions(path):
             continue
 
         doc = ast.get_docstring(node)
-        if doc is None:
-            continue
+        assert doc is not None, f"Line {getattr(node, 'lineno', 1)}: add a docstring"
 
         value = node.body[0].value
         literal = ast.get_source_segment(source, value)
@@ -69,6 +74,12 @@ def test_docstrings_follow_repository_conventions(path):
     "path", MARKDOWN_FILES, ids=lambda path: path.relative_to(ROOT).as_posix()
 )
 def test_markdown_uses_short_lines_and_single_inline_backticks(path):
+    """Verify markdown uses short lines and single inline backticks.
+
+    Inspect repository source directly so style requirements also cover
+    interfaces exempted from Ruff docstring linting.
+
+    """
     source = path.read_text(encoding="utf-8")
     for number, line in enumerate(source.splitlines(), 1):
         assert len(line) <= 80, f"Line {number}: Markdown exceeds 80 columns"

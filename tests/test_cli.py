@@ -12,9 +12,21 @@ import json
 from pathlib import Path
 import sys
 
+from click.testing import CliRunner
 import pytest
 
 from linescope import cli
+
+
+@pytest.fixture
+def runner():
+    """Provide an isolated Click command runner for CLI assertions.
+
+    Invoke the CLI through an isolated runner and inspect its arguments, saved
+    report, or restored process state.
+
+    """
+    return CliRunner()
 
 
 @pytest.fixture(autouse=True)
@@ -55,43 +67,85 @@ class TestCommandParsing:
 
     @pytest.mark.parametrize(
         ("argument", "expected"),
-        [("--help", "Profile your Python source"), ("--version", "LineScope 0.1.0")],
+        [("--help", "Profile your Python source"), ("--version", "LineScope, version 0.1.0")],
     )
-    def test_help_and_version(self, argument, expected, capsys):
-        with pytest.raises(SystemExit) as error:
-            cli.main([argument])
-        assert error.value.code == 0
-        assert expected in capsys.readouterr().out
+    def test_help_and_version(self, runner, argument, expected):
+        """Verify help and version.
+
+        Invoke the CLI through an isolated runner and inspect its arguments,
+        saved report, or restored process state.
+
+        """
+        result = runner.invoke(cli.main, [argument])
+        assert result.exit_code == 0
+        assert expected in result.stdout
+
+    def test_help_lists_options_without_api_docstring(self, runner):
+        """Verify help lists options without api docstring.
+
+        Invoke the CLI through an isolated runner and inspect its arguments,
+        saved report, or restored process state.
+
+        """
+        result = runner.invoke(cli.main, ["--help"])
+        assert result.exit_code == 0
+        assert "--memory / --no-memory" in result.stdout
+        assert "--display [none|end]" in result.stdout
+        assert "Parameters" not in result.stdout
+        assert "default=None" not in result.stdout
 
     @pytest.mark.parametrize(
         ("arguments", "message"),
         [
             ([], "provide a script or -m MODULE"),
-            (["--not-a-real-option"], "unrecognized arguments"),
-            (["--display", "invalid", "main.py"], "invalid choice"),
-            (["--backend"], "expected one argument"),
+            (["--not-a-real-option"], "No such option"),
+            (["--display", "invalid", "main.py"], "Invalid value for '--display'"),
+            (["--backend"], "requires an argument"),
             (["-m"], "-m requires a module name"),
         ],
     )
-    def test_invalid_arguments(self, arguments, message, capsys):
-        with pytest.raises(SystemExit) as error:
-            cli.main(arguments)
-        assert error.value.code == 2
-        assert message in capsys.readouterr().err
+    def test_invalid_arguments(self, runner, arguments, message):
+        """Verify invalid arguments.
 
-    def test_missing_script(self, tmp_path, capsys):
-        with pytest.raises(SystemExit) as error:
-            cli.main([str(tmp_path / "missing.py")])
-        assert error.value.code == 2
-        assert "script does not exist" in capsys.readouterr().err
+        Invoke the CLI through an isolated runner and inspect its arguments,
+        saved report, or restored process state.
 
-    def test_target_directory_rejected(self, tmp_path, capsys):
-        with pytest.raises(SystemExit):
-            cli.main([str(tmp_path)])
-        assert "script does not exist" in capsys.readouterr().err
+        """
+        result = runner.invoke(cli.main, arguments)
+        assert result.exit_code == 2
+        assert message in result.stderr
+
+    def test_missing_script(self, runner, tmp_path):
+        """Verify missing script.
+
+        Invoke the CLI through an isolated runner and inspect its arguments,
+        saved report, or restored process state.
+
+        """
+        result = runner.invoke(cli.main, [str(tmp_path / "missing.py")])
+        assert result.exit_code == 2
+        assert "script does not exist" in result.stderr
+
+    def test_target_directory_rejected(self, runner, tmp_path):
+        """Verify target directory rejected.
+
+        Invoke the CLI through an isolated runner and inspect its arguments,
+        saved report, or restored process state.
+
+        """
+        result = runner.invoke(cli.main, [str(tmp_path)])
+        assert result.exit_code == 2
+        assert "script does not exist" in result.stderr
 
     def test_repeated_include_exclude_options(self):
-        parsed = cli.build_parser().parse_args(
+        """Verify repeated include exclude options.
+
+        Invoke the CLI through an isolated runner and inspect its arguments,
+        saved report, or restored process state.
+
+        """
+        with cli.main.make_context(
+            "linescope",
             [
                 "--include",
                 "pkg",
@@ -103,12 +157,76 @@ class TestCommandParsing:
                 "**/generated.py",
                 "script.py",
                 "--memory",
-            ]
+            ],
+        ) as ctx:
+            assert ctx.params["include"] == ("pkg", "other")
+            assert ctx.params["exclude"] == ("tests", "**/generated.py")
+            assert ctx.params["target"] == ("script.py", "--memory")
+            assert ctx.params["memory"] is None
+
+    @pytest.mark.parametrize("status", [0, 7])
+    def test_memory_preserves_arguments_and_exit_status(self, runner, tmp_path, status):
+        """Verify memory profiling preserves arguments and exit status.
+
+        Invoke the CLI through an isolated runner and inspect its arguments,
+        saved report, or restored process state.
+
+        """
+        script = tmp_path / "worker.py"
+        recorded = tmp_path / "arguments.json"
+        script.write_text(
+            "import json, sys\n"
+            "from pathlib import Path\n"
+            f"Path({str(recorded)!r}).write_text(json.dumps(sys.argv[1:]))\n"
+            f"raise SystemExit({status})\n",
+            encoding="utf-8",
         )
-        assert parsed.include == ["pkg", "other"]
-        assert parsed.exclude == ["tests", "**/generated.py"]
-        assert parsed.target == ["script.py", "--memory"]
-        assert parsed.memory is None
+        arguments = [
+            "--memory",
+            "--display",
+            "none",
+            "--no-spark",
+            "--no-notebooks",
+            str(script),
+            "--help",
+            "two words",
+        ]
+        result = runner.invoke(cli.main, arguments)
+        assert result.exit_code == status
+        assert json.loads(recorded.read_text()) == ["--help", "two words"]
+
+    @pytest.mark.parametrize("option", ["memory", "gpu", "spark", "notebooks"])
+    @pytest.mark.parametrize("flag", [None, True, False])
+    def test_boolean_options_follow_configuration_unless_explicit(
+        self, runner, tmp_path, monkeypatch, option, flag
+    ):
+        """Verify boolean options follow configuration unless explicit.
+
+        Invoke the CLI through an isolated runner and inspect its arguments,
+        saved report, or restored process state.
+
+        """
+        (tmp_path / "pyproject.toml").write_text(
+            f'[tool.linescope]\nbackend="trace"\n{option}=true\n'
+        )
+        script = tmp_path / "worker.py"
+        script.write_text("value = 42\n")
+        captured = {}
+
+        def capture_session(**options):
+            """Provide the controlled behavior used by this test.
+
+            Capture effective session options without starting integrations.
+
+            """
+            captured.update(vars(cli.resolve_config(**options)))
+            raise SystemExit(0)
+
+        monkeypatch.setattr(cli, "Session", capture_session)
+        arguments = [] if flag is None else [f"--{'' if flag else 'no-'}{option}"]
+        result = runner.invoke(cli.main, [*arguments, str(script)])
+        assert result.exit_code == 0, result.output
+        assert captured[option] is (True if flag is None else flag)
 
 
 class TestScriptExecution:
@@ -118,7 +236,13 @@ class TestScriptExecution:
 
     """
 
-    def test_script_argv_unicode_paths_and_process_restoration(self, tmp_path, capsys):
+    def test_script_argv_unicode_paths_and_process_restoration(self, runner, tmp_path):
+        """Verify script argv unicode paths and process restoration.
+
+        Invoke the CLI through an isolated runner and inspect its arguments,
+        saved report, or restored process state.
+
+        """
         script = tmp_path / "worker café.py"
         data = tmp_path / "arguments.json"
         report = tmp_path / "profile.html"
@@ -130,10 +254,11 @@ class TestScriptExecution:
         )
         original_argv, original_path = sys.argv, sys.path
         argv_values, path_values = sys.argv[:], sys.path[:]
-        assert (
-            cli.main([*cli_options(report), str(script), str(data), "--flag", "two words", "🍋"])
-            == 0
+        result = runner.invoke(
+            cli.main,
+            [*cli_options(report), str(script), str(data), "--flag", "two words", "🍋"],
         )
+        assert result.exit_code == 0, result.output
         recorded = json.loads(data.read_text())
         assert recorded["argv"] == [str(script), str(data), "--flag", "two words", "🍋"]
         assert recorded["name"] == "__main__"
@@ -144,24 +269,68 @@ class TestScriptExecution:
         assert sys.argv == argv_values
         assert sys.path == path_values
         assert report.is_file()
-        assert "LineScope report:" in capsys.readouterr().err
+        assert "LineScope report:" in result.stderr
 
-    def test_explicit_argument_separator(self, tmp_path):
+    def test_explicit_argument_separator(self, runner, tmp_path):
+        """Verify explicit argument separator.
+
+        Invoke the CLI through an isolated runner and inspect its arguments,
+        saved report, or restored process state.
+
+        """
         script = tmp_path / "worker.py"
         script.write_text("value = 42\n")
         report = tmp_path / "profile.html"
-        assert cli.main([*cli_options(report), "--", str(script)]) == 0
+        assert runner.invoke(cli.main, [*cli_options(report), "--", str(script)]).exit_code == 0
         assert "value = " in report.read_text(encoding="utf-8")
 
+    @pytest.mark.parametrize("module", [False, True])
+    def test_target_options_are_forwarded_verbatim(self, runner, tmp_path, monkeypatch, module):
+        """Verify target options are forwarded verbatim.
+
+        Invoke the CLI through an isolated runner and inspect its arguments,
+        saved report, or restored process state.
+
+        """
+        script = tmp_path / "argument_workload.py"
+        script.write_text("import json, sys\nprint(json.dumps(sys.argv[1:]))\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        flags = ["--help", "--version", "--backend", "custom", "--display=none", "--", "-m"]
+        target = ["-m", script.stem] if module else [str(script)]
+
+        try:
+            result = runner.invoke(
+                cli.main, [*cli_options(tmp_path / "profile.html"), *target, *flags]
+            )
+        finally:
+            sys.modules.pop(script.stem, None)
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout) == flags
+
     def test_reads_default_argv(self, tmp_path, monkeypatch):
+        """Verify reads default argv.
+
+        Invoke the CLI through an isolated runner and inspect its arguments,
+        saved report, or restored process state.
+
+        """
         script = tmp_path / "worker.py"
         script.write_text("value = 42\n")
         report = tmp_path / "profile.html"
         monkeypatch.setattr(sys, "argv", ["linescope", *cli_options(report), str(script)])
-        assert cli.main() == 0
+        with pytest.raises(SystemExit) as error:
+            cli.main()
+        assert error.value.code == 0
         assert report.is_file()
 
-    def test_nearest_project_settings(self, tmp_path):
+    def test_nearest_project_settings(self, runner, tmp_path):
+        """Verify nearest project settings.
+
+        Invoke the CLI through an isolated runner and inspect its arguments,
+        saved report, or restored process state.
+
+        """
         (tmp_path / "pyproject.toml").write_text(
             '[tool.linescope]\nbackend="trace"\nnotebooks=false\nspark=false\nexclude=["ignored.py"]\n'
         )
@@ -170,13 +339,18 @@ class TestScriptExecution:
         script = subdirectory / "worker.py"
         script.write_text("PROJECT_CONFIG_WORKLOAD = 42\n")
         report = tmp_path / "profile.html"
-        assert cli.main(["-o", str(report), str(script)]) == 0
+        assert runner.invoke(cli.main, ["-o", str(report), str(script)]).exit_code == 0
         text = report.read_text(encoding="utf-8")
         assert "PROJECT_CONFIG_WORKLOAD" in text
         assert "trace" in text
 
-    def test_actual_include_and_exclude_filtering(self, tmp_path, monkeypatch):
-        del monkeypatch
+    def test_actual_include_and_exclude_filtering(self, runner, tmp_path):
+        """Verify actual include and exclude filtering.
+
+        Invoke the CLI through an isolated runner and inspect its arguments,
+        saved report, or restored process state.
+
+        """
         package = tmp_path / "cli_filter_package"
         package.mkdir()
         (package / "__init__.py").write_text("")
@@ -190,7 +364,8 @@ class TestScriptExecution:
         report = tmp_path / "profile.html"
         try:
             assert (
-                cli.main(
+                runner.invoke(
+                    cli.main,
                     [
                         *cli_options(report),
                         "--include",
@@ -200,8 +375,8 @@ class TestScriptExecution:
                         "--exclude",
                         "cli_filter_package/omit.py",
                         str(script),
-                    ]
-                )
+                    ],
+                ).exit_code
                 == 0
             )
         finally:
@@ -215,37 +390,80 @@ class TestScriptExecution:
         assert "INCLUDED_SOURCE_MARKER" in html
         assert "EXCLUDED_SOURCE_MARKER" not in html
 
-    def test_output_destination_from_project_configuration(self, tmp_path, monkeypatch):
+    def test_output_destination_from_project_configuration(self, runner, tmp_path, monkeypatch):
+        """Verify output destination from project configuration.
+
+        Invoke the CLI through an isolated runner and inspect its arguments,
+        saved report, or restored process state.
+
+        """
         monkeypatch.chdir(tmp_path)
         (tmp_path / "pyproject.toml").write_text(
             '[tool.linescope]\nbackend="trace"\nnotebooks=false\nspark=false\noutput="custom.html"\n'
         )
         script = tmp_path / "worker.py"
         script.write_text("value = 42\n")
-        assert cli.main([str(script)]) == 0
+        assert runner.invoke(cli.main, [str(script)]).exit_code == 0
         assert (tmp_path / "custom.html").is_file()
         assert not (tmp_path / "linescope.html").exists()
 
-    def test_explicit_display_opens_one_saved_report(self, tmp_path, monkeypatch):
+    def test_explicit_display_opens_one_saved_report(self, runner, tmp_path, monkeypatch):
+        """Verify explicit display opens one saved report.
+
+        Invoke the CLI through an isolated runner and inspect its arguments,
+        saved report, or restored process state.
+
+        """
         opened = []
         monkeypatch.setattr("webbrowser.open", lambda url, **_kwargs: opened.append(url))
         script = tmp_path / "worker.py"
         script.write_text("value = 42\n")
         report = tmp_path / "profile.html"
-        assert cli.main([*cli_options(report), "--display", "end", str(script)]) == 0
+        assert (
+            runner.invoke(
+                cli.main, [*cli_options(report), "--display", "end", str(script)]
+            ).exit_code
+            == 0
+        )
         assert opened == [report.as_uri()]
 
-    def test_explicit_headless_display(self, tmp_path, monkeypatch):
+    def test_explicit_headless_display(self, runner, tmp_path, monkeypatch):
+        """Verify explicit headless display.
+
+        Invoke the CLI through an isolated runner and inspect its arguments,
+        saved report, or restored process state.
+
+        """
+
         def forbidden(*args, **kwargs):
+            """Reject an unexpected browser display during headless execution.
+
+            Fail immediately when code invokes an operation the case expects to
+            avoid.
+
+            """
             del args, kwargs
             pytest.fail("Headless CLI unexpectedly opened a browser")
 
         monkeypatch.setattr("webbrowser.open", forbidden)
         script = tmp_path / "worker.py"
         script.write_text("value = 42\n")
-        assert cli.main([*cli_options(tmp_path / "profile.html"), str(script)]) == 0
+        assert (
+            runner.invoke(
+                cli.main, [*cli_options(tmp_path / "profile.html"), str(script)]
+            ).exit_code
+            == 0
+        )
 
-    def test_default_display_opens_temporary_report_in_new_tab(self, tmp_path, monkeypatch):
+    def test_default_display_opens_temporary_report_in_new_tab(
+        self, runner, tmp_path, monkeypatch
+    ):
+        """Verify default display opens temporary report in new tab.
+
+        Invoke the CLI through an isolated runner and inspect its arguments,
+        saved report, or restored process state.
+
+        """
         from urllib.parse import unquote, urlsplit
         from urllib.request import url2pathname
 
@@ -256,7 +474,11 @@ class TestScriptExecution:
         )
         script = tmp_path / "worker.py"
         script.write_text("value = sum(range(100))\n", encoding="utf-8")
-        assert cli.main(["--backend", "trace", "--no-spark", str(script)]) == 0
+        assert (
+            runner.invoke(cli.main, ["--backend", "trace", "--no-spark", str(script)]).exit_code
+            == 0
+        )
+
         assert len(opened) == 1
         uri, options = opened[0]
         assert options == {"new": 2}
@@ -278,7 +500,13 @@ class TestModuleExecution:
     """
 
     @pytest.mark.parametrize("separator", [[], ["--"]])
-    def test_module_argv_and_main_restored(self, tmp_path, monkeypatch, separator):
+    def test_module_argv_and_main_restored(self, runner, tmp_path, monkeypatch, separator):
+        """Verify module argv and main restored.
+
+        Invoke the CLI through an isolated runner and inspect its arguments,
+        saved report, or restored process state.
+
+        """
         package = tmp_path / "cli_module_package"
         package.mkdir()
         (package / "__init__.py").write_text("")
@@ -293,7 +521,8 @@ class TestModuleExecution:
         previous_main = sys.modules["__main__"]
         try:
             assert (
-                cli.main(
+                runner.invoke(
+                    cli.main,
                     [
                         *cli_options(tmp_path / "profile.html"),
                         "-m",
@@ -301,8 +530,8 @@ class TestModuleExecution:
                         *separator,
                         str(data),
                         "--flag",
-                    ]
-                )
+                    ],
+                ).exit_code
                 == 0
             )
         finally:
@@ -315,11 +544,20 @@ class TestModuleExecution:
         assert recorded["package"] == "cli_module_package"
         assert sys.modules["__main__"] is previous_main
 
-    def test_missing_module_still_finalizes_report(self, tmp_path, monkeypatch):
+    def test_missing_module_still_finalizes_report(self, runner, tmp_path, monkeypatch):
+        """Verify missing module still finalizes report.
+
+        Invoke the CLI through an isolated runner and inspect its arguments,
+        saved report, or restored process state.
+
+        """
         monkeypatch.chdir(tmp_path)
         report = tmp_path / "profile.html"
-        with pytest.raises(ImportError):
-            cli.main([*cli_options(report), "-m", "linescope_module_that_does_not_exist"])
+        result = runner.invoke(
+            cli.main, [*cli_options(report), "-m", "linescope_module_that_does_not_exist"]
+        )
+        assert result.exit_code == 1
+        assert isinstance(result.exception, ImportError)
         assert report.is_file()
         assert "Failed" in report.read_text(encoding="utf-8")
 
@@ -332,42 +570,78 @@ class TestWorkloadFailures:
     """
 
     @pytest.mark.parametrize("exception", ["ValueError('workload failed')", "KeyboardInterrupt()"])
-    def test_original_exception_and_report(self, tmp_path, exception):
+    def test_original_exception_and_report(self, runner, tmp_path, exception):
+        """Verify original exception and report.
+
+        Invoke the CLI through an isolated runner and inspect its arguments,
+        saved report, or restored process state.
+
+        """
         script = tmp_path / "failure.py"
         script.write_text(f"raise {exception}\n")
         report = tmp_path / "profile.html"
         previous_argv, previous_path = sys.argv[:], sys.path[:]
         previous_trace = sys.gettrace()
-        exception_type = ValueError if exception.startswith("ValueError") else KeyboardInterrupt
-        with pytest.raises(exception_type):
-            cli.main([*cli_options(report), str(script)])
+        result = runner.invoke(cli.main, [*cli_options(report), str(script)])
+        assert result.exit_code == 1
+
+        if exception.startswith("ValueError"):
+            assert isinstance(result.exception, ValueError)
+            assert str(result.exception) == "workload failed"
+        else:
+            assert "Aborted!" in result.stderr
+
         assert report.is_file()
         assert "Failed" in report.read_text(encoding="utf-8")
         assert sys.argv == previous_argv
         assert sys.path == previous_path
         assert sys.gettrace() is previous_trace
 
-    def test_browser_failure_preserves_workload_exception(self, tmp_path, monkeypatch, capsys):
+    def test_browser_failure_preserves_workload_exception(self, runner, tmp_path, monkeypatch):
+        """Verify browser failure preserves workload exception.
+
+        Invoke the CLI through an isolated runner and inspect its arguments,
+        saved report, or restored process state.
+
+        """
+
         def unavailable(*_args, **_kwargs):
+            """Simulate a browser failure without replacing the workload error.
+
+            Keep the display error separate from the original workload
+            exception.
+
+            """
             raise OSError("browser unavailable")
 
         script = tmp_path / "failure.py"
         script.write_text("raise ValueError('workload failed')\n", encoding="utf-8")
         monkeypatch.setattr("linescope.api.Session.show", unavailable)
 
-        with pytest.raises(ValueError, match="workload failed"):
-            cli.main(["--backend", "trace", "--no-spark", str(script)])
-
-        assert "browser unavailable" in capsys.readouterr().err
+        result = runner.invoke(cli.main, ["--backend", "trace", "--no-spark", str(script)])
+        assert result.exit_code == 1
+        assert isinstance(result.exception, ValueError)
+        assert str(result.exception) == "workload failed"
+        assert "browser unavailable" in result.stderr
 
     @pytest.mark.parametrize(
         ("code", "success"), [(0, True), (None, True), (7, False), ("failed", False)]
     )
-    def test_system_exit_status_and_report(self, tmp_path, code, success):
+    def test_system_exit_status_and_report(self, runner, tmp_path, code, success):
+        """Verify system exit status and report.
+
+        Invoke the CLI through an isolated runner and inspect its arguments,
+        saved report, or restored process state.
+
+        """
         script = tmp_path / "exit.py"
         script.write_text(f"raise SystemExit({code!r})\n")
         report = tmp_path / "profile.html"
-        with pytest.raises(SystemExit) as error:
-            cli.main([*cli_options(report), str(script)])
-        assert error.value.code == code
+        result = runner.invoke(cli.main, [*cli_options(report), str(script)])
+        assert result.exit_code == (0 if success else code if isinstance(code, int) else 1)
+
+        if result.exception is not None:
+            assert isinstance(result.exception, SystemExit)
+            assert result.exception.code == code
+
         assert ("Success" if success else "Failed") in report.read_text(encoding="utf-8")

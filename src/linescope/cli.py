@@ -7,191 +7,214 @@ Description: Script and module launchers preserving Python argument semantics.
 
 from __future__ import annotations
 
-import argparse
-import os
 from pathlib import Path
 import runpy
-import subprocess
 import sys
 from typing import Any
 
+import click
+
 from linescope.api import Session
 from linescope.config import resolve_config
-from linescope.enums import Backend, DisplayMode, SessionState
+from linescope.enums import DisplayMode, SessionState
 
 
-def _memory_bootstrap(options: dict[str, Any], argv: list[str]) -> int | None:
-    """Launch native allocator profiling before any target code is executed.
-
-    Return the child exit code when a preload is needed; otherwise keep
-    execution in the current interpreter.
-
-    """
-    config = resolve_config(**options)
-
-    if (
-        config.backend != Backend.SCALENE
-        or not config.memory
-        or sys.platform == "win32"
-        or os.environ.get("LINESCOPE_MEMORY_BOOTSTRAPPED") == "1"
-    ):
-        return None
-
-    from linescope.backends.scalene import memory_preload_environment
-
-    environment = {
-        **os.environ,
-        **memory_preload_environment(),
-        "LINESCOPE_MEMORY_BOOTSTRAPPED": "1",
-    }
-    result = subprocess.run(
-        [sys.executable, "-c", "from linescope.cli import main; raise SystemExit(main())", *argv],
-        env=environment,
-        check=False,
-    )
-    return result.returncode
-
-
-def build_parser() -> argparse.ArgumentParser:
-    """Build the command parser shared by documentation and entry points.
-
-    Keep CLI defaults in one place so help text and launch behavior agree.
-
-    """
-    parser = argparse.ArgumentParser(
-        prog="linescope", description="Profile your Python source, line by line."
-    )
-    parser.add_argument("--version", action="version", version="LineScope 0.1.0")
-    parser.add_argument(
-        "--backend",
-        help="collector: scalene, trace, tachyon (default: scalene; trace on Python 3.15)",
-    )
-    parser.add_argument(
-        "--include", action="append", help="package/path/glob to include; repeatable"
-    )
-    parser.add_argument(
-        "--exclude", action="append", help="package/path/glob to exclude; repeatable"
-    )
-    parser.add_argument(
-        "--memory", action="store_true", default=None, help="collect Python driver memory"
-    )
-    parser.add_argument(
-        "--gpu", action="store_true", default=None, help="collect Scalene GPU metrics"
-    )
-    parser.add_argument(
-        "--spark",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help="observe Spark driver actions",
-    )
-    parser.add_argument("--no-notebooks", action="store_false", dest="notebooks", default=None)
-    parser.add_argument("--root", help="project source root")
-    parser.add_argument(
-        "--display",
-        choices=(DisplayMode.NONE, DisplayMode.END),
-        default=None,
-        help="open report after exit (default: end)",
-    )
-    parser.add_argument(
-        "-o", "--output", help="save a report explicitly (default: open a temporary report)"
-    )
-    parser.add_argument(
-        "-m", "--module", nargs=argparse.REMAINDER, help="module followed by its arguments"
-    )
-    parser.add_argument(
-        "target", nargs=argparse.REMAINDER, help="script and arguments (options go before script)"
-    )
-    return parser
-
-
-def main(argv: list[str] | None = None) -> int:
-    """Profile a script or module and open its HTML report in a new browser tab.
+@click.command(
+    "linescope",
+    context_settings={"allow_interspersed_args": False},
+    help="Profile your Python source, line by line.\n\n"
+    "Place options before the script path or -m MODULE. Arguments after the target "
+    "are passed to your program. Open an HTML report after exit by default; "
+    "use --display none -o report.html for headless collection.",
+)
+@click.version_option(package_name="linescope", prog_name="LineScope")
+@click.option(
+    "--backend",
+    help="Collector name: scalene, trace, tachyon, or a registered custom backend. "
+    "Defaults to trace on every supported Python version.",
+)
+@click.option("--include", multiple=True, help="Package, path, or glob to include; repeatable.")
+@click.option("--exclude", multiple=True, help="Package, path, or glob to exclude; repeatable.")
+@click.option(
+    "--memory/--no-memory",
+    default=None,
+    help="Track process RAM and retained Python allocations separately.",
+)
+@click.option("--gpu/--no-gpu", default=None, help="Collect Scalene GPU metrics.")
+@click.option(
+    "--sample-rate",
+    type=click.IntRange(min=1),
+    help="Target samples per second: Scalene defaults to 100; Tachyon to 1000. Trace ignores it.",
+)
+@click.option(
+    "--spark/--no-spark",
+    default=None,
+    help="Observe Spark driver actions lazily; enabled by default.",
+)
+@click.option(
+    "--notebooks/--no-notebooks", default=None, help="Capture notebook source; enabled by default."
+)
+@click.option("--root", type=click.Path(file_okay=False), help="Project source root.")
+@click.option(
+    "--display",
+    type=click.Choice([DisplayMode.NONE.value, DisplayMode.END.value]),
+    help="Open the report after exit; defaults to end.",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(dir_okay=False),
+    help="Save a report explicitly; otherwise open a temporary report.",
+)
+@click.option("--module", "-m", is_flag=True, help="Run TARGET as a Python module.")
+@click.argument("target", nargs=-1, type=click.UNPROCESSED)
+@click.pass_context
+def main(
+    ctx: click.Context,
+    *,
+    backend: str | None,
+    include: tuple[str, ...],
+    exclude: tuple[str, ...],
+    memory: bool | None,
+    gpu: bool | None,
+    sample_rate: int | None,
+    spark: bool | None,
+    notebooks: bool | None,
+    root: str | None,
+    display: str | None,
+    output: str | None,
+    module: bool,
+    target: tuple[str, ...],
+) -> None:
+    """Profile your Python source, line by line.
 
     Place LineScope options before the script path or `-m MODULE`; subsequent
     arguments are passed to the target. Reports also finalize on workload
-    errors. Use `--display none -o report.html` for headless collection.
-    Available options include `--backend`, `--root`, repeatable `--include`
-    and `--exclude`, `--memory`, `--gpu`, `--spark` / `--no-spark`, and
-    `--no-notebooks`.
+    errors. Open the HTML report in a new browser tab by default. Use
+    `--display none -o report.html` for headless collection.
+    Unspecified options follow the project configuration and API defaults.
 
     Parameters
     ----------
-    argv : list[str] | None, default=None
-        Command arguments excluding the executable; None reads `sys.argv`.
+    --backend : str | None, default=None
+        Collector name. Default to Scalene on Python 3.11-3.14 and Trace on
+        Python 3.15. Registered custom backend names are also accepted.
 
-    Returns
-    -------
-    int
-        Zero on success, or the workload's exit code.
+    --include : tuple[str, ...], default=()
+        Package names, paths, or globs to include. Repeat for multiple entries.
+
+    --exclude : tuple[str, ...], default=()
+        Package names, paths, or globs to exclude. Repeat for multiple entries.
+
+    --memory/--no-memory : bool | None, default=None
+        Enable or disable process RAM readings, the memory timeline, and
+        retained Python allocation tracking.
+
+    --gpu/--no-gpu : bool | None, default=None
+        Enable or disable Scalene GPU metrics.
+
+    --sample-rate : int | None, default=None
+        Target samples per second for Scalene or Tachyon. Use the backend
+        default when omitted. Trace ignores this setting.
+
+    --spark/--no-spark : bool | None, default=None
+        Enable or disable lazy Spark action observation. Enabled by default.
+
+    --notebooks/--no-notebooks : bool | None, default=None
+        Enable or disable notebook source capture. Enabled by default.
+
+    --root : str | None, default=None
+        Project source root. Discover the root from the script when omitted.
+
+    --display : str | None, default=None
+        Display mode: `end` or `none`. Default to `end`.
+
+    --output, -o : str | None, default=None
+        Report destination. Use a temporary report when omitted.
+
+    --module, -m : bool, default=False
+        Execute the target as an importable module instead of a script.
+
+    target : tuple[str, ...]
+        Script path or module name followed by its arguments.
 
     Examples
     --------
     ```console
     linescope --backend trace application.py --rows 50000
     linescope --backend tachyon application.py
-    linescope --gpu application.py
+    linescope --backend scalene --gpu application.py
     linescope --backend trace -m application.worker --rows 50000
     linescope --backend trace --display none -o report.html application.py
     ```
 
     """
-    original_arguments = list(sys.argv[1:] if argv is None else argv)
-    parser = build_parser()
-    parsed = vars(parser.parse_args(argv))
-    target = parsed.pop("target")
-    module_arguments = parsed.pop("module")
-    module = None
+    if not target:
+        message = "-m requires a module name" if module else "provide a script or -m MODULE"
+        raise click.UsageError(message, ctx)
 
-    if module_arguments is not None:
-        if not module_arguments:
-            parser.error("-m requires a module name")
+    options: dict[str, Any] = {
+        name: value
+        for name, value in {
+            "backend": backend,
+            "memory": memory,
+            "gpu": gpu,
+            "sample_rate": sample_rate,
+            "spark": spark,
+            "notebooks": notebooks,
+            "root": root,
+            "display": DisplayMode(display) if display is not None else None,
+            "output": output,
+        }.items()
+        if value is not None
+    }
 
-        module = module_arguments[0]
-        target = [*module_arguments[1:], *target]
+    if include:
+        options["include"] = include
 
-    if target and target[0] == "--":
-        target.pop(0)
+    if exclude:
+        options["exclude"] = exclude
 
-    if module is None and not target:
-        parser.error("provide a script or -m MODULE")
+    arguments = list(target[1:])
 
-    options: dict[str, Any] = {name: value for name, value in parsed.items() if value is not None}
+    if module and arguments and arguments[0] == "--":
+        arguments.pop(0)
 
-    if module is None:
+    if not module:
         script = Path(target[0]).expanduser().resolve()
 
         if not script.is_file():
-            parser.error(f"script does not exist: {script}")
+            raise click.BadParameter(f"script does not exist: {script}", ctx, param_hint="TARGET")
 
         if "root" not in options:
             from linescope.source import discover_root
 
             options["root"] = str(discover_root(script))
 
-    options.setdefault("output", resolve_config(**options).output)
-    options.setdefault("display", resolve_config(**options).display)
-    child_status = _memory_bootstrap(options, original_arguments)
-
-    if child_status is not None:
-        return child_status
-
+    config = resolve_config(**options)
+    options.setdefault("output", config.output)
+    options.setdefault("display", config.display)
     session_options = dict(options)
     session_options["display"] = DisplayMode.NONE
     session = Session(**session_options)
     previous_argv, previous_path = sys.argv, sys.path[:]
+    _namespace: dict[str, Any] | None = None
 
     try:
         with session:
-            if module is not None:
-                sys.argv = [module, *target]
+            if module:
+                sys.argv = [target[0], *arguments]
                 sys.path.insert(0, str(Path.cwd()))
-                runpy.run_module(module, run_name="__main__", alter_sys=True)
+                # Keep module globals alive until the final memory snapshot.
+                _namespace = runpy.run_module(target[0], run_name="__main__", alter_sys=True)
             else:
                 session.registry.snapshot(script)
-                sys.argv = [str(script), *target[1:]]
+                sys.argv = [str(script), *arguments]
                 sys.path.insert(0, str(script.parent))
-                runpy.run_path(str(script), run_name="__main__")
+                _namespace = runpy.run_path(str(script), run_name="__main__")
     finally:
+        # Profiling has captured globals; release them before rendering reports.
+        _namespace = None
         sys.argv = previous_argv
         sys.path[:] = previous_path
 
@@ -201,7 +224,7 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 if options["output"] is not None:
                     saved = session.save(options["output"])
-                    sys.stderr.write(f"LineScope report: {saved}\n")
+                    click.echo(f"LineScope report: {saved}", err=True)
 
                 if options["display"] == DisplayMode.END:
                     session.show()
@@ -209,6 +232,4 @@ def main(argv: list[str] | None = None) -> int:
                 if workload_error is None:
                     raise
 
-                sys.stderr.write(f"LineScope could not display the report: {error}\n")
-
-    return 0
+                click.echo(f"LineScope could not display the report: {error}", err=True)

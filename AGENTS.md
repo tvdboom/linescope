@@ -47,35 +47,110 @@ need Java and the `spark` extra; mock Databricks APIs.
 - Scrub sensitive notebook parameters; reports contain snapshots of the user's
   source.
 
-## Style and documentation
+## Python style
 
-Follow Backtide's NumPy-style docstrings: imperative summary, explanatory
-paragraph, `Parameters`, `Returns`, and `See Also` where useful. Separate every
-parameter or attribute with a blank line and document optional parameters with
-`, default=...`. Use Python type syntax, such as
-`dict[str, list[[SourceUnit]]]`, and square-bracket references for package and
-third-party classes. Use single backticks for inline code. Put notes and failure
-conditions in the description; do not add `Notes` or `Raises` sections. Keep
-examples in documented public APIs. Leave a blank line before the closing triple
-quotes, including short docstrings. Use the same `LineScope.`, `Author: Mavs`,
-and `Description:` module header. Start function and method code immediately
-after the closing quotes, without a blank line. Keep Ruff's spacing after
-module and class docstrings.
+Treat `pyproject.toml` as the source of truth for Ruff and ty configuration.
+Use Python 3.11-compatible syntax and built-in generic types such as `list[str]`
+and `dict[str, int]`. Write unions as `Type | None`; avoid legacy `typing.List`
+and `typing.Optional`. Give public interfaces parameter and return annotations.
+Use `from __future__ import annotations` when forward references need it.
+
+Use four-space indentation, double-quoted Python strings, and Ruff formatting
+with a 99-column code limit. Wrap docstrings and documentation at 80 columns,
+including indentation and quote delimiters. Keep function signatures on one
+line when they fit; otherwise, put each parameter and parameter separator on
+its own line and end the parameter list with a trailing comma so Ruff preserves
+the layout. Do not enforce a separate trailing-comma rule that conflicts with
+Ruff's formatter.
+
+Let Ruff sort imports in this order: future, standard library, third party,
+first party, and local folder. Sort imports within each section. Keep optional
+integration imports lazy when importing them would start a runtime or require
+an unavailable dependency. Keep package directories explicit with `__init__.py`.
+
+Use `snake_case` for functions, methods, parameters, and ordinary attributes;
+`PascalCase` for classes; and uppercase names for constants and enum members.
+Prefix internal interfaces with `_`. Preserve names required by external
+protocols, such as Spark's JVM callbacks. Make boolean options keyword-only
+and pass boolean flags by name so calls explain the requested behavior.
 
 Prefer enums over hardcoded strings for fixed choices, states, and kinds. Use
 `StrEnum` when values are displayed or serialized as strings, and normalize
 string inputs to enum members at API boundaries. Custom backend names remain
 strings because their registry is open-ended.
 
-Wrap docstrings and documentation at 80 columns. Give public interfaces type
-annotations. Use four-space indentation and Ruff formatting with 99 columns for
-Python code. Keep function signatures on one line when they fit; otherwise, put
-each parameter and parameter separator on its own line and end the parameter
-list with a trailing comma so Ruff preserves the layout. Separate logical steps
-with blank lines and add comments that explain ownership, cleanup, or
-non-obvious choices. Avoid speculative compatibility code and broad exception
-handling except at optional integration boundaries, where failures must produce
-honest diagnostic metadata.
+Separate logical steps with blank lines. Add comments explaining ownership,
+cleanup, and non-obvious choices rather than restating the code. Avoid
+speculative compatibility code and broad exception handling except at optional
+integration boundaries, where failures must produce honest diagnostic metadata.
+Use narrowly scoped `noqa` comments with a specific rule code when a protocol
+or integration requires an exception. Do not add debug prints to library code;
+runnable examples may print their results.
+
+Keep UTF-8 source files, LF line endings, a final newline, and no trailing
+whitespace. Run Ruff lint and format checks and ty after changes. Ruff's
+docstring exemptions for tests, examples, and the adapted documentation parser
+do not waive the documentation requirements below.
+
+## Docstrings
+
+Document every Python module, class, function, and method, including internal
+interfaces, nested helpers, constructors, special methods, static methods,
+class methods, properties, callbacks, fixtures, and test helpers. Apply this
+rule to `src/linescope`, `examples`, `docs_sources/scripts`, and `tests`.
+Executable notebook definitions follow the same conventions. Literal source
+fixtures used to test parsing or profiling retain the syntax their tests need.
+
+Document every attribute defined by a class in its NumPy-style `Attributes`
+section. Include public and private instance attributes, dataclass fields,
+class variables, enum members, property values, and assigned method aliases.
+Constructor `Parameters` documentation does not replace attribute
+documentation. Document inherited fields where they are defined, and describe
+an override in the subclass that defines it.
+
+Give each attribute its name, type, and a useful explanation of its meaning.
+Explain measurement units, indexing conventions, unknown values, mutable state,
+and resource or cleanup ownership where relevant. Describe real behavior;
+avoid placeholder text that merely repeats the attribute or helper name.
+
+Follow Backtide's NumPy-style docstrings. Start with an imperative summary,
+then an explanatory paragraph when useful. Use `Parameters`, `Attributes`,
+`Returns`, `Yields`, and `See Also` where applicable, with underlined section
+headings. Separate every parameter or attribute entry with a blank line and
+indent its description by four spaces. Spell parameter names exactly as in
+the signature, including `*args` and `**kwargs`; omit implicit `self` and `cls`.
+Document optional parameters with `, default=...`, matching the actual default
+or the documented default-factory expression. Do not use `, optional`.
+
+Use Python type syntax such as `dict[str, list[[SourceUnit]]]` in documentation.
+Use square-bracket references for package and third-party classes that have a
+documentation target. Keep unlinked internal implementation types literal so
+strict documentation builds do not create unresolved references. Use single
+backticks for inline code. Put operational notes and failure conditions in the
+description; do not add `Notes` or `Raises` sections. State relevant errors in
+prose, including cleanup and unknown-metric behavior.
+
+Use multiline triple-double-quoted docstrings, including short summaries.
+Leave a blank line before the closing triple quotes. Start function and method
+code immediately after the closing quotes, without a blank line. Keep Ruff's
+spacing after module and class docstrings. If Ruff would collapse a summary
+onto one line, add a useful explanatory paragraph instead of repeating the
+summary or adding empty lines. Preserve useful examples in documented public
+APIs and keep them deterministic and offline. Use raw docstrings when examples
+need literal backslashes, and preserve their escape sequences during edits.
+
+Use this module header consistently:
+
+```python
+"""LineScope.
+
+Author: Mavs
+Description: Explain the module's responsibility.
+
+"""
+```
+
+## Documentation rendering
 
 Documentation uses the adapted Backtide `autodocs.py` directive format
 (`:: module:object`) and opt-in executable `pycon` fences through `autorun.py`.
