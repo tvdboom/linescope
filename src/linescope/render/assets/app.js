@@ -71,6 +71,18 @@
       page.querySelectorAll('.plan-view').forEach(panel => { panel.hidden = panel.dataset.tabPanel !== button.dataset.tab; });
     });
   });
+  document.querySelectorAll('.source-heat').forEach(button => {
+    button.addEventListener('click', () => {
+      const page = button.closest('.source-page');
+      const metric = button.dataset.heat === 'memory' ? 'heatMemory' : 'heatTime';
+      page.querySelectorAll('.source-row').forEach(row => {
+        row.style.setProperty('--heat', row.dataset[metric]);
+      });
+      page.querySelectorAll('.source-heat').forEach(control => {
+        control.setAttribute('aria-pressed', String(control === button));
+      });
+    });
+  });
   document.querySelectorAll('.source-order').forEach(button => {
     button.addEventListener('click', () => {
       const page = button.closest('.source-page');

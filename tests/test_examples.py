@@ -142,12 +142,12 @@ memory_rows = [
 ]
 print(json.dumps({{
     'sampled': 'Estimated time' in html,
-    'memory': 'RAM change' in html,
+    'memory': 'Mem Change' in html,
     'memory_order': 'data-order="memory"' in html,
     'timed_functions': timed_functions,
     'timed': bool(timed_lines),
     'package_sources': '__main__.py' in html and 'helpers.py' in html,
-    'memory_values': any(cells[3] != chr(8212) and cells[4] != chr(8212) for cells in memory_rows),
+    'memory_values': any(cells[2] != chr(8212) and cells[3] != chr(8212) for cells in memory_rows),
 }}))
 """,
         preload=False,

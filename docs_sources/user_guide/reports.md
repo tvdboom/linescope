@@ -12,15 +12,24 @@ horizontally inside the same table.
 
 Use the buttons above the source table to order lines by Line number (the
 default) or Time (highest first). When memory collection is enabled for that
-source, RAM growth orders by accumulated RAM change, highest first. Unknown
-values appear last, and equal values keep line-number order. All source lines
-and navigation links remain available in every order.
+source, Mem Growth orders by accumulated process-memory change, highest first.
+Unknown values appear last, and equal values keep line-number order. All source
+lines and navigation links remain available in every order.
+
+The Heatmap by control sits to the left of line ordering. Select Time (the
+default) or, when memory collection is enabled, Mem Growth to color positive
+process-memory growth. Heatmap selection and line ordering are independent.
 
 Source tables show Hits and Avg / hit when execution counts are available,
 and Samples when observation counts are available. Sampling backends omit
 the hit columns; tracing omits the sample column. Each source keeps its own
 columns when child runs use different collectors. The Context column appears
 only when that source has Spark execution or child-notebook invocation links.
+
+The Functions table shows Self time, then Samples for sampling reports or Calls
+for tracing reports, followed by Function. Self time sums the function's own
+line times, excluding nested project callees. Reports containing sampled child
+runs use Samples; functions without sampling counts show a dash.
 
 The Notebooks view appears when the report contains notebook snapshots or child
 notebook invocations. The Spark view and its overview count appear only when
@@ -97,25 +106,28 @@ scope](spark.md#worker-scope-and-overall-time) for an example.
 | Hits | Recorded executions when the backend supports them |
 | Average | Time divided by hits, only when both are available |
 | Samples | Observed project thread frames, shown for sampling sources |
-| RAM after | Resident process RAM after the latest completed line interval |
-| RAM change | Accumulated process RAM change during this line's intervals |
-| Peak RAM | Highest observed process RAM during this line |
-| Python allocation Δ | Net retained Python allocations by allocation site |
+| Mem Change | Accumulated process-memory change during this line's intervals |
+| Peak Mem | Highest observed process memory during this line |
 | Estimated GPU time | Sampled device work, separate from driver wall time |
 | GPU peak memory | Highest sampled device-memory value for the line |
 | Spark | Separate navigation references to observed executions |
 
-Heat intensity uses a logarithmic scale relative to the report's slowest line.
-This keeps smaller hotspots visible when one line dominates. The time columns
-retain their measured values; unexecuted and zero-time lines have no heat.
+Heat intensity uses a logarithmic scale relative to the report's largest
+visible value for the selected metric. This keeps smaller hotspots visible
+when one line dominates, using the same scale across source files. Time heat
+leaves unmeasured and zero-time lines uncolored. Mem Growth heat colors only
+positive accumulated changes; decreases, zeroes, and unavailable readings have
+no heat. Switching heatmaps preserves the measurements and current line order.
 A dash means unavailable or unmeasured; sampled zeroes do not prove that a line
 took no time. Source backgrounds, syntax colors, and links follow the report's
 light or dark theme, including the system preference.
 
 The [backend](backends.md) determines which columns can contain measurements.
-With `memory=True`, source tables show process RAM and retained Python
-allocation changes separately. Allocation changes describe tracked objects
-still alive at snapshot time; they are not process RAM readings.
+With `memory=True`, source tables show Mem Change and Peak Mem for the profiled
+Python process. Retained Python allocation changes remain in the collected
+profile data; the source table displays only process-memory measurements.
+Byte measurements use decimal units: 1 KB is 1,000 bytes, 1 MB is 1,000,000
+bytes, and 1 GB is 1,000,000,000 bytes.
 With `memory=True`, the Memory view shows process RAM over elapsed time. Move
 the inspection slider to a reading or select a chart point to open its source
 line. The table of retained readings also provides source links. Separate child

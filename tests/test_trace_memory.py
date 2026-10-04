@@ -62,7 +62,8 @@ def test_retained_allocations_transients_and_unknown_peaks(tmp_path):
     assert all(line.memory.peak_bytes is None for line in rows.values())
     assert all(line.samples is None for line in rows.values())
     assert not tracemalloc.is_tracing()
-    assert "Python allocation Δ" in ReportDOM(session.html()).root.text()
+    assert "Mem Change" in ReportDOM(session.html()).root.text()
+    assert "Python allocation Δ" not in ReportDOM(session.html()).root.text()
     assert any("net retained Python allocations" in warning for warning in session.result.warnings)
 
 
@@ -439,7 +440,8 @@ def test_default_cli_memory_needs_no_scalene_bootstrap(tmp_path, monkeypatch):
     )
     assert result.exit_code == 0, result.output
     document = ReportDOM(report.read_text(encoding="utf-8"))
-    assert "Python allocation Δ" in document.root.text()
+    assert "Mem Change" in document.root.text()
+    assert "Python allocation Δ" not in document.root.text()
     assert any(
         row.attributes["data-memory"] != ""
         for row in document.root.find_all("tr", css="source-row")

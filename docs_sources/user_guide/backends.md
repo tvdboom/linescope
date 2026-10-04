@@ -176,8 +176,9 @@ session.save("memory.html")
 ### Python allocation changes
 
 The shared memory collector uses `tracemalloc` to compare snapshots at startup,
-at stop, and on live report requests. Python allocation Δ shows the change in
-tracked bytes still allocated at each allocation site. Library allocations go
+at stop, and on live report requests. Per-line `memory.delta_bytes` in the
+collected profile data records the change in tracked bytes still allocated at
+each allocation site. Library allocations go
 to the nearest project frame in their captured traceback. Freed bytes belong
 to the original allocation site; allocations created and freed between
 snapshots leave no retained change. Per-line Python allocation peaks remain
@@ -209,9 +210,9 @@ Project child calls have their own intervals rather than charging the same
 increase to both caller and child. Other threads can still change process RAM,
 so these observations identify where growth occurred, not allocation ownership.
 
-The source columns show RAM after the latest completed interval, accumulated
-RAM change over all intervals of that line, and the highest RAM observed during
-its intervals. Zero change is a measured value; unexecuted lines and failed
+The source columns show Mem Change, the accumulated process-memory change over
+all intervals of that line, and Peak Mem, the highest reading during its
+intervals. Zero change is a measured value; unexecuted lines and failed
 readings stay unavailable. Repeated loop iterations keep their history in the
 Memory view, rather than being reduced to the final line reading alone.
 
@@ -235,8 +236,8 @@ may move substantial data into the driver.
 
 Child notebook processes have separate timelines. Their RAM is never added to
 parent RAM. If a source line has RAM measurements from multiple runs, the shared
-source page retains the largest observed peak and leaves its combined RAM after
-and change unavailable. Open each run's Memory timeline for its own readings.
+source page retains the largest observed peak and leaves its combined Mem
+Change unavailable. Open each run's Memory timeline for its own readings.
 
 Spark operator peak memory and spill, when available, appear with the
 [Spark execution](spark.md#plans-and-metrics). They have different semantics and

@@ -109,7 +109,7 @@ def test_gpu_report_columns_and_filename_labels(tmp_path):
     assert str(tmp_path) not in html
     assert "Estimated GPU time" in html
     assert "GPU peak memory" in html
-    assert "4.0 KiB" in html
+    assert "4.1 KB" in html
     assert "Offline report" not in html
     assert "snapshotted at collection" not in html
     assert "click underlined symbols" not in html

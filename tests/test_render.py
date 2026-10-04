@@ -321,6 +321,102 @@ class TestSourceReport:
         assert all(row.attributes["style"] == "--heat:0.00000" for row in rows)
         assert cell_values(rows[2])[1] == ("—" if duration is None else "0 µs")
 
+    @pytest.mark.parametrize("multiplier", [1, 1024])
+    def test_memory_heat_scales_growth_without_coloring_frees_or_unknowns(
+        self,
+        result,
+        multiplier,
+    ):
+        """Keep growth hotspots comparable across files without changing data.
+
+        Check a logarithmic memory scale independently of time, including
+        memory-only lines, decreases, zeroes, and unavailable readings.
+
+        """
+        unit = SourceUnit(
+            "growth",
+            "growth.py",
+            "small()\nmedium()\nlarge()\npeak()\nfree()\nzero()\nunknown()\n",
+        )
+        second = SourceUnit("second", "second.py", "medium()\n")
+        result.sources = {unit.id: unit, second.id: second}
+        result.capabilities = BackendCapabilities(memory=True)
+        deltas = [1000, 10_000, 100_000, 1_000_000, -2_000_000, 0, None]
+        result.root_run.lines = [
+            LineStats(
+                SourceLocation(unit.id, number),
+                ram=ProcessMemoryStats(delta_bytes=None if delta is None else delta * multiplier),
+            )
+            for number, delta in enumerate(deltas, 1)
+        ]
+        result.root_run.lines.append(
+            LineStats(
+                SourceLocation(second.id, 1),
+                ram=ProcessMemoryStats(delta_bytes=10_000 * multiplier),
+            )
+        )
+        rows = source_rows(parse(result))
+        heat = [float(row.attributes["data-heat-memory"]) for row in rows]
+
+        assert 0.09 < heat[0] < 0.11
+        assert 0.3 < heat[1] < 0.4
+        assert 0.6 < heat[2] < 0.7
+        assert heat[3] == 1
+        assert heat[4:7] == [0, 0, 0]
+        assert heat[7] == heat[1]
+        assert all(row.attributes["style"] == "--heat:0.00000" for row in rows)
+        assert [row.attributes["data-memory"] for row in rows[:7]] == [
+            "" if delta is None else str(delta * multiplier) for delta in deltas
+        ]
+        assert all(row.attributes["data-time"] == "" for row in rows)
+
+    @pytest.mark.parametrize("delta", [None, 0, -1024])
+    def test_memory_heat_has_no_color_without_positive_growth(self, result, delta):
+        """Leave all rows uncolored when the report has no measured growth.
+
+        Preserve missing values and signed measurements while avoiding an
+        undefined heat scale for an empty or nonpositive maximum.
+
+        """
+        result.capabilities = BackendCapabilities(memory=True)
+        result.root_run.lines[0].ram = ProcessMemoryStats(delta_bytes=delta)
+        rows = source_rows(parse(result))
+        assert all(row.attributes["data-heat-memory"] == "0.00000" for row in rows)
+
+    def test_memory_heat_ignores_hidden_and_out_of_snapshot_measurements(self, result):
+        """Scale growth using only rows with visible memory measurements.
+
+        Keep unavailable child capabilities and invalid source locations
+        from dimming the report's actual hotspots.
+
+        """
+        unit = next(iter(result.sources.values()))
+        hidden = SourceUnit("hidden", "hidden.py", "work()\n")
+        result.sources[hidden.id] = hidden
+        result.capabilities = BackendCapabilities(memory=True)
+        result.root_run.lines[0].ram = ProcessMemoryStats(delta_bytes=1000)
+        result.root_run.lines.extend(
+            LineStats(
+                SourceLocation(source_id, line), ram=ProcessMemoryStats(delta_bytes=1_000_000)
+            )
+            for source_id, line in [(unit.id, 999), ("missing", 1)]
+        )
+        result.root_run.children = [
+            ProfileRun(
+                source=hidden,
+                lines=[
+                    LineStats(
+                        SourceLocation(hidden.id, 1), ram=ProcessMemoryStats(delta_bytes=1_000_000)
+                    )
+                ],
+                metadata={"child_capabilities": {"memory": False}},
+            )
+        ]
+        rows = source_rows(parse(result))
+        assert rows[2].attributes["data-heat-memory"] == "1.00000"
+        assert rows[-1].attributes["data-heat-memory"] == "0.00000"
+        assert rows[-1].attributes["data-memory"] == ""
+
     def test_source_colors_follow_explicit_and_system_dark_themes(self, result):
         """Verify source colors follow explicit and system dark themes.
 
@@ -398,6 +494,114 @@ class TestSourceReport:
         assert not scroller.find_all("p")
         assert len(scroller.find_all("table", css="source-table")) == 1
         assert len(source_rows(scroller)) == line_count
+
+    @pytest.mark.parametrize(
+        ("backend", "capabilities", "count_header"),
+        [
+            ("trace", BackendCapabilities(hit_counts=True), "Calls"),
+            ("scalene", BackendCapabilities(sampled=True, sample_counts=True), "Samples"),
+            ("tachyon", BackendCapabilities(sampled=True, sample_counts=True), "Samples"),
+            ("custom", BackendCapabilities(sampled=True), "Samples"),
+        ],
+    )
+    @pytest.mark.parametrize("count", [None, 0, 1234])
+    def test_function_count_column_follows_collection_method(
+        self,
+        result: ProfileResult,
+        backend: str,
+        capabilities: BackendCapabilities,
+        count_header: str,
+        count: int | None,
+    ) -> None:
+        """Place the collector's function count before the definition link.
+
+        Preserve unknown counts, measured zeroes, and descending self-time
+        order for tracing, sampling, and custom collectors.
+
+        Parameters
+        ----------
+        result : ProfileResult
+            Controlled trace profile with two function definitions.
+
+        backend : str
+            Collector name displayed by the report.
+
+        capabilities : BackendCapabilities
+            Collection method and supported count measurements.
+
+        count_header : str
+            Expected label for the second column.
+
+        count : int | None
+            Recorded count, including unavailable and measured-zero cases.
+
+        """
+        result.backend = backend
+        result.capabilities = capabilities
+        for function in result.root_run.functions:
+            function.calls = None if capabilities.sampled else count
+            function.samples = count if capabilities.sampled else None
+        result.root_run.functions.reverse()
+        document = parse(result)
+        table = document.find_all("section", id="functions")[0].find_all("table")[0]
+
+        assert [header.text() for header in table.find_all("th")] == [
+            "Self time",
+            count_header,
+            "Function",
+        ]
+        rows = table.find_all("tr")[1:]
+        expected_count = "—" if count is None else f"{count:,}"
+        assert [cell_values(row) for row in rows] == [
+            ["70.00 ms", expected_count, "foo()"],
+            ["50.00 ms", expected_count, "bar()"],
+        ]
+        for row, line in zip(rows, [1, 2], strict=True):
+            link = row.find_all("a")[0]
+            assert document.find_all("tr", id=link.attributes["href"][1:])[0].attributes[
+                "data-line"
+            ] == str(line)
+
+    def test_mixed_function_counts_keep_traced_calls_unavailable(
+        self, result: ProfileResult
+    ) -> None:
+        """Keep tracing calls out of the mixed report's Samples column.
+
+        Use sampled child measurements to select Samples and retain unknown
+        markers for the traced parent functions.
+
+        Parameters
+        ----------
+        result : ProfileResult
+            Controlled trace profile with two counted functions.
+
+        """
+        unit = SourceUnit("child", "child.py", "def sampled():\n    return 1\n")
+        result.sources[unit.id] = unit
+        result.root_run.children = [
+            ProfileRun(
+                source=unit,
+                lines=[LineStats(SourceLocation(unit.id, 2), 90_000_000, samples=23)],
+                functions=[FunctionStats(unit.id, "sampled", 1, 90_000_000, samples=23)],
+                metadata={
+                    "child_backend": "scalene",
+                    "child_capabilities": {"sampled": True, "sample_counts": True},
+                },
+            )
+        ]
+        table = parse(result).find_all("section", id="functions")[0].find_all("table")[0]
+
+        assert [header.text() for header in table.find_all("th")] == [
+            "Self time",
+            "Samples",
+            "Function",
+        ]
+        assert [cell_values(row) for row in table.find_all("tr")[1:]] == [
+            ["90.00 ms", "23", "sampled()"],
+            ["70.00 ms", "—", "foo()"],
+            ["50.00 ms", "—", "bar()"],
+        ]
+        assert result.root_run.functions[0].calls == 1
 
     def test_sampled_values_never_fabricate_hits(self, result):
         """Verify sampled values never fabricate hits.
@@ -533,14 +737,17 @@ class TestSourceReport:
         page = parse(result).find_all("section", css="source-page")[0]
         header = page.find_all("div", css="source-header")[0]
         summary = header.find_all("div", css="source-summary")[0]
-        toolbar = summary.find_all("div", css="source-toolbar")[0]
+        toolbars = summary.find_all("div", css="source-controls")[0]
+        heat_toolbar, toolbar = toolbars.find_all("div", css="source-toolbar")
         group = toolbar.find_all("div", css="source-order-controls")[0]
         controls = group.find_all("button", css="source-order")
 
         assert header.children[0].tag == "h1"
         assert summary in header.children
         assert summary.children[0].text() == "4 lines"
-        assert toolbar in summary.children
+        assert toolbars in summary.children
+        assert heat_toolbar in toolbars.children
+        assert toolbar in toolbars.children
         assert toolbar.find_all("span")[0].text() == "Order lines by"
         assert group.attributes["role"] == "group"
         assert group.attributes["aria-label"] == "Order source lines"
@@ -549,6 +756,23 @@ class TestSourceReport:
         )
         assert [control.attributes["aria-pressed"] for control in controls] == (
             ["true", "false", "false"] if memory else ["true", "false"]
+        )
+        assert [control.text() for control in controls] == (
+            ["Line number", "Time", "Mem Growth"] if memory else ["Line number", "Time"]
+        )
+        heat_group = heat_toolbar.find_all("div", css="source-heat-controls")[0]
+        heat_controls = heat_group.find_all("button", css="source-heat")
+        assert heat_toolbar.find_all("span")[0].text() == "Heatmap by"
+        assert heat_group.attributes["role"] == "group"
+        assert heat_group.attributes["aria-label"] == "Color source lines"
+        assert [control.attributes["data-heat"] for control in heat_controls] == (
+            ["time", "memory"] if memory else ["time"]
+        )
+        assert [control.text() for control in heat_controls] == (
+            ["Time", "Mem Growth"] if memory else ["Time"]
+        )
+        assert [control.attributes["aria-pressed"] for control in heat_controls] == (
+            ["true", "false"] if memory else ["true"]
         )
         assert not page.find_all("div", css="source-scroll")[0].find_all("button")
         assert [row.attributes["data-line"] for row in source_rows(page)] == ["1", "2", "3", "4"]
@@ -579,12 +803,50 @@ class TestSourceReport:
 
         """
         result.root_run.lines[0].ram = ProcessMemoryStats(2 * 1024**2, -1024, 4 * 1024**2)
-        assert "RAM change" not in parse(result).text()
+        assert "Mem Change" not in parse(result).text()
         result.capabilities = BackendCapabilities(memory=True, hit_counts=True)
         document = parse(result)
-        assert "RAM change" in document.text()
-        assert cell_values(source_rows(document)[2])[4:7] == ["2.0 MiB", "-1.0 KiB", "4.0 MiB"]
-        assert cell_values(source_rows(document)[3])[4:7] == ["—", "—", "—"]
+        assert "Mem Change" in document.text()
+        assert cell_values(source_rows(document)[2])[4:6] == ["-1.0 KB", "4.2 MB"]
+        assert cell_values(source_rows(document)[3])[4:6] == ["—", "—"]
+
+    @pytest.mark.parametrize(
+        ("value", "change", "peak"),
+        [
+            (None, "—", "—"),
+            (0, "0 B", "0 B"),
+            (999, "+999 B", "999 B"),
+            (1_000, "+1.0 KB", "1.0 KB"),
+            (999_000, "+999.0 KB", "999.0 KB"),
+            (1_000_000, "+1.0 MB", "1.0 MB"),
+            (999_000_000, "+999.0 MB", "999.0 MB"),
+            (1_000_000_000, "+1.0 GB", "1.0 GB"),
+            (-1_000, "-1.0 KB", "1.0 KB"),
+            (-1_000_000, "-1.0 MB", "1.0 MB"),
+            (-1_000_000_000, "-1.0 GB", "1.0 GB"),
+        ],
+    )
+    def test_memory_columns_use_decimal_units_without_changing_raw_bytes(
+        self,
+        result,
+        value,
+        change,
+        peak,
+    ):
+        """Display decimal memory units while preserving raw byte measurements.
+
+        Check unit boundaries, signed decreases, zeroes, and unknown readings
+        through the rendered source table and its sorting attributes.
+
+        """
+        result.capabilities = BackendCapabilities(memory=True, hit_counts=True)
+        result.root_run.lines[0].ram = ProcessMemoryStats(
+            delta_bytes=value, peak_bytes=abs(value) if value is not None else None
+        )
+        row = source_rows(parse(result))[2]
+        assert cell_values(row)[4:6] == [change, peak]
+        assert row.attributes["data-memory"] == ("" if value is None else str(value))
+        assert result.root_run.lines[0].ram.delta_bytes == value
 
     def test_disabled_memory_is_not_exposed_for_sorting(self, result):
         """Verify disabled memory is not exposed for sorting.
@@ -595,6 +857,9 @@ class TestSourceReport:
         """
         result.root_run.lines[0].ram = ProcessMemoryStats(2048, 1024, 4096)
         assert all(row.attributes["data-memory"] == "" for row in source_rows(parse(result)))
+        assert all(
+            row.attributes["data-heat-memory"] == "0.00000" for row in source_rows(parse(result))
+        )
 
     def test_two_calls_have_distinct_link_targets(self, result):
         """Verify two calls have distinct link targets.
@@ -976,7 +1241,7 @@ class TestReportNavigation:
         assert "Wall time" in text
         assert "2.00 s" in text
         assert "Executor peak memory" in text
-        assert "1.0 GiB" in text
+        assert "1.1 GB" in text
         assert "HashJoin" in text
         assert "Scan parquet" in text
         assert "Stage 7" in text
@@ -1194,8 +1459,8 @@ class TestSparkMetricPresentation:
             "main.py:3result = foo(bar(3))",
             "2.00 s",
             "8.00 s",
-            "1.0 GiB",
-            "1.0 MiB",
+            "1.1 GB",
+            "1.0 MB",
         ]
         assert rows[0].attributes["data-memory"] == str(2**30)
         assert rows[0].attributes["data-spill"] == str(2**20)
@@ -1254,8 +1519,8 @@ class TestSparkMetricPresentation:
             ]
             assert "Fused pipeline" in rows[0].text()
             assert "1.25 s" in rows[1].text()
-            assert "1.0 GiB" in rows[1].text()
-            assert "1.0 MiB" in rows[1].text()
+            assert "1.1 GB" in rows[1].text()
+            assert "1.0 MB" in rows[1].text()
             assert "InputAdapter" not in table.text()
         assert tables[0].find_all("strong")[1].attributes["title"] == (
             "Largest reported timing: build time"
@@ -1461,10 +1726,10 @@ class TestSparkMetricPresentation:
         rows = [cell_values(row) for row in detail.find_all("tr") if row.find_all("td")]
         assert rows == [
             ["output rows", "12,345"],
-            ["shuffle data size", "3.0 MiB"],
+            ["shuffle data size", "3.1 MB"],
             ["Cumulative operator time · sort time", "1.25 s"],
             ["Cumulative operator time · build time", "7.50 ms"],
-            ["buffer", "1.0 KiB"],
+            ["buffer", "1.0 KB"],
             ["files read", "4"],
             ["partitions read", "2"],
             ["disk spill", "0 B"],
@@ -1503,7 +1768,7 @@ class TestSparkMetricPresentation:
             ["output rows", "0"],
             ["Cumulative operator time · scan time", "—"],
             ["custom rows", "42"],
-            ["bytes", "4.0 KiB"],
+            ["bytes", "4.1 KB"],
             ["custom metric", "7"],
         ]
         assert "merged blocks" not in detail.text()
@@ -1548,7 +1813,7 @@ class TestSparkMetricPresentation:
         assert ["Task duration · p50", "200.00 ms"] in rows
         assert ["Task duration · p95", "450.00 ms"] in rows
         assert ["Task duration · max", "—"] in rows
-        assert ["Shuffle read", "1.0 MiB"] in rows
+        assert ["Shuffle read", "1.0 MB"] in rows
         assert ["Disk spill", "0 B"] in rows
         assert ["Input", "—"] in rows
         assert '{"p50"' not in stage.text()

@@ -502,11 +502,18 @@ def test_sampling_counts_in_all_report_views_and_serialization(known):
     assert restored.root_run.metadata["sample_rate"] == 250
     document = ReportDOM(render_html(restored)).root
     expected = "1,234" if known else "—"
-    for page_id in ("overview", "files", "functions", "notebooks"):
+    for page_id in ("overview", "files", "notebooks"):
         page = document.find_all("section", id=page_id)[0]
         table = page.find_all("table")[0]
         assert table.find_all("th")[-1].text() == "Samples"
         assert cell_values(table.find_all("tr")[-1])[-1] == expected
+    function_table = document.find_all("section", id="functions")[0].find_all("table")[0]
+    assert [header.text() for header in function_table.find_all("th")] == [
+        "Self time",
+        "Samples",
+        "Function",
+    ]
+    assert cell_values(function_table.find_all("tr")[-1]) == ["10.00 ms", expected, "work()"]
     rows = document.find_all("tr", css="source-row")
     table = document.find_all("table", css="source-table")[0]
     assert [header.text() for header in table.find_all("th")] == (

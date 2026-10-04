@@ -340,7 +340,7 @@ class TestProcessMemoryMode:
         )
         assert result.exit_code == 0, result.output
         html = report.read_text(encoding="utf-8")
-        assert "RAM after" in html
+        assert "Mem Change" in html
         assert 'id="memory"' in html
         assert "Driver memory" not in html
 

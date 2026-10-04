@@ -68,14 +68,20 @@ def test_merged_child_uses_its_own_memory_and_sampling_capabilities():
         if "child.py" in "".join(item.text() for item in page.find_all("h1"))
     )
     assert "Python time" in parent_page.text()
-    assert "RAM after" not in parent_page.text()
+    assert "Mem Change" not in parent_page.text()
     assert "Estimated time" in child_page.text()
-    assert "RAM change" in child_page.text()
-    assert [button.attributes["data-order"] for button in parent_page.find_all("button")] == [
+    assert "Mem Change" in child_page.text()
+    assert [
+        button.attributes["data-order"]
+        for button in parent_page.find_all("button", css="source-order")
+    ] == [
         "line",
         "time",
     ]
-    assert [button.attributes["data-order"] for button in child_page.find_all("button")] == [
+    assert [
+        button.attributes["data-order"]
+        for button in child_page.find_all("button", css="source-order")
+    ] == [
         "line",
         "time",
         "memory",
@@ -91,16 +97,20 @@ def test_merged_child_uses_its_own_memory_and_sampling_capabilities():
     assert [header.text() for header in child_page.find_all("th")] == [
         "Line",
         "Estimated time",
-        "RAM after",
-        "RAM change",
-        "Peak RAM",
-        "Python allocation Δ",
+        "Mem Change",
+        "Peak Mem",
         "Source",
     ]
-    assert cell_values(rows[0])[1:5] == ["2.00 ms", "2.0 KiB", "+1.0 KiB", "4.0 KiB"]
-    assert cell_values(rows[1])[1:5] == ["—"] * 4
-    assert cell_values(rows[0])[5] == "—"
-    assert cell_values(rows[1])[5] == "—"
+    assert cell_values(rows[0])[1:4] == ["2.00 ms", "+1.0 KB", "4.1 KB"]
+    assert cell_values(rows[1])[1:4] == ["—"] * 3
+    assert [
+        button.attributes["data-heat"]
+        for button in parent_page.find_all("button", css="source-heat")
+    ] == ["time"]
+    assert [
+        button.attributes["data-heat"]
+        for button in child_page.find_all("button", css="source-heat")
+    ] == ["time", "memory"]
     assert "Mixed collection" in document.text()
     assert "Observed lines" in document.text()
 
@@ -121,7 +131,7 @@ def test_shared_snapshot_combines_child_measurements_without_mutating_inputs():
     document = ReportDOM(render_html(result)).root
     rows = document.find_all("tr", css="source-row")
     assert len(rows) == 1
-    assert cell_values(rows[0])[1:7] == ["5.00 ms", "5", "1.00 ms", "—", "—", "—"]
+    assert cell_values(rows[0])[1:6] == ["5.00 ms", "5", "1.00 ms", "—", "—"]
     assert parent_line.wall_time_ns == 2_000_000
     assert parent_line.hits == 2
     assert parent_line.memory == MemoryStats(100, 1000)
@@ -221,12 +231,12 @@ def test_nested_runs_inherit_nearest_ancestor_capabilities(override):
         if override:
             assert "Python time" in page.text()
             assert "Estimated time" not in page.text()
-            assert "RAM after" not in page.text()
+            assert "Mem Change" not in page.text()
             assert cell_values(page.find_all("tr", css="source-row")[1])[1:4] == ["—", "0", "—"]
         else:
             assert "Estimated time" in page.text()
-            assert "RAM change" in page.text()
+            assert "Mem Change" in page.text()
             assert cell_values(page.find_all("tr", css="source-row")[1])[1:4] == ["—"] * 3
     assert "Python time" in pages["sibling.py"].text()
-    assert "RAM after" not in pages["sibling.py"].text()
+    assert "Mem Change" not in pages["sibling.py"].text()
     assert cell_values(pages["sibling.py"].find_all("tr", css="source-row")[1])[2] == "0"

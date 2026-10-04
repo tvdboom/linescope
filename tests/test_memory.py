@@ -328,8 +328,8 @@ def memory_result():
     return ProfileResult(run, {source.id: source}, "trace", BackendCapabilities(memory=True))
 
 
-def test_ram_and_allocation_columns_are_separate_and_keep_unknowns():
-    """Render process usage separately from retained Python allocation data.
+def test_memory_columns_show_only_change_and_peak_and_keep_unknowns():
+    """Render process change and peak without extra memory columns.
 
     Inspect controlled RAM observations, source intervals, and timeline
     snapshots without relying on exact timing.
@@ -342,20 +342,19 @@ def test_ram_and_allocation_columns_are_separate_and_keep_unknowns():
     assert [header.text() for header in table.find_all("th")] == [
         "Line",
         "Python time",
-        "RAM after",
-        "RAM change",
-        "Peak RAM",
-        "Python allocation Δ",
+        "Mem Change",
+        "Peak Mem",
         "Source",
     ]
     rows = table.find_all("tr", css="source-row")
-    assert cell_values(rows[0])[2:5] == ["200 B", "+100 B", "900 B"]
-    assert cell_values(rows[1])[2:5] == ["—", "—", "—"]
+    assert cell_values(rows[0]) == ["1", "—", "+100 B", "900 B", "first()"]
+    assert cell_values(rows[1]) == ["2", "—", "—", "—", "second()"]
+    assert "RAM after" not in document.text()
+    assert "Python allocation Δ" not in document.text()
     assert "Driver memory" not in document.text()
     assert "Driver peak" not in document.text()
     assert rows[0].attributes["data-allocation"] == "88888"
     assert rows[1].attributes["data-allocation"] == ""
-    assert cell_values(rows[1])[5] == "—"
 
 
 def test_timeline_has_valid_source_links_gaps_and_inspection_controls():
@@ -399,7 +398,9 @@ def test_child_process_ram_is_not_added_to_parent():
     document = ReportDOM(render_html(result)).root
     assert len(document.find_all("svg", css="memory-chart")) == 2
     row = document.find_all("tr", css="source-row")[0]
-    assert cell_values(row)[2:5] == ["—", "—", "1.2 KiB"]
+    assert cell_values(row)[2:4] == ["—", "1.2 KB"]
+    assert row.attributes["data-memory"] == ""
+    assert row.attributes["data-heat-memory"] == "0.00000"
     assert result.root_run.lines[0].ram.rss_bytes == 200
 
 

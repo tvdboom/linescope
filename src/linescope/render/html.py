@@ -196,10 +196,10 @@ def _count(value: int | None) -> str:
 
 
 def _bytes(value: int | None, *, signed: bool = False) -> str:
-    """Format a byte measurement using binary size units.
+    """Format a byte measurement using decimal size units.
 
-    Preserve unknown values and optionally show a positive sign for allocation
-    deltas.
+    Use 1,000 bytes per KB and 1,000,000 bytes per MB. Preserve unknown values
+    and optionally show a positive sign for byte changes.
 
     Parameters
     ----------
@@ -207,7 +207,7 @@ def _bytes(value: int | None, *, signed: bool = False) -> str:
         Measurement or serialized value to normalize or display.
 
     signed : bool, default=False
-        Whether positive allocation changes receive an explicit sign.
+        Whether positive byte changes receive an explicit sign.
 
     Returns
     -------
@@ -220,7 +220,7 @@ def _bytes(value: int | None, *, signed: bool = False) -> str:
 
     sign = "+" if signed and value > 0 else ""
 
-    for unit, size in (("GiB", 2**30), ("MiB", 2**20), ("KiB", 2**10)):
+    for unit, size in (("GB", 10**9), ("MB", 10**6), ("KB", 10**3)):
         if abs(value) >= size:
             return f"{sign}{value / size:,.1f} {unit}"
 
@@ -877,10 +877,34 @@ def _operator(operator: SparkOperator, execution_id: str) -> str:
     )
 
 
+def _heat(value: int | None, maximum: int) -> float:
+    """Scale positive measurements so smaller hotspots remain visible.
+
+    Leave unknown, zero, and negative measurements uncolored. Use a shared
+    maximum to keep heat comparable across source files.
+
+    Parameters
+    ----------
+    value : int | None
+        Line duration in nanoseconds or process-memory growth in bytes.
+
+    maximum : int
+        Largest positive measurement for the selected metric in the report.
+
+    Returns
+    -------
+    float
+        Logarithmic heat intensity between zero and one.
+
+    """
+    return log1p(999 * max(value or 0, 0) / maximum) / log1p(999) if maximum else 0
+
+
 def _source_page(
     unit: SourceUnit,
     data: dict[tuple[str, int], LineStats],
     maximum: int,
+    maximum_memory: int,
     capabilities: BackendCapabilities,
 ) -> str:
     """Render complete captured source with line metrics and navigation.
@@ -898,6 +922,10 @@ def _source_page(
 
     maximum : int
         Largest visible line duration used to scale source heat.
+
+    maximum_memory : int
+        Largest visible positive process-memory change, in bytes, used to
+        scale memory-growth heat.
 
     capabilities : [BackendCapabilities]
         Measurements supported by the relevant collector.
@@ -946,8 +974,8 @@ def _source_page(
             else ""
         )
         sample_cell = f'<td class="metric">{_count(samples)}</td>' if sample_counts else ""
-        # Compress the range so one slow line does not hide smaller hotspots.
-        intensity = log1p(999 * (duration or 0) / maximum) / log1p(999) if maximum else 0
+        intensity = _heat(duration, maximum)
+        memory_intensity = _heat(delta, maximum_memory)
         refs = []
 
         if stats:
@@ -974,10 +1002,8 @@ def _source_page(
             peak = ram.peak_bytes if ram else None
             allocation = stats.memory.delta_bytes if stats and stats.memory else None
             memory_cells = (
-                f'<td class="metric">{_bytes(ram.rss_bytes if ram else None)}</td>'
                 f'<td class="metric">{_bytes(delta, signed=True)}</td>'
                 f'<td class="metric">{_bytes(peak)}</td>'
-                f'<td class="metric">{_bytes(allocation, signed=True)}</td>'
             )
         gpu_cells = ""
         if gpu:
@@ -991,6 +1017,7 @@ def _source_page(
 
         rows.append(
             f'<tr id="{page}-L{number}" class="source-row" style="--heat:{intensity:.5f}"'
+            f' data-heat-time="{intensity:.5f}" data-heat-memory="{memory_intensity:.5f}"'
             f' data-line="{number}" data-time="{"" if duration is None else duration}"'
             f' data-memory="{"" if delta is None else delta}"'
             f' data-allocation="{"" if allocation is None else allocation}">'
@@ -1002,11 +1029,9 @@ def _source_page(
         )
 
     memory_head = (
-        '<th scope="col" title="Process RAM after the latest completed interval">RAM after</th>'
-        '<th scope="col" title="Process RAM changes across executions of this line">'
-        'RAM change</th><th scope="col" title="Highest process RAM observed during this line">'
-        'Peak RAM</th><th scope="col" title="Net retained Python allocations by allocation site; '
-        'temporary allocations freed between snapshots are excluded">Python allocation Δ</th>'
+        '<th scope="col" title="Process memory changes across executions of this line">'
+        'Mem Change</th><th scope="col" title="Highest process memory observed during this line">'
+        "Peak Mem</th>"
         if memory
         else ""
     )
@@ -1016,7 +1041,13 @@ def _source_page(
     context_head = '<th scope="col">Context</th>' if context else ""
     memory_order = (
         '<button type="button" class="source-order" data-order="memory" aria-pressed="false"'
-        ' title="Order by accumulated process RAM change, highest first">RAM growth</button>'
+        ' title="Order by accumulated process memory change, highest first">Mem Growth</button>'
+        if memory
+        else ""
+    )
+    memory_heat = (
+        '<button type="button" class="source-heat" data-heat="memory" aria-pressed="false"'
+        ' title="Color by positive accumulated process memory change">Mem Growth</button>'
         if memory
         else ""
     )
@@ -1024,13 +1055,17 @@ def _source_page(
         f'<section id="{page}" class="page source-page" hidden><div class="source-header">'
         f'<h1 id="{page}-title" class="path-title">{escape(unit.path)}</h1>'
         f'<div class="source-summary"><p class="muted">{len(source_lines)} lines</p>'
+        f'<div class="source-controls"><div class="source-toolbar"><span>Heatmap by</span>'
+        f'<div class="source-heat-controls" role="group" aria-label="Color source lines">'
+        f'<button type="button" class="source-heat" data-heat="time" aria-pressed="true"'
+        f' title="Color by time">Time</button>{memory_heat}</div></div>'
         f'<div class="source-toolbar"><span>Order lines by</span>'
         f'<div class="source-order-controls" role="group" aria-label="Order source lines">'
         f'<button type="button" class="source-order" data-order="line" aria-pressed="true"'
         f' title="Order by line number">Line number</button>'
         f'<button type="button" class="source-order" data-order="time" aria-pressed="false"'
         f' title="Order by time, highest first">Time</button>{memory_order}'
-        f"</div></div></div></div>"
+        f"</div></div></div></div></div>"
         f'<div class="source-scroll" tabindex="0" role="region"'
         f' aria-labelledby="{page}-title"><table'
         f' class="source-table"><thead><tr><th scope="col">Line</th><th'
@@ -1313,15 +1348,15 @@ def _memory_page(runs: list[ProfileRun], sources: dict[str, SourceUnit]) -> str:
         ]
         sections.append(
             f"<h2>{escape(run.name)}</h2>{_memory_timeline(run, sources)}"
-            f"<h3>Largest accumulated RAM growth</h3>"
-            f"{_table(['RAM change', 'Peak RAM', 'Source'], rows)}"
+            f"<h3>Largest accumulated memory growth</h3>"
+            f"{_table(['Mem Change', 'Peak Mem', 'Source'], rows)}"
         )
     return (
         '<section id="memory" class="page" hidden><h1>Memory</h1>'
         '<p class="intro">Follow process RAM over time and open the source at a spike.</p>'
         '<p class="semantics">RSS is resident RAM for the whole Python process, including '
-        "native libraries and profiler overhead. Other threads can change it. RAM after is "
-        "the latest line-boundary reading; RAM change sums observed intervals; peaks are "
+        "native libraries and profiler overhead. Other threads can change it. Mem Change "
+        "sums observed line intervals; Peak Mem is the highest reading during a line; peaks are "
         "observed, so brief spikes between readings can be missed. Child process timelines "
         "are shown separately.</p>" + "".join(sections) + "</section>"
     )
@@ -1364,6 +1399,17 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
         line for line in lines if line.wall_time_ns is not None or line.hits or line.samples
     ]
     maximum = max((line.wall_time_ns or 0 for line in lines), default=0)
+    source_lengths = {unit.id: len(unit.source.splitlines()) for unit in result.sources.values()}
+    maximum_memory = max(
+        (
+            max(line.ram.delta_bytes or 0, 0)
+            for line in lines
+            if line.ram is not None
+            and capabilities.get(line.location.source_id, result.capabilities).memory
+            and 0 < line.location.line <= source_lengths.get(line.location.source_id, 0)
+        ),
+        default=0,
+    )
     # Source identities retain their paths; display labels need only filenames.
     del root
     sources = []
@@ -1439,12 +1485,11 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
     function_rows = [
         [
             _time(item.total_time_ns),
-            "—" if item.calls is None else str(item.calls),
+            _count(item.samples if sampled else item.calls),
             (
                 f'<a href="{_source_link(item.source_id, item.first_line)}'
                 f'">{escape(item.qualified_name)}()</a>'
             ),
-            *([_count(item.samples)] if sampled else []),
         ]
         for item in sorted(functions, key=lambda item: item.total_time_ns or 0, reverse=True)
     ]
@@ -1455,7 +1500,7 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
             f'<p class="intro">{intro}</p><div'
             f' class="stats">{card_html}</div><div class="section-heading">'
             f"<h2>Most expensive"
-            f' lines</h2><a href="#files">Explore all source <span aria-hidden="true">↗</span>'
+            f' lines</h2><a href="#files">Explore all sources <span aria-hidden="true">↗</span>'
             f"</a></div>"
             f"{hot_table}"
             f"</section>"
@@ -1499,10 +1544,10 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
         f" readable even after your code changes."
         f"</p>{_table(file_headers, file_rows)}</section>"
     )
-    function_headers = ["Own line time", "Calls", "Function", *sample_headers]
+    function_headers = ["Self time", "Samples" if sampled else "Calls", "Function"]
     pages.append(
         f'<section id="functions" class="page" hidden><h1>Functions</h1>'
-        f'<p class="muted">Own line totals, excluding nested'
+        f'<p class="muted">Time on the function\'s own lines, excluding nested'
         f" project callees. Select a function to open its definition."
         f"</p>{_table(function_headers, function_rows)}</section>"
     )
@@ -1718,7 +1763,9 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
         )
 
     pages.extend(
-        _source_page(unit, data, maximum, capabilities.get(unit.id, result.capabilities))
+        _source_page(
+            unit, data, maximum, maximum_memory, capabilities.get(unit.id, result.capabilities)
+        )
         for unit in sources
     )
     source_nav = "".join(
