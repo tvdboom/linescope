@@ -1,4 +1,9 @@
-"""Render portable reports from normalized profile results."""
+"""LineScope.
+
+Author: Mavs
+Description: Render portable reports from normalized profile results.
+
+"""
 
 from linescope.render.html import render_html
 

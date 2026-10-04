@@ -11,7 +11,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from linescope.model import BackendCapabilities, MemoryStats
+from linescope.enums import Backend
+from linescope.model import BackendCapabilities, GPUStats, MemoryStats
 
 
 @dataclass
@@ -23,6 +24,7 @@ class RawLine:
     - linescope.model:LineStats
     - linescope.model:MemoryStats
     - linescope.backends.base:RawBackendResult
+
     """
 
     filename: str
@@ -30,6 +32,7 @@ class RawLine:
     wall_time_ns: int | None = None
     hits: int | None = None
     memory: MemoryStats | None = None
+    gpu: GPUStats | None = None
 
 
 @dataclass
@@ -41,6 +44,7 @@ class RawBackendResult:
     - linescope.model:BackendCapabilities
     - linescope.backends.base:ProfilerBackend
     - linescope.backends.base:RawLine
+
     """
 
     lines: list[RawLine] = field(default_factory=list)
@@ -56,21 +60,36 @@ class ProfilerBackend(Protocol):
     - linescope.model:BackendCapabilities
     - linescope.backends.base:RawBackendResult
     - linescope.backends.base:register_backend
+
     """
 
-    name: str
+    name: Backend | str
     capabilities: BackendCapabilities
 
     def start(self) -> None:
-        """Begin collecting measurements."""
+        """Begin collecting measurements.
+
+        Install only the instrumentation needed by this collector.
+
+        """
         ...
 
     def stop(self) -> None:
-        """Stop collecting and release instrumentation."""
+        """Stop collecting and release instrumentation.
+
+        Restore hooks owned by this collector, including after workload
+        failures.
+
+        """
         ...
 
     def result(self) -> RawBackendResult:
-        """Return a detached measurement snapshot."""
+        """Return a detached measurement snapshot.
+
+        Return normalized raw measurements for source attribution by the
+        session.
+
+        """
         ...
 
 
@@ -81,36 +100,67 @@ _factories: dict[str, BackendFactory] = {}
 def register_backend(name: str, factory: BackendFactory) -> None:
     """Register a collector factory without changing the rendering pipeline.
 
+    Raise `ValueError` if the name is empty or already registered.
+
     Parameters
     ----------
     name : str
         Unique name selected by the API or CLI.
 
-    factory : callable
-        Factory accepting `accepts`, `on_source`, `memory`, and `root` keywords.
+    factory : BackendFactory
+        Factory accepting `accepts`, `on_source`, `memory`, and `root`
+        keywords. GPU requests additionally pass `gpu=True` to compatible
+        collectors.
 
-    Raises
-    ------
-    ValueError
-        If the name is empty or already registered.
     """
-    if not name or name in _factories or name in ("trace", "scalene"):
+    if not name or name in _factories or name in tuple(Backend):
         raise ValueError(f"Backend name is empty or already registered: {name!r}")
+
     _factories[name] = factory
 
 
-def create_backend(name: str, **options: Any) -> ProfilerBackend:
-    """Construct a backend lazily so optional packages are never required on import."""
-    if name == "trace":
+def create_backend(name: Backend | str, **options: Any) -> ProfilerBackend:
+    """Construct a backend lazily.
+
+    Import optional measurement packages only when their backend is selected.
+
+    Raise `ValueError` if the name is neither a built-in backend nor a
+    registered factory.
+
+    Parameters
+    ----------
+    name : [Backend] | str
+        Built-in backend member or its string value. Registered custom
+        backend names are accepted as strings.
+
+    **options
+        Keyword arguments passed to the selected collector factory.
+
+    Returns
+    -------
+    [ProfilerBackend]
+        Collector ready to start measuring.
+
+    """
+    if name in _factories:
+        return _factories[name](**options)
+
+    try:
+        backend = Backend(name)
+    except ValueError as error:
+        available = ", ".join([*Backend, *_factories])
+        raise ValueError(f"Unknown backend {name!r}; available: {available}") from error
+
+    if backend is Backend.TRACE:
         from linescope.backends.trace import TraceBackend
 
         return TraceBackend(**options)
-    if name == "scalene":
+
+    if backend is Backend.SCALENE:
         from linescope.backends.scalene import ScaleneBackend
 
         return ScaleneBackend(**options)
-    if name not in _factories:
-        raise ValueError(
-            f"Unknown backend {name!r}; available: trace, scalene, {', '.join(_factories)}"
-        )
-    return _factories[name](**options)
+
+    from linescope.backends.tachyon import TachyonBackend
+
+    return TachyonBackend(**options)

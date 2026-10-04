@@ -11,8 +11,8 @@ copyright: Copyright &copy; 2026, by Mavs.
 
 theme:
   name: material
-  logo: img/logo.png
-  favicon: img/logo.png
+  logo: img/icon.svg
+  favicon: img/icon.svg
   custom_dir: docs_sources/overrides
   features:
     - content.action.edit
@@ -49,12 +49,29 @@ extra:
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/tvdboom/linescope
+      name: GitHub
+    - icon: fontawesome/brands/stack-overflow
+      link: https://stackoverflow.com/questions/tagged/linescope
+      name: StackOverflow
     - icon: fontawesome/brands/python
       link: https://pypi.org/project/linescope/
+      name: Pypi
+    - icon: fontawesome/brands/medium
+      link: https://tvdboom.medium.com/
+      name: Medium
+    - icon: fontawesome/solid/envelope
+      link: mailto:m.524687@gmail.com
+      name: Email
 
 plugins:
   - search
   - autorefs
+  - mkdocs-jupyter:
+      include: ["*.ipynb"]
+      include_requirejs: true
+      include_source: true
+      ignore_h1_titles: true
+      execute: false
   - mkdocs-simple-hooks:
       hooks:
         on_page_markdown: docs_sources.scripts:render
@@ -96,28 +113,66 @@ nav:
   - Getting started: getting_started.md
   - User guide:
       - Introduction: user_guide/introduction.md
-      - Configuration: user_guide/configuration.md
-      - Profiling Python: user_guide/python.md
-      - Reading reports: user_guide/reports.md
-      - Backends and measurement: user_guide/backends.md
-      - Memory: user_guide/memory.md
-      - Jupyter notebooks: user_guide/notebooks.md
-      - Databricks: user_guide/databricks.md
+      - Backends: user_guide/backends.md
+      - Notebooks: user_guide/notebooks.md
       - Spark: user_guide/spark.md
-      - Source and navigation: user_guide/source.md
+      - GPU: user_guide/gpu.md
+      - Reports: user_guide/reports.md
   - CLI:
-      - Scripts: cli/scripts.md
-      - Modules: cli/modules.md
-      - Options: cli/options.md
+      - linescope: cli/linescope.md
   - API:
-      - Overview: api/index.md
-      - Profiling: api/profiling.md
-      - Configuration: api/configuration.md
-      - Data model: api/model.md
-      - Source and symbols: api/source.md
-      - Backends: api/backends.md
-      - Notebook integrations: api/notebooks.md
-      - Spark integrations: api/spark.md
+      - backends:
+          - ProfilerBackend: api/backends/profilerbackend.md
+          - RawLine: api/backends/rawline.md
+          - RawBackendResult: api/backends/rawbackendresult.md
+          - register_backend: api/backends/register_backend.md
+          - TraceBackend: api/backends/tracebackend.md
+          - ScaleneBackend: api/backends/scalenebackend.md
+          - normalize_scalene: api/backends/normalize_scalene.md
+          - memory_preload_environment: api/backends/memory_preload_environment.md
+          - TachyonBackend: api/backends/tachyonbackend.md
+      - configuration:
+          - Config: api/configuration/config.md
+          - configure: api/configuration/configure.md
+      - enums:
+          - Backend: api/enums/backend.md
+          - DisplayMode: api/enums/displaymode.md
+          - SparkMode: api/enums/sparkmode.md
+          - SessionState: api/enums/sessionstate.md
+          - SourceKind: api/enums/sourcekind.md
+          - SymbolKind: api/enums/symbolkind.md
+          - RunStatus: api/enums/runstatus.md
+      - model:
+          - BackendCapabilities: api/model/backendcapabilities.md
+          - SourceLocation: api/model/sourcelocation.md
+          - SourceUnit: api/model/sourceunit.md
+          - SymbolDefinition: api/model/symboldefinition.md
+          - SymbolRef: api/model/symbolref.md
+          - MemoryStats: api/model/memorystats.md
+          - LineStats: api/model/linestats.md
+          - FunctionStats: api/model/functionstats.md
+          - SparkExecutionStats: api/model/sparkexecutionstats.md
+          - SparkOperator: api/model/sparkoperator.md
+          - SparkExecution: api/model/sparkexecution.md
+          - ProfileRun: api/model/profilerun.md
+          - ProfileResult: api/model/profileresult.md
+          - GPUStats: api/model/gpustats.md
+      - notebooks:
+          - ChildContext: api/notebooks/childcontext.md
+          - merge_child: api/notebooks/merge_child.md
+          - NotebookIntegration: api/notebooks/notebookintegration.md
+      - profiling:
+          - Session: api/profiling/session.md
+          - ProfileController: api/profiling/profilecontroller.md
+      - source:
+          - SourceRegistry: api/source/sourceregistry.md
+          - discover_root: api/source/discover_root.md
+          - SymbolIndex: api/source/symbolindex.md
+          - build_navigation: api/source/build_navigation.md
+      - spark:
+          - SparkIntegration: api/spark/sparkintegration.md
+          - capture_query: api/spark/capture_query.md
+          - parse_plan: api/spark/parse_plan.md
   - Examples:
       - Python script: examples/script.md
       - Package profiling: examples/package.md
@@ -125,12 +180,11 @@ nav:
       - Databricks notebooks: examples/databricks.md
       - Local Spark: examples/spark.md
       - Custom backend: examples/backend.md
-  - Development:
-      - Contributing: contributing.md
-      - Architecture: development/architecture.md
-      - Testing: development/testing.md
-      - Documentation: development/documentation.md
-      - Releasing: development/releasing.md
+      - Rendered notebooks:
+          - Notebook quickstart: examples/notebooks/quickstart.ipynb
+          - Databricks: examples/notebooks/databricks.ipynb
+          - Local Spark: examples/notebooks/local_spark.ipynb
+  - Development: development.md
   - FAQ: faq.md
   - Dependencies: dependencies.md
   - License: license.md

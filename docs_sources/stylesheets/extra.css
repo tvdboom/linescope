@@ -252,7 +252,7 @@ body {
 
 .support-logos {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: clamp(8px, 4vw, 40px);
     align-items: center;
 }
@@ -330,6 +330,50 @@ body {
   }
 }
 
+/* Match rendered notebook cells to the documentation's light and dark palettes. */
+.md-typeset .jupyter-wrapper {
+    --jp-layout-color0: var(--linescope-bg);
+    --jp-layout-color1: var(--linescope-bg);
+    --jp-layout-color2: var(--linescope-surface-2);
+    --jp-cell-editor-background: var(--linescope-code-bg);
+    --jp-cell-editor-border-color: var(--linescope-line);
+    --jp-content-font-color1: var(--linescope-text);
+    --jp-content-link-color: var(--linescope-blue);
+    --jp-ui-font-color1: var(--linescope-text);
+    --jp-cell-inprompt-font-color: var(--linescope-muted);
+    --jp-cell-outprompt-font-color: var(--linescope-muted);
+}
+
+.md-typeset .jupyter-wrapper .highlight-ipynb,
+.md-typeset .jupyter-wrapper .jp-RenderedText pre {
+    color: var(--linescope-code-text);
+    background: var(--linescope-code-bg);
+}
+
+[data-md-color-scheme="slate"] .jupyter-wrapper .highlight-ipynb :is(.n, .p) {
+    color: var(--linescope-code-text);
+}
+
+[data-md-color-scheme="slate"] .jupyter-wrapper .highlight-ipynb :is(.c, .c1, .cm) {
+    color: var(--linescope-muted);
+}
+
+[data-md-color-scheme="slate"] .jupyter-wrapper .highlight-ipynb :is(.k, .kn, .kc, .nb) {
+    color: var(--linescope-blue);
+}
+
+[data-md-color-scheme="slate"] .jupyter-wrapper .highlight-ipynb :is(.m, .mi, .mf) {
+    color: #f6bd55;
+}
+
+[data-md-color-scheme="slate"] .jupyter-wrapper .highlight-ipynb :is(.s, .s1, .s2) {
+    color: #a5d6a7;
+}
+
+[data-md-color-scheme="slate"] .jupyter-wrapper .highlight-ipynb .o {
+    color: #c4b5fd;
+}
+
 /* LineScope landing page. The base styling is adapted from Backtide. */
 .linescope-hero { border-bottom: 1px solid var(--linescope-line); padding: 4rem 1.5rem; }
 .linescope-hero-inner { display: flex; align-items: center; gap: 3rem; max-width: 1150px; margin: auto; }
@@ -349,3 +393,10 @@ body {
 .linescope-features h2 { font-size: 1.05rem; font-weight: 700; }
 .linescope-features p { color: var(--linescope-text-soft); font-size: .8rem; line-height: 1.6; }
 @media (max-width: 760px) { .linescope-hero-inner { flex-direction: column-reverse; gap: 1rem; } .linescope-logo { width: 45%; } .linescope-hero { padding-top: 2rem; } .linescope-features { grid-template-columns: 1fr; } }
+
+.backend-logos .column { width: 33.333%; }
+.column .logo { margin: 30px auto 0; }
+.column .logo a img { position: static; transform: none; height: 100px; object-fit: contain; }
+.backend-logos img[alt="Scalene"] { background: #0f766e; border-radius: 12px; padding: 8px; }
+.md-header__button.md-logo img { background: #f3f8f8; border-radius: 4px; padding: 2px; }
+@media (max-width: 600px) { .column { width: 50%; } }

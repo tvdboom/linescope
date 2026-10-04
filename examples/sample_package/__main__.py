@@ -1,11 +1,23 @@
-"""Run with linescope --backend trace -m examples.sample_package."""
+"""LineScope.
+
+Author: Mavs
+Description: Run with linescope --backend trace -m examples.sample_package.
+
+"""
 
 from .helpers import calculate, prepare
 
 
 def main():
-    """Execute a nested cross-module call."""
-    print(calculate(prepare(20_000)))
+    """Run main.
+
+    Execute a nested cross-module call.
+
+    """
+    orders = prepare(20_000)
+    summaries = calculate(orders)
+    for summary in summaries[:5]:
+        print(summary)
 
 
 if __name__ == "__main__":

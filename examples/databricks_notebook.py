@@ -1,22 +1,32 @@
 # Databricks notebook source
-"""Import this source notebook into a Databricks development workspace."""
+"""LineScope.
+
+Author: Mavs
+Description: Import this source notebook into a Databricks development
+workspace.
+
+"""
 
 # COMMAND ----------
 # MAGIC %load_ext linescope
 
 # COMMAND ----------
-# MAGIC %%profile --backend trace
+# MAGIC %%profile --backend trace --inline
 # MAGIC total = sum(value * value for value in range(10_000))
 
 # COMMAND ----------
 from linescope import profile
 
-session = profile.start(backend="trace", spark=True, display="end")
+session = profile.start(backend="trace", spark=True, display="end", inline=True)
+
+# COMMAND ----------
+values = list(range(10_000))
+total = sum(values)
 
 # COMMAND ----------
 # Run your existing application cells here. The profiler does not create actions.
 # To inspect a child notebook, use an existing path in your own workspace:
-# child_result = dbutils.notebook.run("./child", 60, {"date": "2026-01-01"})
+# Call it with dbutils.notebook.run as part of your normal workload.
 
 # COMMAND ----------
 profile.stop()

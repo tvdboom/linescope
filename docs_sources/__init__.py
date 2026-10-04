@@ -1,1 +1,6 @@
-"""Documentation build helpers for LineScope."""
+"""LineScope.
+
+Author: Mavs
+Description: Documentation build helpers for LineScope.
+
+"""

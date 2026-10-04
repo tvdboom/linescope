@@ -1,33 +1,20 @@
 # Profile a Python script
 
-The runnable example in `examples/profile_script.py` simulates I/O, transforms a small dataset,
-and saves a report. It uses the trace backend so it runs without optional dependencies.
+The runnable example in `examples/script.py` generates sensor data, simulates
+I/O, and compares two implementations of a rolling average. It uses the trace
+backend so it runs without optional dependencies, then opens a report in a new
+browser tab.
 
 ```console
-uv run python examples/profile_script.py
+uv run python examples/script.py
 ```
 
-```python
-from time import sleep
-from linescope import profile
+From a repository checkout with Just installed, `just demo-script` runs this
+example and opens its report in your browser. `just demo` is an alias for the
+same recipe.
 
+:: example: script.py
 
-def load_values():
-    sleep(0.02)
-    return list(range(20_000))
-
-
-def normalize(values):
-    scale = max(values) or 1
-    return [value / scale for value in values]
-
-
-with profile(backend="trace", display="none") as session:
-    values = load_values()
-    normalized = normalize(values)
-
-session.save("linescope.html")
-```
-
-The load's wait belongs to its calling source line. `normalize` links to its definition. The
-saved file contains the entire script, including lines without measurements.
+The input wait belongs to its calling source line. Follow `load_readings`,
+`rolling_slow`, and `rolling_fast` to their definitions and compare their line
+measurements. The report contains the entire script, including unexecuted lines.

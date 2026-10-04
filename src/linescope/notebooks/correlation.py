@@ -1,4 +1,10 @@
-"""Explicit correlation and merging for separately profiled notebook runs."""
+"""LineScope.
+
+Author: Mavs
+Description: Explicit correlation and merging for separately profiled notebook
+runs.
+
+"""
 
 from __future__ import annotations
 
@@ -13,17 +19,16 @@ from linescope.model import ProfileResult
 class ChildContext:
     """Portable correlation information for a child notebook.
 
+    Transport these values through your own approved notebook parameters
+    or artifact store. LineScope does not silently change notebook arguments.
+
     Parameters
     ----------
     correlation_id : str
         Unique identifier for this invocation.
+
     parent_id : str
         Parent profile run identifier.
-
-    Notes
-    -----
-    Transport these values through your own approved notebook parameters
-    or artifact store. LineScope does not silently change notebook arguments.
 
     See Also
     --------
@@ -39,6 +44,7 @@ class ChildContext:
     >>> context.as_parameters()["linescope_parent_id"]
     'parent-run'
     ```
+
     """
 
     correlation_id: str
@@ -55,8 +61,9 @@ class ChildContext:
 
         Returns
         -------
-        ChildContext
+        [ChildContext]
             Fresh invocation ID paired with its parent run.
+
         """
         return cls(uuid4().hex, parent_id)
 
@@ -65,9 +72,10 @@ class ChildContext:
 
         Returns
         -------
-        dict of str
+        dict[str, str]
             Correlation and parent identifiers. Passing these parameters is
             an explicit choice; no notebook arguments are changed implicitly.
+
         """
         return {
             "linescope_correlation_id": self.correlation_id,
@@ -78,25 +86,24 @@ class ChildContext:
 def merge_child(parent: ProfileResult, child: ProfileResult, correlation_id: str) -> ProfileResult:
     """Merge a child profile into a recorded notebook invocation.
 
+    Raise `ValueError` if the invocation is unknown, ownership does not
+    match, or source IDs collide with different source content.
+
     Parameters
     ----------
-    parent : ProfileResult
+    parent : [ProfileResult]
         Parent result containing a child invocation with the correlation ID.
-    child : ProfileResult
+
+    child : [ProfileResult]
         Independently collected child profile with matching parent metadata.
+
     correlation_id : str
         Invocation ID assigned by the parent.
 
     Returns
     -------
-    ProfileResult
+    [ProfileResult]
         Independent merged result. The input results remain unchanged.
-
-    Raises
-    ------
-    ValueError
-        If the invocation is unknown, ownership does not match, or source
-        IDs collide with different source content.
 
     See Also
     --------
@@ -111,30 +118,42 @@ def merge_child(parent: ProfileResult, child: ProfileResult, correlation_id: str
     >>> from linescope.model import ProfileRun
     >>> from linescope.notebooks import merge_child
     >>> parent = Session(backend="trace").result
-    >>> parent.root_run.children.append(ProfileRun(id="child-call", elapsed_ns=12))
+    >>> invocation = ProfileRun(id="child-call", elapsed_ns=12)
+    >>> parent.root_run.children.append(invocation)
     >>> child = Session(backend="trace").result
     >>> merged = merge_child(parent, child, "child-call")
     >>> merged.root_run.children[0].metadata["parent_wait_time_ns"]
     12
     ```
+
     """
     merged = deepcopy(parent)
     nodes = [merged.root_run]
+
     while nodes:
         owner = nodes.pop()
+
         for index, invocation in enumerate(owner.children):
             if invocation.id != correlation_id:
                 nodes.append(invocation)
                 continue
+
             if child.root_run.parent_id not in (None, owner.id):
                 raise ValueError("Child profile belongs to a different parent run.")
+
             declared = child.root_run.metadata.get("correlation_id")
+
             if declared is not None and declared != correlation_id:
                 raise ValueError("Child profile correlation ID does not match.")
+
             for source_id, source in child.sources.items():
                 existing = merged.sources.get(source_id)
+
                 if existing is not None and existing != source:
                     raise ValueError(f"Source snapshot collision: {source_id}")
+
+            # Keep the parent's invocation identity and wait duration while
+            # attaching the independently collected child measurements.
             replacement = deepcopy(child.root_run)
             replacement.id = invocation.id
             replacement.parent_id = owner.id
@@ -144,17 +163,24 @@ def merge_child(parent: ProfileResult, child: ProfileResult, correlation_id: str
             replacement.metadata["collection"] = "child profile merged"
             replacement.metadata["child_backend"] = child.backend
             replacement.metadata["child_capabilities"] = asdict(child.capabilities)
+
             for nested in replacement.children:
                 if nested.parent_id == child.root_run.id:
                     nested.parent_id = replacement.id
+
             owner.children[index] = replacement
             merged.sources.update(deepcopy(child.sources))
+
             for symbol in child.symbols:
                 if symbol not in merged.symbols:
                     merged.symbols.append(deepcopy(symbol))
+
             for warning in child.warnings:
                 message = f"Child {correlation_id}: {warning}"
+
                 if message not in merged.warnings:
                     merged.warnings.append(message)
+
             return merged
+
     raise ValueError(f"Unknown child invocation: {correlation_id}")

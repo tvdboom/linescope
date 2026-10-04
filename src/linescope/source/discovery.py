@@ -7,15 +7,16 @@ Description: Project discovery, filtering, and immutable source snapshots.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 import fnmatch
 import linecache
 import os
+from pathlib import Path
 import sys
 import sysconfig
 import tokenize
-from collections.abc import Iterable
-from pathlib import Path
 
+from linescope.enums import SourceKind
 from linescope.model import SourceUnit
 
 
@@ -30,16 +31,19 @@ def discover_root(start: str | Path | None = None) -> Path:
     Returns
     -------
     Path
-        Nearest directory containing ``pyproject.toml``, or the starting
+        Nearest directory containing `pyproject.toml`, or the starting
         directory if no project configuration is present.
 
     """
     directory = Path(start or Path.cwd()).expanduser().resolve()
+
     if directory.is_file():
         directory = directory.parent
+
     for candidate in (directory, *directory.parents):
         if (candidate / "pyproject.toml").is_file():
             return candidate
+
     return directory
 
 
@@ -49,7 +53,7 @@ class SourceRegistry:
     Parameters
     ----------
     root : str | Path | None, default=None
-        Project root. None discovers the nearest ``pyproject.toml``.
+        Project root. None discovers the nearest `pyproject.toml`.
 
     include : Iterable[str], default=()
         Package names, paths, or glob patterns to include. An empty sequence
@@ -61,7 +65,7 @@ class SourceRegistry:
 
     Attributes
     ----------
-    sources : dict[str, SourceUnit]
+    sources : dict[str, [SourceUnit]]
         Snapshots keyed by stable source identifiers.
 
     See Also
@@ -102,45 +106,62 @@ class SourceRegistry:
 
     def _package_paths(self, rules: tuple[str, ...]) -> tuple[Path, ...]:
         paths = []
+
         for rule in rules:
             if any(char in rule for char in "*?["):
                 continue
+
             candidate = Path(rule).expanduser()
+
             if candidate.is_absolute():
                 paths.append(candidate.resolve())
                 continue
+
             for base in (self.root, self.root / "src"):
                 paths.extend((base / rule, base / rule.replace(".", os.sep)))
+
             # Locate packages without importing them or executing __init__.py.
             package = rule.replace(".", os.sep)
+
             for entry in sys.path:
                 base = Path(entry or Path.cwd()).resolve()
-                for candidate in (base / package, base / f"{package}.py"):
-                    if candidate.exists():
-                        paths.append(candidate.resolve())
+
+                paths.extend(
+                    candidate.resolve()
+                    for candidate in (base / package, base / f"{package}.py")
+                    if candidate.exists()
+                )
+
         return tuple(paths)
 
     def _matches(self, path: Path, rule: str) -> bool:
         normalized = rule.replace("\\", "/").rstrip("/")
         full = path.as_posix()
+
         try:
             relative = path.relative_to(self.root).as_posix()
         except ValueError:
             relative = full
+
         match_path = full if Path(rule).is_absolute() else relative
+
         if fnmatch.fnmatchcase(match_path, normalized):
             return True
+
         if not any(char in normalized for char in "*?["):
             rule_path = Path(rule).expanduser()
             candidate = rule_path if rule_path.is_absolute() else self.root / rule_path
+
             if path == candidate or path.is_relative_to(candidate):
                 return True
+
             package_parts = normalized.replace(".", "/").split("/")
             parts = list(path.with_suffix("").parts)
             return any(
                 parts[index : index + len(package_parts)] == package_parts
                 for index in range(len(parts))
             )
+
         return False
 
     def accepts(self, filename: str | Path) -> bool:
@@ -159,10 +180,13 @@ class SourceRegistry:
 
         """
         name = str(filename)
+
         if name in self._aliases or name in self.sources:
             return True
+
         if name in self._accepted:
             return self._accepted[name]
+
         accepted = self._accepts_file(name)
         self._accepted[name] = accepted
         return accepted
@@ -170,25 +194,34 @@ class SourceRegistry:
     def _accepts_file(self, filename: str) -> bool:
         if filename.startswith("<") or "://" in filename:
             return False
+
         try:
             path = Path(filename).expanduser().resolve()
         except (OSError, ValueError):
             return False
+
         if path.suffix.lower() not in {".py", ".pyw"}:
             return False
+
         blocked_parts = {"site-packages", "dist-packages", ".venv", "venv", ".tox", "__pycache__"}
+
         if any(part.lower() in blocked_parts for part in path.parts):
             return False
+
         if path.is_relative_to(self._own_root):
             return False
+
         if any(path.is_relative_to(library) for library in self._library_roots):
             return False
+
         if any(self._matches(path, rule) for rule in self.exclude):
             return False
+
         if self.include:
             return any(
                 path == item or path.is_relative_to(item) for item in self._included_paths
             ) or any(self._matches(path, rule) for rule in self.include)
+
         return path.is_relative_to(self.root)
 
     def snapshot(self, filename: str | Path) -> SourceUnit | None:
@@ -201,27 +234,36 @@ class SourceRegistry:
 
         Returns
         -------
-        SourceUnit | None
+        [SourceUnit] | None
             Existing or newly captured source, or None for excluded or
             unavailable source. File encoding declarations are respected.
 
         """
         name = str(filename)
+
         if name in self._aliases:
             return self.sources[self._aliases[name]]
+
         if name in self.sources:
             return self.sources[name]
+
         if not self.accepts(name):
             return None
+
         path = Path(name).expanduser().resolve()
         source_id = path.as_posix()
+
+        # Freeze the first observed contents. Reports must not change when
+        # the user edits or removes the original file after collection.
         if source_id not in self.sources:
             try:
                 with tokenize.open(path) as stream:
                     source = stream.read()
             except (OSError, UnicodeError, SyntaxError):
                 return None
+
             self.sources[source_id] = SourceUnit(id=source_id, path=source_id, source=source)
+
         self._aliases[name] = source_id
         return self.sources[source_id]
 
@@ -237,7 +279,7 @@ class SourceRegistry:
         Parameters
         ----------
         source_id : str
-            Stable identifier, usually ``notebook://path#cell-N``.
+            Stable identifier, usually `notebook://path#cell-N`.
 
         source : str
             Exact source captured when the cell runs.
@@ -250,12 +292,14 @@ class SourceRegistry:
 
         Returns
         -------
-        SourceUnit
+        [SourceUnit]
             Immutable first snapshot for this identifier. Reexecuted cells
             should use a new identifier if their source has changed.
 
         """
-        unit = SourceUnit(id=source_id, path=path or source_id, source=source, kind="notebook")
+        unit = SourceUnit(
+            id=source_id, path=path or source_id, source=source, kind=SourceKind.NOTEBOOK
+        )
         return self.register(unit, filename)
 
     def register(self, unit: SourceUnit, filename: str | None = None) -> SourceUnit:
@@ -263,7 +307,7 @@ class SourceRegistry:
 
         Parameters
         ----------
-        unit : SourceUnit
+        unit : [SourceUnit]
             Source snapshot. An existing identifier retains its first source.
 
         filename : str | None, default=None
@@ -271,15 +315,18 @@ class SourceRegistry:
 
         Returns
         -------
-        SourceUnit
+        [SourceUnit]
             Registered first snapshot.
 
         """
         if unit.id not in self.sources:
             self.sources[unit.id] = unit
+
         self._aliases[unit.id] = unit.id
+
         if filename:
             self._aliases[filename] = unit.id
+
         return self.sources[unit.id]
 
     def snapshot_cell(self, filename: str, path: str | None = None) -> SourceUnit | None:
@@ -295,14 +342,17 @@ class SourceRegistry:
 
         Returns
         -------
-        SourceUnit | None
+        [SourceUnit] | None
             Captured cell, or None when its source is not cached.
 
         """
         if filename in self._aliases:
             return self.sources[self._aliases[filename]]
+
         source = "".join(linecache.getlines(filename))
+
         if not source:
             return None
+
         source_id = f"notebook://{path or 'interactive'}#{filename.strip('<>')}"
         return self.register_notebook(source_id, source, path=path, filename=filename)

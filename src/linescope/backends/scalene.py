@@ -7,7 +7,12 @@ Description: Scoped sampling with Scalene's collection and normalization engine.
 
 from __future__ import annotations
 
+from collections import defaultdict
+from collections.abc import Callable, Mapping
+from contextlib import ExitStack
+from copy import deepcopy
 import importlib
+from importlib.metadata import PackageNotFoundError, version
 import inspect
 import math
 import os
@@ -16,16 +21,12 @@ import signal
 import sys
 import threading
 import time
-from collections import defaultdict
-from collections.abc import Callable, Mapping
-from contextlib import ExitStack
-from copy import deepcopy
-from importlib.metadata import PackageNotFoundError, version
 from types import FrameType
 from typing import Any
 
 from linescope.backends.base import RawBackendResult, RawLine
-from linescope.model import BackendCapabilities, MemoryStats
+from linescope.enums import Backend
+from linescope.model import BackendCapabilities, GPUStats, MemoryStats
 
 _ACTIVE: ScaleneBackend | None = None
 _NATIVE_MAPS: tuple[Any, Any] | None = None
@@ -39,10 +40,12 @@ _SAMPLE_WARNING = (
 def _number(value: Any) -> float | None:
     if isinstance(value, bool):
         return None
+
     try:
         number = float(value)
     except (TypeError, ValueError, OverflowError):
         return None
+
     return number if math.isfinite(number) else None
 
 
@@ -51,13 +54,14 @@ def normalize_scalene(
     *,
     accepts: Callable[[str], bool] | None = None,
     memory: bool = False,
+    gpu: bool = False,
 ) -> RawBackendResult:
     """Normalize Scalene JSON metrics without exposing backend details.
 
     Parameters
     ----------
     payload : Mapping[str, Any]
-        Scalene JSON profile containing ``files`` and ``elapsed_time_sec``.
+        Scalene JSON profile containing `files` and `elapsed_time_sec`.
 
     accepts : callable | None, default=None
         Optional filename predicate. None retains every reported file.
@@ -65,27 +69,35 @@ def normalize_scalene(
     memory : bool, default=False
         Include available allocation delta and peak metrics in bytes.
 
+    gpu : bool, default=False
+        Include sampled GPU time and device-memory values when supplied.
+
     Returns
     -------
-    RawBackendResult
+    [RawBackendResult]
         Sampled line estimates. Unsupported counts and memory values remain
-        None; Scalene's ``n_growth_mb`` is not interpreted as allocation delta.
+        None; Scalene's `n_growth_mb` is not interpreted as allocation delta.
 
     """
     elapsed = _number(payload.get("elapsed_time_sec"))
     rows = []
+
     for filename, file_data in payload.get("files", {}).items():
         if accepts is not None and not accepts(filename):
             continue
+
         for line in file_data.get("lines", []):
             number = _number(line.get("lineno"))
+
             if number is None or number < 1 or int(number) != number:
                 continue
+
             percentages = [
                 _number(line.get(key))
                 for key in ("n_cpu_percent_python", "n_cpu_percent_c", "n_sys_percent")
             ]
             wall_time = None
+
             if (
                 elapsed is not None
                 and elapsed >= 0
@@ -93,7 +105,9 @@ def normalize_scalene(
             ):
                 percent = min(100, sum(max(0, value or 0) for value in percentages))
                 wall_time = round(elapsed * percent * 10_000_000)
+
             memory_stats = None
+
             if memory:
                 allocated = _number(line.get("n_malloc_mb"))
                 freed = _number(line.get("n_free_mb"))
@@ -103,30 +117,59 @@ def normalize_scalene(
                     if allocated is not None and freed is not None
                     else None
                 )
+
                 if delta is not None or peak is not None:
                     memory_stats = MemoryStats(
                         delta, round(max(0, peak) * 1024**2) if peak is not None else None
                     )
-            rows.append(RawLine(filename, int(number), wall_time, None, memory_stats))
+
+            gpu_stats = None
+
+            if gpu:
+                gpu_time = _number(line.get("gpu_time_ns"))
+                gpu_peak = _number(line.get("n_gpu_peak_memory_mb"))
+
+                if gpu_time is not None or gpu_peak is not None:
+                    gpu_stats = GPUStats(
+                        round(max(0, gpu_time)) if gpu_time is not None else None,
+                        round(max(0, gpu_peak) * 1024**2) if gpu_peak is not None else None,
+                    )
+
+            rows.append(RawLine(filename, int(number), wall_time, None, memory_stats, gpu_stats))
+
     return RawBackendResult(rows, [_SAMPLE_WARNING])
 
 
 def _load_scalene() -> Any:
-    """Load the compatible engine while containing package import side effects."""
+    """Load the compatible engine while containing package import side effects.
+
+    Check the installed version before importing collection components.
+    Restore import-time hooks before returning the engine.
+
+    """
+    if sys.version_info >= (3, 15):
+        raise RuntimeError(
+            "Scalene supports Python 3.11-3.14 in LineScope; select 'trace' or 'tachyon'"
+            " on Python 3.15."
+        )
+
     try:
         installed = version("scalene")
     except PackageNotFoundError:
         raise ImportError(
-            "The Scalene backend requires its optional dependency. "
-            "Install it with `pip install 'linescope[scalene]'`, "
+            "The Scalene backend requires Scalene, included with LineScope on Python 3.11-3.14. "
+            "Install it with `pip install linescope`, "
             "or explicitly select backend='trace'."
         ) from None
+
     if installed.split(".")[:2] != ["2", "3"]:
         raise RuntimeError(
             f"Scalene {installed} is not supported by this adapter; "
             "install scalene>=2.3,<2.4 or select backend='trace'."
         )
+
     locale = os.environ.get("LC_ALL")
+
     try:
         return importlib.import_module("scalene")
     finally:
@@ -138,12 +181,20 @@ def _load_scalene() -> Any:
 
 
 def _component(module: str, name: str) -> Any:
-    """Import an optional, version-checked Scalene component lazily."""
+    """Import an optional, version-checked Scalene component lazily.
+
+    Resolve components only after the optional engine has passed its version
+    check.
+
+    """
     return getattr(importlib.import_module(f"scalene.{module}"), name)
 
 
 def memory_preload_environment() -> dict[str, str]:
     """Return startup environment variables for native memory collection.
+
+    This function never restarts Python or changes the caller's environment.
+    The CLI uses it before executing the target script for `--memory`.
 
     Returns
     -------
@@ -151,11 +202,6 @@ def memory_preload_environment() -> dict[str, str]:
         Variables to merge into a newly launched Python process. Linux and
         macOS require the interposer before Python starts. Windows loads its
         native collector at runtime and does not need a new process.
-
-    Notes
-    -----
-    This function never restarts Python or changes the caller's environment.
-    The CLI uses it before executing the target script for ``--memory``.
 
     """
     _load_scalene()
@@ -167,12 +213,18 @@ def memory_preload_environment() -> dict[str, str]:
 class ScaleneBackend:
     """Collect scoped measurements using the Scalene sampling engine.
 
+    The adapter uses Scalene 2.3's collection components directly, avoiding
+    the command-line controller's process-wide OS, thread, and subprocess
+    replacements. POSIX systems sample using SIGALRM; Windows uses a sampler
+    thread, matching Scalene's platform strategy. All installed hooks are
+    released at stop. Starting requires the main Python thread.
+
     Parameters
     ----------
-    accepts : callable
+    accepts : Callable[[str], bool]
         Predicate defining project-owned runtime filenames.
 
-    on_source : callable
+    on_source : Callable[[str], Any]
         Snapshot callback invoked on first observation of an accepted file.
 
     memory : bool, default=False
@@ -182,19 +234,14 @@ class ScaleneBackend:
     root : str | None, default=None
         Accepted for consistency with the backend factory protocol.
 
+    gpu : bool, default=False
+        Collect utilization and device memory from supported accelerators.
+
     See Also
     --------
     - linescope.backends.base:ProfilerBackend
     - linescope.backends.trace:TraceBackend
     - linescope.backends.scalene:normalize_scalene
-
-    Notes
-    -----
-    The adapter uses Scalene 2.3's collection components directly, avoiding
-    the command-line controller's process-wide OS, thread, and subprocess
-    replacements. POSIX systems sample using SIGALRM; Windows uses a sampler
-    thread, matching Scalene's platform strategy. All installed hooks are
-    released at stop. Starting requires the main Python thread.
 
     Examples
     --------
@@ -202,13 +249,15 @@ class ScaleneBackend:
 
     ```pycon
     from linescope.backends.scalene import ScaleneBackend
-    backend = ScaleneBackend(accepts=lambda filename: True, on_source=lambda filename: None)
+    backend = ScaleneBackend(
+        accepts=lambda filename: True, on_source=lambda filename: None
+    )
     (backend.capabilities.sampled, backend.capabilities.hit_counts)
     ```
 
     """
 
-    name = "scalene"
+    name: Backend | str = Backend.SCALENE
 
     def __init__(
         self,
@@ -217,10 +266,12 @@ class ScaleneBackend:
         on_source: Callable[[str], Any],
         memory: bool = False,
         root: str | None = None,
+        gpu: bool = False,
     ) -> None:
         self.accepts = accepts
         self.on_source = on_source
         self.memory = memory
+        self.gpu = gpu
         self.root = str(root or os.getcwd())
         self.capabilities = BackendCapabilities(hit_counts=False, memory=memory, sampled=True)
         self._running = False
@@ -239,20 +290,51 @@ class ScaleneBackend:
         self._profile_installed = False
         self._interval = 0.01
         self._random = random.Random()
+        self._accelerator: Any = None
+        self._gpu_error: str | None = None
+
+    def _start_gpu(self) -> None:
+        if sys.platform == "darwin":
+            self._gpu_error = "Scalene GPU measurements are unavailable on this Apple runtime"
+            return
+
+        try:
+            accelerator = _component("scalene_nvidia_gpu", "ScaleneNVIDIAGPU")()
+
+            if not accelerator.has_gpu():
+                accelerator = _component("scalene_neuron", "ScaleneNeuron")()
+
+            if not accelerator.has_gpu():
+                self._gpu_error = (
+                    "No supported Scalene GPU device was found; GPU measurements are unavailable"
+                )
+                return
+
+            self._accelerator = accelerator
+            self.capabilities = BackendCapabilities(
+                hit_counts=False, memory=self.memory, sampled=True, gpu=True
+            )
+        except Exception as error:  # noqa: BLE001
+            self._gpu_error = f"Scalene GPU initialization failed: {type(error).__name__}: {error}"
 
     def _observe(self, filename: str) -> bool:
         accepted = self.accepts(filename)
+
         if accepted and filename not in self._seen:
             self._seen.add(filename)
             self.on_source(filename)
+
             if self._native_started:
                 self._register_native_files()
+
         return accepted
 
     def _should_trace(self, filename: str, function: str = "") -> bool:
+        del function
         return self._observe(filename)
 
     def _source_event(self, frame: FrameType, event: str, arg: Any) -> None:
+        del arg
         if self._running and event == "call":
             self._observe(frame.f_code.co_filename)
 
@@ -268,22 +350,33 @@ class ScaleneBackend:
         signal.signal(signum, handler)
 
     def start(self) -> None:
-        """Start the real Scalene collector and source observation hooks."""
+        """Start the real Scalene collector and source observation hooks.
+
+        Own the installed hooks until stop or startup failure restores them.
+
+        """
         global _ACTIVE
+
         if self._running or _ACTIVE is not None:
             raise RuntimeError("A Scalene collector is already running in this process")
+
         if threading.current_thread() is not threading.main_thread():
             raise RuntimeError("Start Scalene profiling from the main Python thread")
+
         if sys.getprofile() is not None:
             raise RuntimeError(
                 "A Python profile hook is already installed; stop it before starting Scalene"
             )
+
         if sys.platform != "win32" and any(signal.getitimer(signal.ITIMER_REAL)):
             raise RuntimeError("SIGALRM is already in use by an active timer")
+
         _load_scalene()
         self._stats = _component("scalene_statistics", "ScaleneStatistics")()
         self._processor = _component("scalene_cpu_profiler", "ScaleneCPUProfiler")(
-            self._stats, os.cpu_count() or 1, False
+            self._stats,
+            os.cpu_count() or 1,
+            False,  # noqa: FBT003
         )
         self._json = _component("scalene_json", "ScaleneJSON")()
         self._frames = _component("scalene_utility", "compute_frames_to_record")
@@ -297,21 +390,31 @@ class ScaleneBackend:
         self._clear_caches = _component("scalene_utility", "clear_intern_caches")
         self._clear_caches()
         _ACTIVE = self
+
         try:
+            if self.gpu:
+                self._start_gpu()
+
             if self.memory:
                 self._start_memory()
+
             frame = sys._getframe(1)
+
             while frame is not None:
                 self._observe(frame.f_code.co_filename)
                 frame = frame.f_back
+
             self._started = time.perf_counter()
             self._stats.start_clock()
             self._previous = self._time()
             self._running = True
+
             if self._native_started:
                 importlib.import_module("scalene.pywhere").set_scalene_done_false()
+
             sys.setprofile(self._source_event)
             self._profile_installed = True
+
             if sys.platform == "win32":
                 self._sampler = threading.Thread(
                     target=self._sample_loop, name="linescope-scalene", daemon=True
@@ -330,36 +433,57 @@ class ScaleneBackend:
             self._sample()
 
     def _sample(self, signum: Any = None, frame: FrameType | None = None) -> None:
+        del signum, frame
         if not self._running:
             return
+
         if self._sampling:
             if sys.platform != "win32":
                 signal.setitimer(signal.ITIMER_REAL, self._interval)
+
             return
+
         with self._sample_lock:
             self._collect_sample()
 
     def _collect_sample(self) -> None:
         self._sampling = True
+
         try:
             current = self._time()
             frames = self._frames(self._should_trace)
+            gpu_load, gpu_memory = (0.0, 0.0)
+
+            if self._accelerator is not None:
+                try:
+                    gpu_load, gpu_memory = self._accelerator.get_stats()
+
+                    if not math.isfinite(gpu_load) or not math.isfinite(gpu_memory):
+                        raise ValueError("GPU collector returned a non-finite measurement")
+                except Exception as error:  # noqa: BLE001
+                    self._gpu_error = (
+                        f"Scalene GPU sampling failed: {type(error).__name__}: {error}"
+                    )
+                    self._accelerator = None
+                    gpu_load, gpu_memory = (0.0, 0.0)
+
             self._processor.process_cpu_sample(
                 frames,
                 current,
-                0.0,
-                0.0,
+                min(1.0, max(0.0, gpu_load)),
+                max(0.0, gpu_memory),
                 self._previous,
                 self._sleeping,
                 self._should_trace,
                 self._interval,
-                False,
+                False,  # noqa: FBT003
             )
             self._previous = current
+
             if self.memory and sys.platform == "win32":
                 self._native._alloc_sigqueue_processor([0])
                 self._native._memcpy_sigqueue_processor(None, None)
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001
             # Signals must never replace an exception in the profiled program.
             # Keep collection failures visible in the normalized report.
             self._sampling_error = (
@@ -367,6 +491,7 @@ class ScaleneBackend:
             )
         finally:
             self._sampling = False
+
             if self._running and sys.platform != "win32":
                 self._interval = max(0.0001, self._random.expovariate(100))
                 signal.setitimer(signal.ITIMER_REAL, self._interval)
@@ -389,12 +514,15 @@ class ScaleneBackend:
             raise RuntimeError(
                 "Native memory profiling cannot share an active debugger or trace hook"
             )
+
         if sys.platform == "win32":
             windows = _component("scalene_windows", "get_windows_profiler")()
+
             if not windows.load_dll() or not windows.initialize():
                 raise RuntimeError(
                     "Scalene's native Windows memory collector could not initialize"
                 )
+
         try:
             if _NATIVE_MAPS is None:
                 _NATIVE_MAPS = (mapfile("malloc"), mapfile("memcpy"))
@@ -404,12 +532,15 @@ class ScaleneBackend:
                 "Use `linescope --memory script.py`, or start the notebook kernel with "
                 "the environment from linescope.backends.scalene.memory_preload_environment()."
             ) from error
+
         self._native = scalene
+
         if getattr(scalene, "_Scalene__initialized", False):
             self._native = None
             raise RuntimeError(
                 "Native memory profiling cannot share another initialized Scalene session"
             )
+
         processor = memory_profiler(self._stats)
         processor.set_mapfiles(*_NATIVE_MAPS)
         arguments = arguments_type(memory=True, gpu=False, stacks=False, async_profile=False)
@@ -423,8 +554,10 @@ class ScaleneBackend:
             "_Scalene__start_time": time.monotonic_ns(),
             "_should_trace": staticmethod(self._should_trace),
         }
+
         for name, value in state.items():
             self._replace_native(name, value)
+
         alloc_queue = signal_queue(scalene._alloc_sigqueue_processor)
         memcpy_queue = signal_queue(scalene._memcpy_sigqueue_processor)
         self._replace_native("_Scalene__alloc_sigq", alloc_queue)
@@ -438,17 +571,22 @@ class ScaleneBackend:
             state["_Scalene__invalidate_queue"],
             self._should_trace,
         )
+
         if sys.platform != "win32":
             self._set_signal(signal.SIGXCPU, scalene.malloc_signal_handler)
             self._set_signal(signal.SIGXFSZ, scalene.free_signal_handler)
             self._set_signal(signal.SIGPROF, scalene.memcpy_signal_handler)
+
             for queue in self._native_queues:
                 queue.start()
 
     def _register_native_files(self) -> None:
         package = importlib.import_module("scalene")
         importlib.import_module("scalene.pywhere").register_files_to_profile(
-            list(self._seen), self.root, False, os.path.dirname(package.__file__ or "")
+            list(self._seen),
+            self.root,
+            False,  # noqa: FBT003
+            os.path.dirname(package.__file__ or ""),
         )
 
     def _stop_memory(self) -> None:
@@ -457,10 +595,13 @@ class ScaleneBackend:
                 pywhere = importlib.import_module("scalene.pywhere")
                 tracer = importlib.import_module("scalene.scalene_tracer")
                 pywhere.set_scalene_done_true()
+
                 try:
                     tracer.disable_tracing()
+
                     for queue in self._native_queues:
                         queue.stop()
+
                     self._native._alloc_sigqueue_processor([0])
                     self._native._memcpy_sigqueue_processor(None, None)
                 finally:
@@ -474,6 +615,7 @@ class ScaleneBackend:
                         delattr(self._native, name)
                     else:
                         setattr(self._native, name, previous)
+
             self._native_state.clear()
             self._native_queues.clear()
             self._native = None
@@ -481,31 +623,47 @@ class ScaleneBackend:
     def _cleanup(self) -> None:
         global _ACTIVE
         self._running = False
+
         try:
             if self._profile_installed:
                 if sys.getprofile() == self._source_event:
                     sys.setprofile(None)
+
                 self._profile_installed = False
+
             self._stop_event.set()
+
             if self._sampler is not None:
                 self._sampler.join()
                 self._sampler = None
+
             if sys.platform != "win32" and signal.SIGALRM in self._signals:
                 signal.setitimer(signal.ITIMER_REAL, 0)
+
             self._stop_memory()
+            self._accelerator = None
         finally:
             for signum, handler in self._signals.items():
                 signal.signal(signum, handler)
+
             self._signals.clear()
+
             if _ACTIVE is self:
                 _ACTIVE = None
 
     def stop(self) -> None:
-        """Stop collection, detach hooks, and normalize sampled measurements."""
+        """Stop collection, detach hooks, and normalize sampled measurements.
+
+        Normalize the final samples after releasing collector-owned
+        resources.
+
+        """
         if not self._running:
             return
+
         if threading.current_thread() is not threading.main_thread():
             raise RuntimeError("Stop Scalene profiling from the main Python thread")
+
         elapsed = time.perf_counter() - self._started
         self._cleanup()
         self._stats.stop_clock()
@@ -517,8 +675,14 @@ class ScaleneBackend:
         files: dict[str, dict[str, Any]] = {}
         cpu = self._stats.cpu_stats
         memory = self._stats.memory_stats
+        gpu = self._stats.gpu_stats
         mappings = [cpu.cpu_samples_python, cpu.cpu_samples_c]
+
+        if self.capabilities.gpu:
+            mappings.append(gpu.n_gpu_samples)
+
         memory_locations: set[tuple[str, int]] = set()
+
         if self.memory:
             memory_mappings = [
                 memory.memory_malloc_samples,
@@ -533,6 +697,7 @@ class ScaleneBackend:
                 if amount
             }
             mappings += memory_mappings
+
         locations = {
             (filename, number)
             for mapping in mappings
@@ -540,6 +705,7 @@ class ScaleneBackend:
             for number in lines
             if number > 0 and self.accepts(filename)
         }
+
         for filename, number in sorted(locations):
             row = self._json.output_profile_line(
                 fname=filename,
@@ -547,37 +713,65 @@ class ScaleneBackend:
                 line_no=number,
                 line="",
                 stats=self._stats,
-                profile_this_code=lambda filename, line: True,
+                profile_this_code=lambda _filename, _line: True,
                 profile_memory=self.memory,
                 force_print=True,
             )
+
             if self.memory and (filename, number) in memory_locations:
                 # Upstream's JSON has malloc and peak, but omits free volume.
                 row["n_free_mb"] = memory.memory_free_samples[filename][number]
             else:
                 for key in ("n_malloc_mb", "n_peak_mb"):
                     row.pop(key, None)
+
             files.setdefault(filename, {"lines": []})["lines"].append(row)
+
+            if (
+                self.capabilities.gpu
+                and not self._gpu_error
+                and gpu.n_gpu_samples[filename][number] > 0
+            ):
+                row["gpu_time_ns"] = gpu.gpu_samples[filename][number] * 1_000_000_000
+            else:
+                row.pop("n_gpu_peak_memory_mb", None)
+
         result = normalize_scalene(
-            {"elapsed_time_sec": elapsed, "files": files}, memory=self.memory
+            {"elapsed_time_sec": elapsed, "files": files},
+            memory=self.memory,
+            gpu=self.capabilities.gpu,
         )
+
+        if self._gpu_error:
+            result.warnings.append(self._gpu_error)
+
         if self._sampling_error:
             result.warnings.append(self._sampling_error)
+
         if self.memory and not memory_locations:
             result.warnings.append(
-                "No native allocation samples were recorded; Python driver memory values are unavailable for this run."
+                "No native allocation samples were recorded; Python driver memory values"
+                " are unavailable for this run."
             )
+
         return result
 
     def result(self) -> RawBackendResult:
-        """Return a detached final result or a consistent live sample snapshot."""
+        """Return a detached final result or a consistent live sample snapshot.
+
+        Keep the returned measurements independent of subsequent collection.
+
+        """
         if self._running:
             with self._sample_lock, ExitStack() as resources:
                 self._sampling = True
+
                 try:
                     for queue in self._native_queues:
                         resources.enter_context(queue.lock)
+
                     return self._export(time.perf_counter() - self._started)
                 finally:
                     self._sampling = False
+
         return deepcopy(self._raw)

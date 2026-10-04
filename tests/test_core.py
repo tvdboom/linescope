@@ -1,7 +1,8 @@
 """LineScope.
 
 Author: Mavs
-Description: Public lifecycle, configuration, timing, and failure regression tests.
+Description: Public lifecycle, configuration, timing, and failure regression
+tests.
 
 """
 
@@ -30,12 +31,20 @@ from linescope.model import (
 
 @pytest.fixture(autouse=True)
 def isolated_configuration(monkeypatch):
-    """Keep each test independent of persistent API configuration."""
+    """Provide isolated configuration.
+
+    Keep each test independent of persistent API configuration.
+
+    """
     monkeypatch.setattr("linescope.config._overrides", {})
 
 
 def execute(tmp_path, text, *, namespace=None, **options):
-    """Run a real temporary source file through the public session API."""
+    """Provide execute.
+
+    Run a real temporary source file through the public session API.
+
+    """
     path = tmp_path / "workload.py"
     path.write_text(text, encoding="utf-8")
     scope = {} if namespace is None else namespace
@@ -53,11 +62,15 @@ def execute(tmp_path, text, *, namespace=None, **options):
 
 
 class TestConfiguration:
-    """Validate precedence and useful error messages."""
+    """Check configuration.
+
+    Validate precedence and useful error messages.
+
+    """
 
     def test_defaults(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        assert resolve_config().backend == "scalene"
+        assert resolve_config().backend == ("trace" if sys.version_info >= (3, 15) else "scalene")
         assert resolve_config().memory is False
         assert resolve_config().spark == "auto"
 
@@ -86,7 +99,7 @@ class TestConfiguration:
         assert resolve_config().backend == "trace"
 
     @pytest.mark.parametrize(
-        "options,error",
+        ("options", "error"),
         [
             ({"memory": "yes"}, TypeError),
             ({"notebooks": 1}, TypeError),
@@ -116,10 +129,17 @@ class TestConfiguration:
 
 
 class TestSession:
-    """Cover profiling contexts, explicit sessions, and cleanup."""
+    """Check session.
+
+    Cover profiling contexts, explicit sessions, and cleanup.
+
+    """
 
     def test_source_hits_navigation_and_unexecuted_lines(self, tmp_path):
-        source = "def double(x):\n    return x * 2\n\ndef never():\n    return -1\n\nvalue = double(21)\n"
+        source = (
+            "def double(x):\n    return x * 2\n\ndef never():\n    return -1\n\nvalue ="
+            " double(21)\n"
+        )
         session, scope = execute(tmp_path, source)
         assert scope["value"] == 42
         assert session.state == "stopped"
@@ -224,7 +244,7 @@ class TestSession:
             )()
 
     def test_controller_without_session(self):
-        with pytest.raises(RuntimeError, match="profile.start"):
+        with pytest.raises(RuntimeError, match=r"profile.start"):
             ProfileController().stop()
 
     def test_memory_not_faked_by_trace(self):
@@ -249,7 +269,8 @@ class TestSession:
         worker = threading.Thread(target=stop)
         worker.start()
         worker.join()
-        assert failures and "thread" in failures[0]
+        assert failures
+        assert "thread" in failures[0]
         assert session.state == "running"
         session.stop()
 
@@ -271,6 +292,7 @@ class TestSession:
         prior = sys.gettrace()
 
         def tracer(frame, event, arg):
+            del arg
             if frame.f_code.co_filename.endswith("workload.py"):
                 received.append(event)
             return tracer
@@ -301,7 +323,10 @@ class TestSession:
         def external():
             clock[0] += 10_000_000
 
-        source = "def numbers():\n    yield 1\n    yield 2\ng = numbers()\nnext(g)\nexternal()\nnext(g)\n"
+        source = (
+            "def numbers():\n    yield 1\n    yield 2\ng = numbers()\nnext(g)\nexternal()\n"
+            "next(g)\n"
+        )
         session, _ = execute(tmp_path, source, namespace={"external": external})
         function = next(
             item
@@ -311,7 +336,10 @@ class TestSession:
         assert function.total_time_ns == 0
 
     def test_coroutine_resumptions_count_as_one_call(self, tmp_path):
-        source = "import asyncio\nasync def task():\n    await asyncio.sleep(0)\n    await asyncio.sleep(0)\n    return 42\nvalue = asyncio.run(task())\n"
+        source = (
+            "import asyncio\nasync def task():\n    await asyncio.sleep(0)\n    await"
+            " asyncio.sleep(0)\n    return 42\nvalue = asyncio.run(task())\n"
+        )
         session, namespace = execute(tmp_path, source)
         assert namespace["value"] == 42
         function = next(
@@ -338,27 +366,31 @@ class TestSession:
     def test_browser_show_and_inline_show(self, tmp_path, monkeypatch):
         session, _ = execute(tmp_path, "x = 1\n", output=str(tmp_path / "shown.html"))
         opened = []
-        monkeypatch.setattr("webbrowser.open", opened.append)
+        monkeypatch.setattr("webbrowser.open", lambda url, **_kwargs: opened.append(url))
         monkeypatch.setattr("IPython.get_ipython", lambda: None)
         session.show()
         assert opened == [(tmp_path / "shown.html").as_uri()]
         displayed = []
         monkeypatch.setattr("IPython.get_ipython", lambda: SimpleNamespace())
         monkeypatch.setattr("IPython.display.display", displayed.append)
-        session.show()
+        session.show(inline=True)
         assert len(displayed) == 1
         assert "srcdoc=" in displayed[0].data
         assert len(opened) == 1
 
 
 class TestBackendProtocol:
-    """Prove extensions can supply optional measurements independently of UI."""
+    """Check backend protocol.
+
+    Prove extensions can supply optional measurements independently of UI.
+
+    """
 
     def test_unknown_and_duplicate_names(self):
         with pytest.raises(ValueError, match="Unknown backend"):
             create_backend("missing")
         with pytest.raises(ValueError, match="already registered"):
-            register_backend("trace", lambda **kwargs: None)
+            register_backend("trace", lambda **_kwargs: None)
 
     def test_custom_collector_aggregation(self, tmp_path, monkeypatch):
         path = tmp_path / "custom.py"
@@ -405,7 +437,7 @@ class TestBackendProtocol:
             start=lambda: (_ for _ in ()).throw(ValueError("broken start")),
             stop=lambda: None,
         )
-        monkeypatch.setattr("linescope.api.create_backend", lambda *args, **kwargs: backend)
+        monkeypatch.setattr("linescope.api.create_backend", lambda *_args, **_kwargs: backend)
         for _ in range(2):
             with pytest.raises(ValueError, match="broken start"):
                 Session(notebooks=False, spark=False).start()

@@ -1,7 +1,8 @@
 """LineScope.
 
 Author: Mavs
-Description: Portable report content, escaping, metrics, and navigation contracts.
+Description: Portable report content, escaping, metrics, and navigation
+contracts.
 
 """
 
@@ -31,7 +32,11 @@ from linescope.render import render_html
 
 @dataclass
 class Element:
-    """Small test-only DOM supporting semantic HTML assertions."""
+    """Provide element.
+
+    Small test-only DOM supporting semantic HTML assertions.
+
+    """
 
     tag: str
     attributes: dict[str, str | None] = field(default_factory=dict)
@@ -58,7 +63,11 @@ class Element:
 
 
 class ReportDOM(HTMLParser):
-    """Parse report markup without requiring a browser or third-party parser."""
+    """Provide report dom.
+
+    Parse report markup without requiring a browser or third-party parser.
+
+    """
 
     def __init__(self, html):
         super().__init__(convert_charrefs=True)
@@ -99,11 +108,18 @@ class ReportDOM(HTMLParser):
 
 @pytest.fixture
 def result():
-    """A normalized profile with two independently linked calls on one line."""
+    """Provide result.
+
+    A normalized profile with two independently linked calls on one line.
+
+    """
     unit = SourceUnit(
         "source:///project/main.py",
         "/project/main.py",
-        "def foo(value): return value\ndef bar(value): return value\nresult = foo(bar(3))\n# UNEXECUTED_SOURCE_MARKER\n",
+        (
+            "def foo(value): return value\ndef bar(value): return value\nresult ="
+            " foo(bar(3))\n# UNEXECUTED_SOURCE_MARKER\n"
+        ),
     )
     line = LineStats(
         SourceLocation(unit.id, 3),
@@ -139,7 +155,11 @@ def cell_values(row):
 
 
 class TestSourceReport:
-    """Full-source presentation and optional metric behavior."""
+    """Check source report.
+
+    Full-source presentation and optional metric behavior.
+
+    """
 
     def test_full_source_including_unexecuted_lines(self, result):
         document = parse(result)
@@ -241,6 +261,35 @@ class TestSourceReport:
         path.unlink()
         assert "ORIGINAL_SNAPSHOT" in render_html(result)
 
+    @pytest.mark.parametrize(
+        "path",
+        ["/project/package/main.py", "../../package/main.py", r"C:\project\package\main.py"],
+    )
+    def test_python_labels_show_only_filename(self, result, tmp_path, path):
+        unit = next(iter(result.sources.values()))
+        result.sources[unit.id] = SourceUnit(unit.id, path, unit.source)
+        document = ReportDOM(render_html(result, root=tmp_path)).root
+        assert document.find_all("h1", css="path-title")[0].text() == "main.py"
+        source_item = document.find_all("a", css="source-item")[0]
+        assert source_item.attributes["title"] == "main.py"
+        files = document.find_all("section", id="files")[0]
+        assert files.find_all("a")[0].text() == "main.py"
+        assert result.sources[unit.id].path == path
+
+    def test_same_filename_keeps_distinct_source_links(self, result):
+        first = SourceUnit("first", "/project/first/main.py", "first = 1\n")
+        second = SourceUnit("second", "/project/second/main.py", "second = 2\n")
+        result.sources = {first.id: first, second.id: second}
+        result.root_run.lines = []
+        result.root_run.functions = []
+        document = parse(result)
+        links = document.find_all("a", css="source-item")
+        assert [link.attributes["title"] for link in links] == ["main.py", "main.py"]
+        targets = [link.attributes["href"] for link in links]
+        assert targets[0] != targets[1]
+        rows = source_rows(document)
+        assert targets == [f"#{row.attributes['id']}" for row in rows]
+
     def test_empty_profile_remains_usable(self):
         empty = ProfileResult(ProfileRun(), {}, "custom", BackendCapabilities())
         document = parse(empty)
@@ -250,7 +299,11 @@ class TestSourceReport:
 
 
 class TestReportNavigation:
-    """Hash routes, source symbols, child notebooks, and Spark context."""
+    """Check report navigation.
+
+    Hash routes, source symbols, child notebooks, and Spark context.
+
+    """
 
     def test_every_internal_link_resolves_and_ids_are_unique(self, result):
         document = parse(result)
@@ -268,11 +321,44 @@ class TestReportNavigation:
             "#overview",
             "#files",
             "#functions",
-            "#notebooks",
-            "#spark",
         }
+        assert not document.find_all("section", id="notebooks")
+        assert not document.find_all("section", id="spark")
+        assert "Spark executions" not in document.text()
         first_line = source_rows(document)[0].attributes["id"]
         assert document.find_all("a", css="source-item")[0].attributes["href"] == f"#{first_line}"
+
+    def test_report_has_no_footer(self, result):
+        document = parse(result)
+        assert not document.find_all("footer")
+        assert "Python driver profiling · self-contained HTML" not in document.text()
+
+    @pytest.mark.parametrize("notebook_context", ["none", "snapshot", "child"])
+    @pytest.mark.parametrize("spark_context", ["none", "root", "nested"])
+    def test_optional_views_follow_captured_context(self, result, notebook_context, spark_context):
+        if notebook_context == "snapshot":
+            unit = SourceUnit("cell", "Cell 1", "value = 1\n", "notebook")
+            result.sources[unit.id] = unit
+        elif notebook_context == "child":
+            # A child invocation can be captured without access to its source.
+            result.root_run.children = [ProfileRun(name="Child notebook")]
+
+        if spark_context == "root":
+            result.root_run.spark_executions = [SparkExecution("execution")]
+        elif spark_context == "nested":
+            grandchild = ProfileRun(spark_executions=[SparkExecution("execution")])
+            result.root_run.children.append(ProfileRun(children=[grandchild]))
+
+        document = parse(result)
+        views = {link.attributes["href"] for link in document.find_all("a", css="nav-link")}
+        has_notebooks = notebook_context != "none" or spark_context == "nested"
+        has_spark = spark_context != "none"
+        assert ("#notebooks" in views) == has_notebooks
+        assert bool(document.find_all("section", id="notebooks")) == has_notebooks
+        assert ("#spark" in views) == has_spark
+        assert bool(document.find_all("section", id="spark")) == has_spark
+        assert ("Spark executions" in document.text()) == has_spark
+        self.test_every_internal_link_resolves_and_ids_are_unique(result)
 
     def test_nested_child_notebooks_have_reachable_views(self, result):
         child_source = SourceUnit(
@@ -346,10 +432,14 @@ class TestReportNavigation:
         badge = source_rows(document)[2].find_all("a", css="spark")[0]
         page = document.find_all("section", id=badge.attributes["href"][1:])[0]
         text = page.text()
-        assert "Cumulative executor time" in text and "12.00 s" in text
-        assert "Wall time" in text and "2.00 s" in text
-        assert "Executor peak memory" in text and "1.0 GiB" in text
-        assert "HashJoin" in text and "Scan parquet" in text
+        assert "Cumulative executor time" in text
+        assert "12.00 s" in text
+        assert "Wall time" in text
+        assert "2.00 s" in text
+        assert "Executor peak memory" in text
+        assert "1.0 GiB" in text
+        assert "HashJoin" in text
+        assert "Scan parquet" in text
         assert "Stage 7" in text
         views = page.find_all("pre", css="plan-view")
         assert len(views) == 5
@@ -378,7 +468,11 @@ class TestReportNavigation:
 
 
 class TestSparkMetricPresentation:
-    """Spark plans retain their shape without leaking raw JVM metric structures."""
+    """Check spark metric presentation.
+
+    Spark plans retain their shape without leaking raw JVM metric structures.
+
+    """
 
     def test_internal_wrappers_flatten_and_logical_children_stay_visible(self, result):
         scan = SparkOperator("scan", "Scan parquet", metrics={"rows": 100})
@@ -389,7 +483,8 @@ class TestSparkMetricPresentation:
         wrapper = SparkOperator("result", "ResultQueryStage 4", children=[codegen])
         result.root_run.spark_executions = [SparkExecution("compact", operators=[wrapper])]
         tree = parse(result).find_all("ul", css="operator-tree")[0]
-        assert "SortMergeJoin" in tree.text() and "Scan parquet" in tree.text()
+        assert "SortMergeJoin" in tree.text()
+        assert "Scan parquet" in tree.text()
         for name in ("WholeStageCodegen", "InputAdapter", "ResultQueryStage", "ShuffleQueryStage"):
             assert name not in tree.text()
         assert len(tree.find_all("li")) == 2
@@ -499,10 +594,17 @@ class TestSparkMetricPresentation:
 
 
 class TestReportSafety:
-    """Ensure data stays inert and the report has no network dependencies."""
+    """Check report safety.
+
+    Ensure data stays inert and the report has no network dependencies.
+
+    """
 
     def test_source_paths_and_metadata_cannot_inject_markup(self, result):
-        hostile = '<img src="https://attacker.invalid/pixel" onerror="alert(1)"></script><script>alert(2)</script>'
+        hostile = (
+            '<img src="https://attacker.invalid/pixel" onerror="alert(1)"></script>'
+            "<script>alert(2)</script>"
+        )
         unit = SourceUnit(hostile, hostile, f"value = {hostile!r}\n# {hostile}\n")
         result.sources = {unit.id: unit}
         result.root_run.lines = [LineStats(SourceLocation(unit.id, 1), 1)]
@@ -521,7 +623,10 @@ class TestReportSafety:
         result.warnings = [hostile]
         document = parse(result)
         assert len(document.find_all("script")) == 1
-        assert not document.find_all("img")
+        images = document.find_all("img")
+        assert len(images) == 1
+        assert images[0].attributes["class"] == "brand-mark"
+        assert images[0].attributes["src"].startswith("data:image/svg+xml;base64,")
         assert all(
             not key.startswith("on") for node in document.find_all() for key in node.attributes
         )
@@ -552,7 +657,8 @@ class TestReportSafety:
         )
         assert "default-src 'none'" in csp.attributes["content"]
         javascript = document.find_all("script")[0].text()
-        assert "fetch(" not in javascript and "XMLHttpRequest" not in javascript
+        assert "fetch(" not in javascript
+        assert "XMLHttpRequest" not in javascript
 
     def test_accessible_navigation_and_search(self, result):
         document = parse(result)

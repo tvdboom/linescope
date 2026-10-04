@@ -1,4 +1,9 @@
-"""Notebook capture and explicit child-profile correlation."""
+"""LineScope.
+
+Author: Mavs
+Description: Notebook capture and explicit child-profile correlation.
+
+"""
 
 from linescope.notebooks.correlation import ChildContext, merge_child
 from linescope.notebooks.ipython import (

@@ -1,9 +1,14 @@
-"""Validate report semantics for independently collected child profiles."""
+"""LineScope.
+
+Author: Mavs
+Description: Validate report semantics for independently collected child
+profiles.
+
+"""
 
 from dataclasses import asdict
 
 import pytest
-from test_render import ReportDOM, cell_values
 
 from linescope.model import (
     BackendCapabilities,
@@ -15,6 +20,7 @@ from linescope.model import (
     SourceUnit,
 )
 from linescope.render import render_html
+from tests.test_render import ReportDOM, cell_values
 
 
 def test_merged_child_uses_its_own_memory_and_sampling_capabilities():

@@ -7,11 +7,10 @@ Description: Module containing the documentation rendering.
 
 from __future__ import annotations
 
-import importlib
-import json
 from dataclasses import MISSING, fields, is_dataclass
 from enum import Enum
 from html import escape
+import importlib
 from inspect import (
     Parameter,
     getdoc,
@@ -24,12 +23,13 @@ from inspect import (
     isroutine,
     signature,
 )
+import json
 from types import MethodType
 
-import regex as re
-import yaml
 from click import Command
 from mkdocs.config.defaults import MkDocsConfig
+import regex as re
+import yaml
 
 # Variables ======================================================== >>
 
@@ -37,7 +37,73 @@ LINESCOPE_URL = "https://github.com/tvdboom/linescope/blob/main/src/"
 
 # Mapping of keywords to urls
 # Usage in docs: [anchor][key] or [key][] -> [anchor][value]
-CUSTOM_URLS = {}
+CUSTOM_URLS = {
+    "databricks-16-4-lts": ("https://docs.databricks.com/aws/en/release-notes/runtime/16.4lts"),
+    "code-of-conduct": (
+        "https://github.com/tvdboom/linescope/blob/main/.github/CODE_OF_CONDUCT.md"
+    ),
+    "java": "https://spark.apache.org/docs/latest/api/python/getting_started/install.html",
+    "dataframe": (
+        "https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/"
+        "api/pyspark.sql.DataFrame.html"
+    ),
+    "sparksession": (
+        "https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/"
+        "api/pyspark.sql.SparkSession.html"
+    ),
+    "sparkcontext": (
+        "https://spark.apache.org/docs/latest/api/python/reference/api/pyspark.SparkContext.html"
+    ),
+    "interactiveshell": (
+        "https://ipython.readthedocs.io/en/stable/api/generated/"
+        "IPython.core.interactiveshell.html#IPython.core.interactiveshell.InteractiveShell"
+    ),
+}
+
+# These names resolve to API pages through MkDocs autorefs. Keep container
+# punctuation outside the reference, for example list[[SourceUnit]].
+LINKED_TYPES = {
+    "Backend",
+    "BackendCapabilities",
+    "ChildContext",
+    "Config",
+    "DatabricksIntegration",
+    "DataFrame",
+    "DisplayMode",
+    "FunctionStats",
+    "GPUStats",
+    "InteractiveShell",
+    "LineStats",
+    "MemoryStats",
+    "NotebookIntegration",
+    "ProfileController",
+    "ProfilerBackend",
+    "ProfileResult",
+    "ProfileRun",
+    "RawBackendResult",
+    "RawLine",
+    "RunStatus",
+    "ScaleneBackend",
+    "Session",
+    "SessionState",
+    "SourceKind",
+    "SourceLocation",
+    "SourceRegistry",
+    "SourceUnit",
+    "SparkContext",
+    "SparkExecution",
+    "SparkExecutionStats",
+    "SparkIntegration",
+    "SparkOperator",
+    "SparkMode",
+    "SparkSession",
+    "SymbolDefinition",
+    "SymbolIndex",
+    "SymbolKind",
+    "SymbolRef",
+    "TachyonBackend",
+    "TraceBackend",
+}
 
 FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
 LINK_RE = re.compile(r"(?<!\w)\[([.`': \w_-]+?)](?!\()(?:\s*\[(?!\[)([\w_:-]+?)])?")
@@ -66,9 +132,7 @@ class AutoDocs:
     - attributes
     - returns
     - yields
-    - raises
     - see also
-    - notes
     - references
     - examples
     - hyperparameters
@@ -79,7 +143,7 @@ class AutoDocs:
     obj : object
         Class, method or function to parse.
 
-    method : str | None
+    method : str | None, default=None
         Method of `obj` to parse.
 
     References
@@ -94,9 +158,7 @@ class AutoDocs:
         "Attributes\n---------",
         "Returns\n-------",
         "Yields\n------",
-        "Raises\n------",
         "See Also\n--------",
-        "Notes\n-----",
         "References\n-------",
         "Examples\n--------",
         r"\Z",
@@ -114,10 +176,12 @@ class AutoDocs:
 
         self.method = method
         self.module = obj.__module__
+
         if isinstance(self.obj, Command):  # Cli commands have no __name__
             self.name = str(self.obj.name)
         else:
             self.name = self.obj.__name__
+
         if doc := getdoc(self.obj):
             self.doc = doc
         else:
@@ -125,7 +189,7 @@ class AutoDocs:
 
     @staticmethod
     def get_obj(command: str) -> AutoDocs:
-        """Get an AutoDocs object from a string.
+        """Get an [AutoDocs] object from a string.
 
         The provided string must be of the form module:object or
         module:object.method.
@@ -137,7 +201,7 @@ class AutoDocs:
 
         Returns
         -------
-        Autodocs
+        [AutoDocs]
             New instance of the class.
 
         """
@@ -145,19 +209,23 @@ class AutoDocs:
             command = command.removeprefix("- ")
 
         module, name = command.split(":")
+
         if "." in name:
             name, method = name.split(".")
             cls = getattr(importlib.import_module(module), name)
-            return AutoDocs(getattr(cls, method))
+            return AutoDocs(cls, method=method)
         else:
-            return AutoDocs(getattr(importlib.import_module(module), name))
+            obj = getattr(importlib.import_module(module), name)
+            # Public controllers expose a callable instance of the class
+            # documented on the API page, such as profile / profiler.
+            return AutoDocs(obj if hasattr(obj, "__name__") else type(obj))
 
     @staticmethod
     def parse_body(body: str) -> str:
         """Parse a parameter's body to the right Markdown format.
 
-        Allow lists to not have to start with a new line when there's
-        no preceding line.
+        Allow lists to not have to start with a new line when there's no
+        preceding line.
 
         Parameters
         ----------
@@ -171,6 +239,7 @@ class AutoDocs:
 
         """
         text = "\n"
+
         if body.lstrip().startswith(("- ", "* ", "+ ")):
             text += "\n"
 
@@ -190,6 +259,7 @@ class AutoDocs:
 
         """
         toc = "<table markdown style='font-size: 0.9em'>"
+
         for obj in self.obj:  # ty: ignore[not-iterable]
             func = AutoDocs(obj)
 
@@ -231,6 +301,7 @@ class AutoDocs:
         if obj not in ("enum", "dataclass", "command"):
             # Get signature without self, cls and type hints
             sign = []
+
             for k, v in params.items():
                 if k not in ("cls", "self") and not k.startswith("_"):
                     if v.default == Parameter.empty:
@@ -259,12 +330,15 @@ class AutoDocs:
             url = ""
 
         anchor = f"[](){{#{self._parent_anchor}{self.name.strip('_')}}}\n"
+
         if obj in ("command", "method"):
             module = ""
         else:
             module = self.module + "."
+
         obj = f"<em>{obj}</em>"
         name = f"<strong style='color:#0f766e'>{self.name}</strong>"
+
         if url:
             try:
                 line = getsourcelines(self.obj)[1]
@@ -273,19 +347,28 @@ class AutoDocs:
                 url = ""
 
         # \n\n in front of signature to break potential lists in markdown
-        return f"\n\n{anchor}<div class='sign'>{obj} {module}{name}{parameters}{url}</div>"
+        return f"\n\n{anchor}<div class='sign'>{obj} {module}{name}{parameters}{url}</div>\n\n"
 
     def _documented_defaults(self) -> dict[str, str]:
-        """Return documented default values for abbreviated signatures."""
+        """Return documented default values for abbreviated signatures.
+
+        Use parameter defaults from the docstring when a signature uses
+        Ellipsis.
+
+        """
         block = self.get_block("Parameters")
+
         if not block:
             return {}
 
         defaults = {}
+
         for header in re.findall(r"^[a-zA-Z*]\w*\s*:.*$", block, re.M):
             match = re.search(r"(?<=default=).+?$", header)
+
             if match:
                 defaults[header.split(":", 1)[0].strip("* ")] = match.group().strip()
+
         return defaults
 
     def get_summary(self) -> str:
@@ -341,6 +424,7 @@ class AutoDocs:
         """
         lines = self.get_block("See Also").splitlines()
         block = ""
+
         for line in lines:
             if line:
                 if not block:
@@ -392,6 +476,7 @@ class AutoDocs:
 
         """
         table = ""
+
         for block in blocks:
             if isinstance(block, str):
                 name = block.capitalize()
@@ -412,6 +497,7 @@ class AutoDocs:
                 ]
 
             content = ""
+
             if not config.get("from_docstring", True):
                 for attr in attrs:
                     if ":" in attr:
@@ -429,19 +515,20 @@ class AutoDocs:
                     output = str(signature(obj).return_annotation)
 
                     header = f"{obj.__name__}: {types_conversion(output)}"
-                    text = f"<div markdown class='param'>{getdoc(obj)}\n</div>"
+                    text = f"<div markdown class='param'>{getdoc(obj)}\n</div>\n\n"
 
                     anchor = f"[](){{#{self.name.lower()}-{obj.__name__}}}\n"
-                    content += f"{anchor}<strong>{header}</strong><br>{text}"
+                    content += f"{anchor}<strong>{header}</strong><br>\n\n{text}"
 
             elif match := self.get_block(name):
                 # Headers start with a letter, *, -, or [ after new line
                 header_start = r"^[\[a-zA-Z*-].*?$"
+
                 for header in re.findall(header_start, match, re.M):
                     # Check that the default value in docstring matches the real one
                     if default := re.search("(?<=default=).+?$", header):
                         try:
-                            param = header.split(":")[0]
+                            param = header.split(":")[0].strip()
                             real = signature(self.obj).parameters[param]
 
                             # String representation uses single quotes
@@ -451,7 +538,18 @@ class AutoDocs:
                             if default.startswith("'") and default.endswith("'"):
                                 default = default[1:-1]
 
-                            if real.default is not Ellipsis and default != str(real.default):
+                            expected = str(real.default)
+                            if isinstance(real.default, Enum):
+                                expected = f"{type(real.default).__name__}.{real.default.name}"
+                                default = re.sub(r"\[([^]]+)\]", r"\1", default)
+                            if is_dataclass(self.obj):
+                                item = next(
+                                    field for field in fields(self.obj) if field.name == param
+                                )
+                                if item.default_factory is not MISSING:
+                                    expected = f"{item.default_factory.__name__}()"
+
+                            if real.default is not Ellipsis and default != expected:
                                 raise ValueError(
                                     f"Default value {real.default} of parameter {param} "
                                     f"of object {self.obj} doesn't match the value "
@@ -465,20 +563,21 @@ class AutoDocs:
                     body = re.search(pattern, match, re.S | re.M).group()
 
                     header = header.replace("*", r"\*")  # Use literal * for args/kwargs
-                    text = f"<div class='param' markdown>{self.parse_body(body)}</div>"
+                    text = f"<div class='param' markdown='block'>{self.parse_body(body)}</div>\n\n"
 
                     # Only parameters and attributes have names (returns and yields don't)
                     if name in ("Parameters", "Attributes"):
-                        obj_name = header.split(":")[0]
+                        obj_name = header.split(":")[0].strip()
                         anchor = f"[](){{#{self.name.lower()}-{obj_name}}}\n"
                     else:
                         anchor = ""
 
-                    content += f"{anchor}<strong>{header}</strong><br>{text}"
+                    content += f"{anchor}<strong>{header}</strong><br>\n\n{text}"
 
             elif name == "Attributes" and is_dataclass(self.obj):
                 for item in fields(self.obj):
-                    annotation = str(item.type).replace("linescope.model.", "")
+                    annotation = types_conversion(str(item.type))
+
                     if item.default is not MISSING:
                         default = f"Default: {escape(repr(item.default))}."
                     elif item.default_factory is not MISSING:
@@ -486,10 +585,11 @@ class AutoDocs:
                         default = f"Fresh value from {escape(factory)} for each instance."
                     else:
                         default = "Required constructor argument."
+
                     anchor = f"[](){{#{self.name.lower()}-{item.name}}}\n"
                     content += (
-                        f"{anchor}<strong>{item.name}: {escape(annotation)}</strong><br>"
-                        f"<div class='param' markdown>{default}</div>"
+                        f"{anchor}<strong>{item.name}: {escape(annotation)}</strong><br>\n\n"
+                        f"<div class='param' markdown>{default}</div>\n\n"
                     )
 
             if content:
@@ -506,7 +606,7 @@ class AutoDocs:
 
         Parameters
         ----------
-        config: dict
+        config : dict
             Options to configure. Choose from:
 
             - toc_only: Whether to display only the toc.
@@ -541,6 +641,7 @@ class AutoDocs:
 
         # Create toc
         toc = "<table markdown style='font-size: 0.9em'>"
+
         for method in methods:
             func = AutoDocs(self.obj, method=method)
 
@@ -552,19 +653,27 @@ class AutoDocs:
 
         # Create methods
         blocks = ""
+
         if not toc_only:
             for method in methods:
                 func = AutoDocs(self.obj, method=method)
 
                 blocks += "<br>" + func.get_signature()
                 blocks += func.get_summary() + "\n"
+
                 if func.module.startswith("linescope"):
                     if description := func.get_description():
                         blocks += "\n\n" + description + "\n"
+
                 if example := func.get_block("Examples"):
                     blocks += "!!! example" + "\n    ".join(example.split("\n")) + "\n\n"
-                if table := func.get_table(["Parameters", "Returns", "Yields", "Raises"]):
+
+                if table := func.get_table(["Parameters", "Returns", "Yields"]):
                     blocks += table + "<br>"
+
+                if related := func.get_see_also():
+                    blocks += related + "\n\n"
+
                 if not table and not example:
                     # \n to exit markdown and <br> to insert space
                     blocks += "\n" + "<br>"
@@ -578,12 +687,12 @@ class AutoDocs:
 def render(markdown: str, **kwargs) -> str:  # noqa: ARG001
     """Render the Markdown page.
 
-    This function is the landing point for the mkdocs-simple-hooks
-    plugin, called in mkdocs.yml.
+    This function is the landing point for the mkdocs-simple-hooks plugin,
+    called in mkdocs.yml.
 
     Parameters
     ----------
-    markdown: str
+    markdown : str
         Markdown source text of page.
 
     **kwargs
@@ -608,6 +717,7 @@ def render(markdown: str, **kwargs) -> str:  # noqa: ARG001
 
     markdown = FENCE_RE.sub(protect_fence, markdown)
     autodocs = None
+
     while match := re.search("(:: )([a-z].*?)(?=::|\n\n|\\Z)", markdown, re.S):
         command = yaml.safe_load(match.group(2))
 
@@ -635,8 +745,6 @@ def render(markdown: str, **kwargs) -> str:  # noqa: ARG001
                 text = autodocs.get_table(command["table"])  # ty: ignore[invalid-argument-type]
             elif "see also" in command:
                 text = autodocs.get_see_also()
-            elif "notes" in command:
-                text = autodocs.get_block("Notes")
             elif "references" in command:
                 text = autodocs.get_block("References")
             elif "examples" in command:
@@ -652,8 +760,10 @@ def render(markdown: str, **kwargs) -> str:  # noqa: ARG001
             markdown = custom_autorefs(markdown, autodocs)
 
     markdown = custom_autorefs(markdown)
+
     for index, fence in enumerate(fences):
         markdown = markdown.replace(f"\x00LINESCOPE_FENCE_{index}\x00", fence)
+
     return markdown
 
 
@@ -662,7 +772,7 @@ def types_conversion(dtype: str) -> str:
 
     Parameters
     ----------
-    dtype: str
+    dtype : str
         Type to convert.
 
     Returns
@@ -680,6 +790,10 @@ def types_conversion(dtype: str) -> str:
     for k, v in types.items():
         dtype = dtype.replace(k, v)
 
+    dtype = dtype.replace("linescope.model.", "")
+    pattern = r"\b(" + "|".join(sorted(LINKED_TYPES)) + r")\b"
+    dtype = re.sub(pattern, r"[\1]", dtype)
+
     return dtype
 
 
@@ -691,7 +805,7 @@ def corrections(html: str, **kwargs) -> str:  # noqa: ARG001
 
     Parameters
     ----------
-    html: str
+    html : str
         HTML source text of page.
 
     **kwargs
@@ -722,12 +836,12 @@ def corrections(html: str, **kwargs) -> str:  # noqa: ARG001
 def clean_search(config: MkDocsConfig):
     """Clean the search index.
 
-    Remove unnecessary plotly and css blocks (from mkdocs-jupyter) to
-    keep the search index small.
+    Remove unnecessary plotly and css blocks (from mkdocs-jupyter) to keep
+    the search index small.
 
     Parameters
     ----------
-    config: MkdocsConfig
+    config : MkdocsConfig
         Object containing the search index.
 
     """
@@ -754,8 +868,8 @@ def custom_autorefs(markdown: str, autodocs: AutoDocs | None = None) -> str:
     """Handle autorefs links.
 
     The documentation accepts some custom formatting for autorefs
-    links in order to make the documentation cleaner, easier to
-    write. The custom
+    links in order to make the documentation cleaner, easier to write. The
+    custom
     transformations are:
 
     - Replace single square brackets with [anchor][anchor].
@@ -766,10 +880,10 @@ def custom_autorefs(markdown: str, autodocs: AutoDocs | None = None) -> str:
 
     Parameters
     ----------
-    markdown: str
+    markdown : str
         Markdown source text of page.
 
-    autodocs: Autodocs | None
+    autodocs : [AutoDocs] | None, default=None
         Class for which the page is created.
 
     Returns
@@ -780,23 +894,48 @@ def custom_autorefs(markdown: str, autodocs: AutoDocs | None = None) -> str:
     """
     result, start = "", 0
 
-    # Mask everything between triple quotes to avoid replacing links in code blocks
-    masker = lambda text: FENCE_RE.sub(lambda m: " " * (m.end() - m.start()), text)
+    # References belong to prose. Leave literal code and explicit links intact,
+    # including square brackets used by Python's container annotations.
+    def masker(text: str) -> str:
+        pattern = r"```.*?```|`[^`\n]*`|!?\[[^\]\n]*\]\([^\n]*?\)"
+        return re.sub(pattern, lambda match: " " * len(match.group()), text, flags=re.S)
 
     # Skip regex check for very long docs
     if len(markdown) < 1e5:
         for match in re.finditer(LINK_RE, masker(markdown)):
-            anchor = match.group(1)
-            link = match.group(2)
+            # The mask locates prose references while preserving offsets.
+            # Read their labels from the original text so inline code stays
+            # visible in method tables such as [`start`][session-start].
+            anchor = markdown[match.start(1) : match.end(1)]
+            link = markdown[match.start(2) : match.end(2)] if match.group(2) else None
 
-            text = match.group()
+            # Callable[[str], bool] uses a list of argument types, not a
+            # Markdown reference. Built-in scalar names remain literal here.
+            if anchor in {"str", "int", "float", "bool", "bytes", "object", "Any", "None"}:
+                continue
+
+            # Numeric references, reference definitions, and image labels use
+            # Markdown's own resolver rather than the API symbol registry.
+            if anchor.isdigit() or anchor.startswith("^"):
+                continue
+
+            if markdown[match.end() :].startswith(":"):
+                continue
+
+            if match.start() and markdown[match.start() - 1] == "!":
+                continue
+
+            text = markdown[match.start() : match.end()]
+
             if not link and anchor != "source":
                 # Only adapt when has form [anchor] (no second square brackets pair)
                 link = re.sub(r"[.'`]", "", anchor).replace(" ", "-").lower()
                 text = f"[{anchor}][{link}]"
+
             if link in CUSTOM_URLS:
                 # Replace keyword with custom url
                 text = f"[{anchor}]({CUSTOM_URLS[link]})"
+
             if link and "self" in link and autodocs:
                 link = link.replace("self", autodocs.obj.__name__.lower())
                 text = f"[{anchor}][{link}]"

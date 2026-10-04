@@ -15,6 +15,10 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: '3.13'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
       - name: Validate tag against pyproject.toml
         run: |
           uv run --no-project python - <<'PY'
@@ -23,7 +27,7 @@ jobs:
           assert os.environ['GITHUB_REF_NAME'] == f'v{version}', 'Tag and package version differ'
           PY
       - run: uv sync --locked
-      - run: uv run --no-sync tox -e lint,py313,docs
+      - run: uv run --no-sync tox -e pre-commit,py313,notebooks,docs
       - run: uv build
       - run: uvx twine check dist/*
       - uses: actions/upload-artifact@v4

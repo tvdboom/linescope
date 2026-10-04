@@ -1,4 +1,9 @@
-"""Opt-in integration checks against a real local Spark JVM."""
+"""LineScope.
+
+Author: Mavs
+Description: Opt-in integration checks against a real local Spark JVM.
+
+"""
 
 import os
 from pathlib import Path
@@ -98,7 +103,7 @@ def test_local_spark_parquet_write_and_scan(spark, tmp_path):
 def test_local_spark_failed_write_preserves_error_and_records_failure(spark, tmp_path):
     from linescope import profile
 
-    with pytest.raises(Exception, match="HADOOP_HOME|winutils"):
+    with pytest.raises(Exception, match=r"HADOOP_HOME|winutils"):
         with profile(backend="trace", spark=True, display="none") as session:
             spark.range(3).write.parquet(str(tmp_path / "unsupported-write"))
     assert session.result.root_run.status == "failed"

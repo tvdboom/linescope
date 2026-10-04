@@ -1,4 +1,9 @@
-"""Notebook lifecycle, source, and Databricks correlation checks."""
+"""LineScope.
+
+Author: Mavs
+Description: Notebook lifecycle, source, and Databricks correlation checks.
+
+"""
 
 from __future__ import annotations
 
@@ -74,7 +79,7 @@ def shell():
         execution_count=7,
         history_manager=SimpleNamespace(input_hist_raw=[]),
         transform_cell=lambda value: value,
-        compile=SimpleNamespace(cache=lambda value, count, raw_code: f"<ipython-input-{count}>"),
+        compile=SimpleNamespace(cache=lambda _value, count, **_kwargs: f"<ipython-input-{count}>"),
     )
     return value
 
@@ -234,6 +239,7 @@ def test_dbutils_success_preserves_call_result_and_restores_descriptor():
 
 def test_dbutils_exception_propagates_and_metadata_omits_message():
     def failing(*args):
+        del args
         raise ValueError("sensitive exception detail")
 
     dbutils = SimpleNamespace(notebook=SimpleNamespace(run=failing))
@@ -251,7 +257,7 @@ def test_dbutils_exception_propagates_and_metadata_omits_message():
 
 
 def test_dbutils_honors_explicit_child_context_once_without_mutating_arguments():
-    dbutils = SimpleNamespace(notebook=SimpleNamespace(run=lambda *args: "ok"))
+    dbutils = SimpleNamespace(notebook=SimpleNamespace(run=lambda *_args: "ok"))
     session = Session()
     context = ChildContext.create(session.result.root_run.id)
     parameters = context.as_parameters()
@@ -270,7 +276,7 @@ def test_dbutils_honors_explicit_child_context_once_without_mutating_arguments()
 
 
 def test_dbutils_ignores_other_thread_and_preserves_later_patch():
-    dbutils = SimpleNamespace(notebook=SimpleNamespace(run=lambda *args: "ok"))
+    dbutils = SimpleNamespace(notebook=SimpleNamespace(run=lambda *_args: "ok"))
     session = Session()
     adapter = DatabricksIntegration(session, dbutils)
     adapter.start()
@@ -280,6 +286,7 @@ def test_dbutils_ignores_other_thread_and_preserves_later_patch():
     assert session.result.root_run.children == []
 
     def replacement(*args):
+        del args
         return "new"
 
     dbutils.notebook.run = replacement
@@ -322,7 +329,7 @@ def test_child_merge_rejects_ambiguous_or_conflicting_data(failure):
     elif failure == "collision":
         parent.sources["one"] = SourceUnit("one", "test.py", "x=1")
         child.sources["one"] = SourceUnit("one", "test.py", "x=2")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"Unknown|different parent|correlation|collision"):
         merge_child(parent, child, "unknown" if failure == "unknown" else "call")
 
 

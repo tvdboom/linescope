@@ -1,0 +1,17 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- rounded background outline -->
+  <rect x="16" y="16" width="96" height="96" rx="20" stroke="#0f766e" stroke-width="8"/>
+
+  <!-- axes -->
+  <path d="M36 86V46" stroke="#0f766e" stroke-width="8" stroke-linecap="round"/>
+  <path d="M36 86H92" stroke="#0f766e" stroke-width="8" stroke-linecap="round"/>
+
+  <!-- bars -->
+  <rect x="46" y="66" width="10" height="20" rx="3" fill="#0f766e"/>
+  <rect x="62" y="56" width="10" height="30" rx="3" fill="#0f766e"/>
+  <rect x="78" y="46" width="10" height="40" rx="3" fill="#0f766e"/>
+
+  <!-- trend line -->
+  <path d="M46 58L67 46L83 52L94 38" stroke="#0f766e" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M88 38H94V44" stroke="#0f766e" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

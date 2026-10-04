@@ -1,4 +1,9 @@
-"""Spark observation using JVM doubles; no cluster is required."""
+"""LineScope.
+
+Author: Mavs
+Description: Spark observation using JVM doubles; no cluster is required.
+
+"""
 
 from __future__ import annotations
 
@@ -42,6 +47,7 @@ class Plan:
         return self.values
 
     def simpleString(self, max_fields):
+        del max_fields
         return self.name + " description"
 
     def toString(self):
@@ -66,7 +72,7 @@ class Query:
 
 class Session:
     def __init__(self):
-        self.registry = SimpleNamespace(snapshot=lambda filename: None)
+        self.registry = SimpleNamespace(snapshot=lambda _filename: None)
         self.result = ProfileResult(ProfileRun(), {}, "trace", BackendCapabilities())
         self.locations = []
 
@@ -235,7 +241,7 @@ def test_stage_counts_and_missing_retention():
 def test_optional_stage_metrics_distinguish_wall_cumulative_and_task_quantiles():
     stage = SimpleNamespace(name="aggregate", numTasks=8, numCompletedTasks=8, numFailedTasks=0)
     tracker = SimpleNamespace(
-        getJobInfo=lambda job: SimpleNamespace(stageIds=[2]), getStageInfo=lambda stage_id: stage
+        getJobInfo=lambda _job: SimpleNamespace(stageIds=[2]), getStageInfo=lambda _stage_id: stage
     )
     data = SimpleNamespace(
         attemptId=lambda: 1,
@@ -252,14 +258,16 @@ def test_optional_stage_metrics_distinguish_wall_cumulative_and_task_quantiles()
     distribution = SimpleNamespace(
         isDefined=lambda: True, get=lambda: SimpleNamespace(duration=lambda: [12.5, 30.0, 42.0])
     )
-    store = SimpleNamespace(stageData=lambda *args: [data], taskSummary=lambda *args: distribution)
+    store = SimpleNamespace(
+        stageData=lambda *_args: [data], taskSummary=lambda *_args: distribution
+    )
     context = SimpleNamespace(
         statusTracker=lambda: tracker,
         _jsc=SimpleNamespace(sc=lambda: SimpleNamespace(statusStore=lambda: store)),
         _jvm=SimpleNamespace(
             java=SimpleNamespace(util=SimpleNamespace(ArrayList=list)), double=float
         ),
-        _gateway=SimpleNamespace(new_array=lambda kind, size: [0] * size),
+        _gateway=SimpleNamespace(new_array=lambda _kind, size: [0] * size),
     )
     result = stage_statistics(context, [1])[0]
     assert result["cumulative_executor_time_ns"] == 2_400_000_000
@@ -276,7 +284,7 @@ def test_optional_stage_metrics_distinguish_wall_cumulative_and_task_quantiles()
 
 
 def test_execution_executor_time_deduplicates_stages_and_excludes_reused_work():
-    tracker = SimpleNamespace(getJobInfo=lambda job: SimpleNamespace(stageIds=[1, 2]))
+    tracker = SimpleNamespace(getJobInfo=lambda _job: SimpleNamespace(stageIds=[1, 2]))
     context = SimpleNamespace(statusTracker=lambda: tracker)
     stages = [
         {
@@ -298,7 +306,7 @@ def test_execution_executor_time_deduplicates_stages_and_excludes_reused_work():
 @pytest.mark.parametrize("fault", ["missing_stage", "missing_metric", "overlap", "unknown_job"])
 def test_execution_executor_time_stays_unknown_when_status_is_incomplete(fault):
     tracker = SimpleNamespace(
-        getJobInfo=lambda job: None if fault == "unknown_job" else SimpleNamespace(stageIds=[1])
+        getJobInfo=lambda _job: None if fault == "unknown_job" else SimpleNamespace(stageIds=[1])
     )
     context = SimpleNamespace(statusTracker=lambda: tracker)
     stages = [
@@ -323,6 +331,7 @@ def test_automatic_wrappers_preserve_laziness_lineage_multiple_actions_and_resto
 
     class DataFrame:
         def filter(self, condition):
+            del condition
             calls.append("filter")
             return DataFrame()
 
@@ -339,7 +348,7 @@ def test_automatic_wrappers_preserve_laziness_lineage_multiple_actions_and_resto
     monkeypatch.setattr("linescope.spark.listener._install_patches", install)
     monkeypatch.setattr(
         "linescope.spark.listener.caller_location",
-        lambda session: SourceLocation("pipeline.py", 3),
+        lambda _session: SourceLocation("pipeline.py", 3),
     )
     observer = integration()
     observer.start()

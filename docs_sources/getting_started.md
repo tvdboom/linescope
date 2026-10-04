@@ -1,12 +1,6 @@
 # Getting started
 
-LineScope supports Python 3.11–3.14. Install from the checkout before the first package release:
-
-```console
-uv pip install -e .
-```
-
-Once published, the standard package installation is:
+LineScope supports Python 3.11–3.15. Install the package from PyPI:
 
 ```console
 pip install linescope
@@ -14,53 +8,33 @@ pip install linescope
 
 ## Your first report
 
-Save this as `demo.py`:
+Run the bundled script from the checkout, or save the same code as `demo.py`:
 
-```python
-from time import sleep
-from linescope import profile
-
-
-def load():
-    sleep(0.025)
-    return list(range(10_000))
-
-
-def calculate(values):
-    return sum(value * value for value in values)
-
-
-with profile(backend="trace", display="none") as session:
-    values = load()
-    result = calculate(values)
-
-session.save("linescope.html")
-```
+:: example: script.py
 
 ```console
-python demo.py
+uv run python examples/script.py
 ```
 
-Open `linescope.html` in a browser. Choose a file and click `load` or `calculate` to visit its
-definition. Time spent inside `sleep` belongs to your source line; standard-library internals
-are hidden. A trace run measures elapsed intervals and has more instrumentation overhead than
+A report opens in a new browser tab. Choose a file and click `load_readings`,
+`rolling_slow`, or `rolling_fast` to visit its definition. Time spent inside
+`sleep` belongs to your source line; standard-library internals are hidden. A
+trace run measures elapsed intervals and has more instrumentation overhead than
 sampling, so treat very short timings accordingly.
 
 ## Use the default sampling engine
 
-On a platform supported by Scalene:
+Scalene is installed with LineScope on Python 3.11–3.14:
 
 ```console
-pip install "linescope[scalene]"
-linescope --backend scalene --output linescope.html demo.py
+linescope --backend scalene --include examples -m examples.sample_package
 ```
 
-For CLI profiling, remove the explicit profiling block from your target script to avoid starting
-two profilers at once. Scalene is an optional dependency even though it is the default engine;
-requesting an unavailable backend raises a clear installation/platform error. The adapter uses
-Scalene 2.3, including CPU sampling on Windows. Memory collection has additional native startup
-requirements; see [memory](user_guide/memory.md).
-For Windows memory profiling, use Python 3.12 or newer with a supported Scalene binary wheel.
+The [sample package](examples/package.md) has no explicit profiling block, so
+the CLI controls collection. The adapter uses Scalene 2.3, including CPU
+sampling on Windows. Memory collection has additional native startup
+requirements; see [memory](user_guide/backends.md#memory). For Windows memory
+profiling, use Python 3.12 or newer with a supported Scalene binary wheel.
 
 ## Notebooks and Spark
 
@@ -69,6 +43,8 @@ pip install "linescope[notebook]"
 pip install "linescope[spark]"
 ```
 
-In an existing Spark or Databricks environment, install LineScope without replacing the
-environment's bundled PySpark. See [notebooks](user_guide/notebooks.md),
-[Databricks](user_guide/databricks.md), and [Spark](user_guide/spark.md).
+In an existing Spark or Databricks environment, install LineScope without
+replacing the environment's bundled PySpark. See
+[notebooks](user_guide/notebooks.md),
+[Databricks](user_guide/notebooks.md#databricks), and
+[Spark](user_guide/spark.md).

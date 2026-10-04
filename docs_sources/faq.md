@@ -1,42 +1,54 @@
 # Frequently asked questions
+----------------------------
 
-## Why does LineScope default to an optional dependency?
+Here we try to give answers to some questions that have popped up regularly. If
+you have any other questions, don't hesitate to create a new
+[discussion](https://github.com/tvdboom/linescope/discussions)!
 
-Scalene is the preferred sampling engine, but its platform requirements should not prevent
-installation of the source browser, notebook adapters, or trace collector. Install the extra
-where supported, or explicitly choose `backend="trace"`.
+??? faq "What Python versions does LineScope support?"
+    LineScope supports Python 3.11–3.15 on Linux, Windows and macOS.
+    Python 3.15 offers Trace and Tachyon. See the [dependencies] page.
 
-## Does a zero time mean a line never ran?
+??? faq "Which backend should I choose?"
+    Scalene is installed with LineScope and is the default on Python 3.11–3.14.
+    Trace is portable and is the default on Python 3.15. Tachyon provides
+    Python 3.15 sampling. See [backends](user_guide/backends.md).
 
-No. Sampling may miss short lines. Hit counts are only shown when recorded by the backend;
-sample counts are not execution counts. Unavailable measurements use a dash.
+??? faq "Does a missing time mean a line never ran?"
+    No. Sampling may miss short lines. Hit counts are shown only when
+    measured by the backend; samples are not execution counts. Unavailable
+    measurements use a dash.
 
-## Why can a Spark task total exceed elapsed time?
+??? faq "Where does the report open?"
+    Reports open in a new browser tab by default, including from notebooks.
+    Use `session.show(inline=True)` or `inline=True` in a notebook session to
+    display inside a cell. Use `display="none"` to suppress automatic display
+    and `session.save("report.html")` to keep a file explicitly.
 
-Tasks execute concurrently. Summed executor/task time is cumulative work, while wall time is
-elapsed time observed by the driver. The report labels these separately.
+??? faq "Can I collect GPU metrics?"
+    Yes. Enable `gpu=True` or `--gpu` with Scalene on a supported device.
+    See [GPU](user_guide/gpu.md). Trace and Tachyon do not provide GPU metrics.
 
-## Does it profile Python UDFs on Spark executors?
+??? faq "Why can a Spark task total exceed elapsed time?"
+    Tasks execute concurrently. Summed executor/task time is cumulative
+    work, while wall time is elapsed time observed by the driver. These
+    measurements are labeled separately.
 
-The initial release profiles driver Python and available Spark execution context. Separate
-executor Python processes need their own collector and correlation, which is future scope.
+??? faq "Does it profile Python UDFs on Spark executors?"
+    LineScope profiles driver Python and available Spark execution context.
+    Separate executor Python processes require their own instrumentation
+    and correlation; driver measurements do not include their line profiles.
 
-## Does a child Databricks notebook get deep profiling automatically?
+??? faq "Does a child Databricks notebook get deep profiling automatically?"
+    The parent records its wait and child relationship. Separate child line
+    measurements require child instrumentation and explicit transport/merging;
+    the parent cannot trace a separate job.
 
-The parent records the wait and child relationship. Separate child line measurements require
-child instrumentation and explicit result transport/merging; the parent cannot trace another job.
+??? faq "Is a Spark cluster required for tests?"
+    No. Unit tests use controlled fakes. Optional integration tests start
+    local Spark on one machine with Java and generated data. Databricks
+    runtime validation uses a workspace.
 
-## Is a Spark cluster required for tests?
-
-No. Unit tests use controlled fakes. Optional integration tests start local Spark on one machine
-with Java and generated data. Databricks runtime validation is a separate manual check.
-
-## Can I open reports offline?
-
-Yes. Report HTML contains its own assets and source snapshots. Review those snapshots before
-sharing because they may include private source or paths.
-
-## Are Tachyon and attach mode implemented?
-
-Not in the initial release. The backend protocol and optional metrics leave room for future
-collectors without coupling the report to one engine.
+??? faq "Can I open reports offline?"
+    Yes. HTML reports contain their own assets and source snapshots.
+    Review captured source before sharing a report.

@@ -10,7 +10,11 @@
 {% endblock %}
 
 {% block content %}
-{% if page.meta.notebook %}
+{% if page.nb_url %}
+  <a href="{{ page.nb_url }}" title="Download notebook" class="md-content__button md-icon">
+    {% include ".icons/material/download.svg" %}
+  </a>
+{% elif page.meta.notebook %}
   <a href="{{ page.meta.notebook | url }}" title="Download notebook" class="md-content__button md-icon">
     {% include ".icons/material/download.svg" %}
   </a>

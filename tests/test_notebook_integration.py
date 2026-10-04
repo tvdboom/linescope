@@ -1,4 +1,9 @@
-"""Real IPython execution checks with the deterministic trace backend."""
+"""LineScope.
+
+Author: Mavs
+Description: Real IPython execution checks with the deterministic trace backend.
+
+"""
 
 import pytest
 
@@ -21,12 +26,16 @@ def ipython_shell():
 
 
 def test_multi_cell_session_captures_sources_hits_and_one_final_display(
-    ipython_shell, monkeypatch
+    ipython_shell,
+    monkeypatch,
 ):
     shown = []
     monkeypatch.setattr(Session, "show", lambda self: shown.append(self))
     result = ipython_shell.run_cell(
-        "from linescope import profile\nsession = profile(backend='trace', spark=False)\nsession.start()",
+        (
+            "from linescope import profile\nsession = profile(backend='trace', spark=False)\n"
+            "session.start()"
+        ),
         store_history=True,
     )
     assert result.error_in_exec is None
@@ -55,7 +64,10 @@ def test_real_cell_magic_profiles_full_source_and_preserves_namespace(ipython_sh
     monkeypatch.setattr(Session, "show", lambda self: shown.append(self))
     load_ipython_extension(ipython_shell)
     result = ipython_shell.run_cell(
-        "%%profile --backend trace\n# complete source\nmagic_answer = sum(range(5))\nmagic_answer += 1",
+        (
+            "%%profile --backend trace\n# complete source\nmagic_answer = sum(range(5))\n"
+            "magic_answer += 1"
+        ),
         store_history=True,
     )
     assert result.error_in_exec is None

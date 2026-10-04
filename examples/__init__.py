@@ -1,1 +1,6 @@
-"""Runnable LineScope examples."""
+"""LineScope.
+
+Author: Mavs
+Description: Runnable LineScope examples.
+
+"""
