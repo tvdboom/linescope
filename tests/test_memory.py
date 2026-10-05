@@ -369,6 +369,7 @@ def test_timeline_has_valid_source_links_gaps_and_inspection_controls():
     page = document.find_all("section", id="memory")[0]
     assert len(page.find_all("svg", css="memory-chart")) == 1
     assert len(page.find_all("polyline")) == 2
+    assert len(page.find_all("polygon")) == 2
     assert page.find_all("input", css="memory-cursor")[0].attributes["max"] == "3"
     assert "work<script>.py" in page.text()
     assert "<script>.py" not in html
@@ -378,6 +379,91 @@ def test_timeline_has_valid_source_links_gaps_and_inspection_controls():
     for link in page.find_all("a"):
         assert link.attributes["href"][1:] in ids
     assert document.find_all("a", css="nav-link", href="#memory")
+
+
+def test_memory_summary_precedes_chart_and_details():
+    """Place source-linked summaries before the chart and remaining details.
+
+    Move the measurement explanation into a collapsed disclosure and omit
+    the single main run's redundant heading.
+
+    """
+    result = memory_result()
+    page = ReportDOM(render_html(result)).root.find_all("section", id="memory")[0]
+    run = page.find_all("section", css="memory-run")[0]
+    assert [child.tag for child in run.children if not isinstance(child, str)] == [
+        "dl",
+        "div",
+        "details",
+        "h3",
+        "div",
+    ]
+    badges = run.find_all("dl", css="memory-stats")[0]
+    assert [label.text() for label in badges.find_all("dt")] == [
+        "Peak memory",
+        "Largest line change",
+    ]
+    assert [value.text() for value in badges.find_all("strong")] == ["900 B", "+100 B"]
+    assert len(badges.find_all("a")) == 2
+    assert badges.find_all("a")[0].attributes["href"] == badges.find_all("a")[1].attributes["href"]
+    assert result.root_run.name not in page.text()
+    assert not page.find_all("p", css="semantics")
+    explanation = page.find_all("details", css="memory-explanation")[0]
+    assert "open" not in explanation.attributes
+    assert "RSS is resident RAM for the whole Python process" in explanation.text()
+    assert "open" not in run.find_all("details", css="memory-readings")[0].attributes
+
+
+@pytest.mark.parametrize(
+    ("rss", "delta", "expected"),
+    [
+        (None, None, ["—", "—"]),
+        (0, 0, ["0 B", "0 B"]),
+        (200, -100, ["200 B", "-100 B"]),
+    ],
+)
+def test_memory_badges_preserve_unknown_zero_and_negative_values(rss, delta, expected):
+    """Distinguish unavailable badges from measured zero and signed changes.
+
+    Parameters
+    ----------
+    rss : int | None
+        Controlled RAM reading in bytes, including unavailable and zero.
+
+    delta : int | None
+        Accumulated process-memory change for the measured source line.
+
+    expected : list[str]
+        Expected peak and change badge values in display order.
+
+    """
+    result = memory_result()
+    result.root_run.memory_samples = [MemorySample(0, rss)]
+    result.root_run.lines[0].ram = ProcessMemoryStats(delta_bytes=delta)
+    page = ReportDOM(render_html(result)).root.find_all("section", id="memory")[0]
+    badges = page.find_all("dl", css="memory-stats")[0]
+    assert [value.text() for value in badges.find_all("strong")] == expected
+    assert bool(page.find_all("svg", css="memory-chart")) is (rss is not None)
+
+
+def test_memory_badge_uses_largest_accumulated_line_change():
+    """Select the largest measured line change independently of the RAM peak.
+
+    Ignore unavailable line changes and do not derive line growth from the
+    difference between retained timeline readings.
+
+    """
+    result = memory_result()
+    result.root_run.lines.extend(
+        [
+            LineStats(SourceLocation("ram-source", 1), ram=ProcessMemoryStats()),
+            LineStats(SourceLocation("ram-source", 2), ram=ProcessMemoryStats(delta_bytes=500)),
+        ],
+    )
+    page = ReportDOM(render_html(result)).root.find_all("section", id="memory")[0]
+    badges = page.find_all("dl", css="memory-stats")[0]
+    assert [value.text() for value in badges.find_all("strong")] == ["900 B", "+500 B"]
+    assert badges.find_all("a")[-1].text() == "work<script>.py:2"
 
 
 def test_child_process_ram_is_not_added_to_parent():
@@ -397,6 +483,20 @@ def test_child_process_ram_is_not_added_to_parent():
     result.root_run.children.append(child)
     document = ReportDOM(render_html(result)).root
     assert len(document.find_all("svg", css="memory-chart")) == 2
+    page = document.find_all("section", id="memory")[0]
+    summaries = page.find_all("dl", css="memory-stats")
+    assert [[value.text() for value in badge.find_all("strong")] for badge in summaries] == [
+        ["900 B", "+100 B"],
+        ["400 B", "+250 B"],
+    ]
+    assert [heading.text() for heading in page.find_all("h2")] == [
+        "Main run",
+        "Process RAM over time",
+        "Child process",
+        "Process RAM over time",
+    ]
+    gradients = page.find_all("lineargradient")
+    assert len({gradient.attributes["id"] for gradient in gradients}) == 2
     row = document.find_all("tr", css="source-row")[0]
     assert cell_values(row)[2:4] == ["—", "1.2 KB"]
     assert row.attributes["data-memory"] == ""

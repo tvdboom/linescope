@@ -19,6 +19,7 @@ from linescope import Session
 from linescope.backends import RawBackendResult
 from linescope.model import (
     BackendCapabilities,
+    FunctionStats,
     GPUStats,
     LineStats,
     MemorySample,
@@ -228,6 +229,26 @@ def test_json_rejects_unknown_schema():
     """
     with pytest.raises(ValueError, match="format"):
         loads_result(b'{"version":2}')
+
+
+def test_json_without_function_line_count_keeps_span_unavailable():
+    """Restore older function records without inventing source line counts.
+
+    Keep the existing JSON version readable when a function lacks the newly
+    captured source span.
+
+    """
+    result = ProfileResult(
+        ProfileRun(functions=[FunctionStats("source", "work", 1)]),
+        {},
+        "trace",
+        BackendCapabilities(),
+    )
+    serialized = json.loads(dumps_result(result))
+    del serialized["result"]["root_run"]["functions"][0]["line_count"]
+
+    restored = loads_result(json.dumps(serialized).encode("utf-8"))
+    assert restored.root_run.functions[0].line_count is None
 
 
 def test_workspace_store_uses_sdk_auth_and_nonrecursive_owned_operations(monkeypatch):

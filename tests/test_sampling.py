@@ -185,6 +185,11 @@ def test_session_and_cli_forward_rate_and_aggregate_own_samples(tmp_path, monkey
     assert functions["outer"].samples == 16
     assert functions["outer.inner"].samples == 7
     assert functions["untouched"].samples == 0
+    assert {name: function.line_count for name, function in functions.items()} == {
+        "outer": 5,
+        "outer.inner": 2,
+        "untouched": 2,
+    }
     assert all(function.calls is None for function in functions.values())
     assert session.result.root_run.metadata["sample_rate"] == 250
 
@@ -489,7 +494,9 @@ def test_sampling_counts_in_all_report_views_and_serialization(known):
     line = LineStats(SourceLocation(unit.id, 2), 10_000_000, samples=1234 if known else None)
     run = ProfileRun(
         lines=[line],
-        functions=[FunctionStats(unit.id, "work", 1, 10_000_000, samples=line.samples)],
+        functions=[
+            FunctionStats(unit.id, "work", 1, 10_000_000, samples=line.samples, line_count=2)
+        ],
         metadata={"sample_rate": 250},
     )
     result = ProfileResult(
@@ -498,6 +505,7 @@ def test_sampling_counts_in_all_report_views_and_serialization(known):
     restored = loads_result(dumps_result(result))
     assert restored.root_run.lines[0].samples == line.samples
     assert restored.root_run.functions[0].samples == line.samples
+    assert restored.root_run.functions[0].line_count == 2
     assert restored.capabilities.sample_counts is known
     assert restored.root_run.metadata["sample_rate"] == 250
     document = ReportDOM(render_html(restored)).root
@@ -509,11 +517,12 @@ def test_sampling_counts_in_all_report_views_and_serialization(known):
         assert cell_values(table.find_all("tr")[-1])[-1] == expected
     function_table = document.find_all("section", id="functions")[0].find_all("table")[0]
     assert [header.text() for header in function_table.find_all("th")] == [
-        "Self time",
-        "Samples",
         "Function",
+        "Lines",
+        "Measured time",
+        "Samples",
     ]
-    assert cell_values(function_table.find_all("tr")[-1]) == ["10.00 ms", expected, "work()"]
+    assert cell_values(function_table.find_all("tr")[-1]) == ["work()", "2", "10.00 ms", expected]
     rows = document.find_all("tr", css="source-row")
     table = document.find_all("table", css="source-table")[0]
     assert [header.text() for header in table.find_all("th")] == (

@@ -187,8 +187,8 @@ def result():
         elapsed_ns=1_000_000_000,
         lines=[line],
         functions=[
-            FunctionStats(unit.id, "foo", 1, 70_000_000, 1),
-            FunctionStats(unit.id, "bar", 2, 50_000_000, 1),
+            FunctionStats(unit.id, "foo", 1, 70_000_000, 1, line_count=1),
+            FunctionStats(unit.id, "bar", 2, 50_000_000, 1, line_count=1),
         ],
     )
     return ProfileResult(run, {unit.id: unit}, "trace", BackendCapabilities(hit_counts=True))
@@ -513,9 +513,9 @@ class TestSourceReport:
         count_header: str,
         count: int | None,
     ) -> None:
-        """Place the collector's function count before the definition link.
+        """Match the Files page order and select the collector's count label.
 
-        Preserve unknown counts, measured zeroes, and descending self-time
+        Preserve unknown counts, measured zeroes, and descending measured-time
         order for tracing, sampling, and custom collectors.
 
         Parameters
@@ -530,7 +530,7 @@ class TestSourceReport:
             Collection method and supported count measurements.
 
         count_header : str
-            Expected label for the second column.
+            Expected label for the final column.
 
         count : int | None
             Recorded count, including unavailable and measured-zero cases.
@@ -546,15 +546,16 @@ class TestSourceReport:
         table = document.find_all("section", id="functions")[0].find_all("table")[0]
 
         assert [header.text() for header in table.find_all("th")] == [
-            "Self time",
-            count_header,
             "Function",
+            "Lines",
+            "Measured time",
+            count_header,
         ]
         rows = table.find_all("tr")[1:]
         expected_count = "—" if count is None else f"{count:,}"
         assert [cell_values(row) for row in rows] == [
-            ["70.00 ms", expected_count, "foo()"],
-            ["50.00 ms", expected_count, "bar()"],
+            ["foo()", "1", "70.00 ms", expected_count],
+            ["bar()", "1", "50.00 ms", expected_count],
         ]
         for row, line in zip(rows, [1, 2], strict=True):
             link = row.find_all("a")[0]
@@ -582,7 +583,9 @@ class TestSourceReport:
             ProfileRun(
                 source=unit,
                 lines=[LineStats(SourceLocation(unit.id, 2), 90_000_000, samples=23)],
-                functions=[FunctionStats(unit.id, "sampled", 1, 90_000_000, samples=23)],
+                functions=[
+                    FunctionStats(unit.id, "sampled", 1, 90_000_000, samples=23, line_count=2)
+                ],
                 metadata={
                     "child_backend": "scalene",
                     "child_capabilities": {"sampled": True, "sample_counts": True},
@@ -592,16 +595,54 @@ class TestSourceReport:
         table = parse(result).find_all("section", id="functions")[0].find_all("table")[0]
 
         assert [header.text() for header in table.find_all("th")] == [
-            "Self time",
-            "Samples",
             "Function",
+            "Lines",
+            "Measured time",
+            "Samples",
         ]
         assert [cell_values(row) for row in table.find_all("tr")[1:]] == [
-            ["90.00 ms", "23", "sampled()"],
-            ["70.00 ms", "—", "foo()"],
-            ["50.00 ms", "—", "bar()"],
+            ["sampled()", "2", "90.00 ms", "23"],
+            ["foo()", "1", "70.00 ms", "—"],
+            ["bar()", "1", "50.00 ms", "—"],
         ]
         assert result.root_run.functions[0].calls == 1
+
+    @pytest.mark.parametrize("line_count", [None, 1, 1234])
+    @pytest.mark.parametrize("sampled", [False, True])
+    def test_function_lines_preserve_unknown_counts_and_explain_time(
+        self, result: ProfileResult, line_count: int | None, *, sampled: bool
+    ) -> None:
+        """Explain function time and display available source line counts.
+
+        Distinguish unavailable spans from real counts and describe sampling
+        estimates without changing stored measurements.
+
+        Parameters
+        ----------
+        result : [ProfileResult]
+            Controlled profile containing two function definitions.
+
+        line_count : int | None
+            Available source span or the unavailable marker.
+
+        sampled : bool
+            Whether the collector estimates durations from observations.
+
+        """
+        result.capabilities = BackendCapabilities(sampled=sampled)
+        function = result.root_run.functions[0]
+        function.line_count = line_count
+        page = parse(result).find_all("section", id="functions")[0]
+        table = page.find_all("table")[0]
+        expected = "—" if line_count is None else f"{line_count:,}"
+
+        assert cell_values(table.find_all("tr")[1])[1] == expected
+        assert "Self time" not in page.text()
+        assert "excluding time in other project functions it calls" in page.text()
+        assert ("Sampling reports estimate this time." in page.text()) is sampled
+        assert "with blank lines and comments" in page.text()
+        assert function.line_count == line_count
+        assert function.total_time_ns == 70_000_000
 
     def test_sampled_values_never_fabricate_hits(self, result):
         """Verify sampled values never fabricate hits.
@@ -1526,7 +1567,7 @@ class TestSparkMetricPresentation:
         assert "Main plan steps unavailable" in panels[0].text()
 
     def test_small_nonzero_row_fraction_is_not_displayed_as_zero(self, result):
-        """Keep small measured output counts visible when percentages round down.
+        """Keep nonzero row counts visible when percentages round down.
 
         Reducing many rows to two rows still leaves a nonzero fraction.
 
@@ -2035,7 +2076,15 @@ class TestReportSafety:
         document = parse(result)
         assert len(document.find_all("style")) == 1
         assert len(document.find_all("script")) == 1
-        assert not document.find_all("link")
+        favicon = document.find_all("head")[0].find_all("link", rel="icon")[0]
+        assert document.find_all("link") == [favicon]
+        assert favicon.attributes["type"] == "image/svg+xml"
+        assert favicon.attributes["sizes"] == "any"
+        assert favicon.attributes["href"].startswith("data:image/svg+xml;base64,")
+        assert (
+            favicon.attributes["href"]
+            == document.find_all("img", css="brand-mark")[0].attributes["src"]
+        )
         assert all("src" not in script.attributes for script in document.find_all("script"))
         external_links = [
             node
@@ -2054,6 +2103,7 @@ class TestReportSafety:
             if node.attributes.get("http-equiv") == "Content-Security-Policy"
         )
         assert "default-src 'none'" in csp.attributes["content"]
+        assert "img-src data:" in csp.attributes["content"]
         javascript = document.find_all("script")[0].text()
         assert "fetch(" not in javascript
         assert "XMLHttpRequest" not in javascript

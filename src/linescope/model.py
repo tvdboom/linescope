@@ -448,6 +448,11 @@ class FunctionStats:
         Collected sampling observations, or None when unsupported; never exact
         hits.
 
+    line_count : int | None, default=None
+        Source lines from the definition through the last body statement,
+        including blank lines, comments, and nested definitions. Exclude
+        decorators and trailing comments; None means the span is unavailable.
+
     See Also
     --------
     - linescope.model:LineStats
@@ -462,6 +467,7 @@ class FunctionStats:
     total_time_ns: int | None = None
     calls: int | None = None
     samples: int | None = None
+    line_count: int | None = None
 
 
 @dataclass

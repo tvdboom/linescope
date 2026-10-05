@@ -26,10 +26,17 @@ the hit columns; tracing omits the sample column. Each source keeps its own
 columns when child runs use different collectors. The Context column appears
 only when that source has Spark execution or child-notebook invocation links.
 
-The Functions table shows Self time, then Samples for sampling reports or Calls
-for tracing reports, followed by Function. Self time sums the function's own
-line times, excluding nested project callees. Reports containing sampled child
-runs use Samples; functions without sampling counts show a dash.
+The Functions table shows Function, Lines, Measured time, then Samples for
+sampling reports or Calls for tracing reports, matching the Files page order.
+Measured time adds up time spent on the function's own lines, excluding time
+in other project functions it calls. Sampling reports estimate this time.
+Reports containing sampled child runs use Samples; functions without sampling
+counts show a dash.
+
+Lines counts source lines from the `def` or `async def` statement through the
+last statement in the body, including blank lines, comments, and nested
+definitions. Decorators and trailing comments are excluded. The count includes
+lines that were never executed or sampled; unavailable counts show a dash.
 
 The Notebooks view appears when the report contains notebook snapshots or child
 notebook invocations. The Spark view and its overview count appear only when
@@ -128,12 +135,16 @@ Python process. Retained Python allocation changes remain in the collected
 profile data; the source table displays only process-memory measurements.
 Byte measurements use decimal units: 1 KB is 1,000 bytes, 1 MB is 1,000,000
 bytes, and 1 GB is 1,000,000,000 bytes.
-With `memory=True`, the Memory view shows process RAM over elapsed time. Move
+With `memory=True`, the Memory view starts with badges for the highest observed
+process RAM and the largest accumulated change on one source line. These
+summaries link to the corresponding source and precede the RAM timeline. Move
 the inspection slider to a reading or select a chart point to open its source
-line. The table of retained readings also provides source links. Separate child
-processes keep separate timelines. The growth ranking helps identify lines that
-accumulate RAM across loop iterations. See [memory](backends.md#memory) for the
-measurement scope, overhead, and observed-peak limitations.
+line. Below the chart, expand the retained readings or inspect the growth
+ranking to identify lines that accumulate RAM across loop iterations. Separate
+child processes keep their own badges and timelines. Expand About these
+measurements below the results for the measurement definitions. See
+[memory](backends.md#memory) for the scope, overhead, and observed-peak
+limitations.
 
 Sampling reports include Samples in the hot-line, source, Functions, Files, and
 Notebooks overviews, plus a total sample count and the main run's target samples

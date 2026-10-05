@@ -142,11 +142,15 @@
       const point = inspector.querySelector(`.memory-point[data-index="${cursor.value}"]`);
       inspector.querySelectorAll('.memory-point.selected').forEach(item => item.classList.remove('selected'));
       const output = inspector.querySelector('.memory-reading');
+      const guide = inspector.querySelector('.memory-guide');
+      guide.style.display = point ? '' : 'none';
       if (!point) {
         output.textContent = 'RAM reading unavailable at this observation';
         return;
       }
       point.classList.add('selected');
+      guide.setAttribute('x1', point.getAttribute('cx'));
+      guide.setAttribute('x2', point.getAttribute('cx'));
       output.textContent = point.dataset.label;
       const source = point.closest('a');
       if (source) {

@@ -12,10 +12,12 @@ Run it from the checkout:
 uv run python examples/memory_example.py
 ```
 
-Open `memory.html` and select Memory. Inspect the chart or move the reading
-slider, then follow the source link at a peak. The Mem Growth ordering on the
-source page shows the accumulated increase from the batch loop. Select Mem
-Growth under Heatmap by to highlight growing lines without changing their order.
+Open `memory.html` and select Memory. The badges above the chart show the
+highest observed process RAM and the largest accumulated line change, with
+links to their source. Inspect the chart or move the reading slider, then
+follow the source link at a peak. The Mem Growth ordering on the source page
+shows the accumulated increase from the batch loop. Select Mem Growth under
+Heatmap by to highlight growing lines without changing their order.
 
 Retained Python allocation changes remain available in the collected profile
 data. Buffers created and freed inside the session can leave a visible process

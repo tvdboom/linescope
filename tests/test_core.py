@@ -210,6 +210,56 @@ class TestSession:
         assert functions["never"].total_time_ns is None
         assert 'class="source-row"' in session.html()
 
+    def test_function_line_counts_include_full_snapshotted_spans(self, tmp_path):
+        """Count complete function definitions independently of execution.
+
+        Include multiline signatures, blank lines, comments, and nested
+        definitions while excluding decorators and trailing comments. Keep
+        counts for uncalled synchronous and asynchronous functions.
+
+        """
+        source = (
+            "def compact(): return 1\n"
+            "\n"
+            "def outer(\n"
+            "    value=1,\n"
+            "):\n"
+            "    # comment inside the body\n"
+            "\n"
+            "    def inner():\n"
+            "        return value\n"
+            "    return inner()\n"
+            "    # trailing comment\n"
+            "\n"
+            "class Worker:\n"
+            "    @staticmethod\n"
+            "    async def task():\n"
+            "        return 2\n"
+            "\n"
+            "outer()\n"
+        )
+        session, _ = execute(tmp_path, source)
+        functions = {
+            function.qualified_name: function for function in session.result.root_run.functions
+        }
+
+        assert {name: function.line_count for name, function in functions.items()} == {
+            "compact": 1,
+            "outer": 8,
+            "outer.inner": 2,
+            "Worker.task": 2,
+        }
+        assert functions["compact"].calls == 0
+        assert functions["Worker.task"].total_time_ns is None
+        assert functions["Worker.task"].calls == 0
+        (tmp_path / "workload.py").write_text("# source changed\n", encoding="utf-8")
+        document = ReportDOM(session.html()).root
+        table = document.find_all("section", id="functions")[0].find_all("table")[0]
+        assert {
+            row.find_all("td")[0].text(): row.find_all("td")[1].text()
+            for row in table.find_all("tr")[1:]
+        } == {"compact()": "1", "outer()": "8", "outer.inner()": "2", "Worker.task()": "2"}
+
     def test_external_work_stays_on_calling_line(self, tmp_path, monkeypatch):
         """Verify external work stays on calling line.
 

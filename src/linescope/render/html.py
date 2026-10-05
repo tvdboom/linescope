@@ -1425,6 +1425,61 @@ def _memory_location(location: SourceLocation | None, sources: dict[str, SourceU
     return f'<a href="{_source_link(unit.id, location.line)}">{escape(name)}:{location.line}</a>'
 
 
+def _memory_badges(run: ProfileRun, sources: dict[str, SourceUnit]) -> str:
+    """Summarize observed RAM peaks and accumulated line changes for one run.
+
+    Keep missing readings distinct from zero and use each run's own samples
+    and line measurements so separate processes retain independent summaries.
+
+    Parameters
+    ----------
+    run : [ProfileRun]
+        Run owning the process RAM readings and accumulated line changes.
+
+    sources : dict[str, [SourceUnit]]
+        Snapshots available for links to the peak and largest line change.
+
+    Returns
+    -------
+    str
+        Two metric badges with source links when observations are available.
+
+    """
+    peak = max(
+        (sample for sample in run.memory_samples if sample.rss_bytes is not None),
+        key=lambda sample: sample.rss_bytes or 0,
+        default=None,
+    )
+    change = max(
+        (line for line in run.lines if line.ram is not None and line.ram.delta_bytes is not None),
+        key=lambda line: (line.ram.delta_bytes or 0) if line.ram is not None else 0,
+        default=None,
+    )
+    peak_detail = (
+        f"{_time(peak.elapsed_ns)} · {_memory_location(peak.location, sources)}"
+        if peak is not None
+        else "No available RAM readings"
+    )
+    change_detail = (
+        _memory_location(change.location, sources)
+        if change is not None
+        else "No available line changes"
+    )
+    peak_value = _bytes(peak.rss_bytes if peak is not None else None)
+    change_value = _bytes(
+        change.ram.delta_bytes if change is not None and change.ram is not None else None,
+        signed=True,
+    )
+    return (
+        '<dl class="stats memory-stats"><div class="stat">'
+        '<dt title="Highest observed resident RAM for this process">Peak memory</dt>'
+        f"<dd><strong>{peak_value}</strong><small>{peak_detail}</small></dd></div>"
+        '<div class="stat"><dt title="Highest accumulated process-memory change on a single '
+        'source line; repeated executions are summed">Largest line change</dt>'
+        f"<dd><strong>{change_value}</strong><small>{change_detail}</small></dd></div></dl>"
+    )
+
+
 def _memory_timeline(run: ProfileRun, sources: dict[str, SourceUnit]) -> str:
     """Render a run's RAM timeline without combining separate processes.
 
@@ -1462,8 +1517,8 @@ def _memory_timeline(run: ProfileRun, sources: dict[str, SourceUnit]) -> str:
                 segments.append(" ".join(segment))
                 segment = []
             continue
-        x = 65 + 910 * sample.elapsed_ns / duration
-        y = 250 - 225 * sample.rss_bytes / scale
+        x = 125 + 835 * sample.elapsed_ns / duration
+        y = 260 - 225 * sample.rss_bytes / scale
         segment.append(f"{x:.2f},{y:.2f}")
         label = f"{_time(sample.elapsed_ns)} · {_bytes(sample.rss_bytes)}"
         point = (
@@ -1479,16 +1534,28 @@ def _memory_timeline(run: ProfileRun, sources: dict[str, SourceUnit]) -> str:
         points.append(point)
     if segment:
         segments.append(" ".join(segment))
+    gradient_id = _key("memory-fill", run.id)
+    areas = "".join(
+        f'<polygon points="{segment.split()[0].split(",")[0]},260 {segment} '
+        f'{segment.split()[-1].split(",")[0]},260" fill="url(#{gradient_id})"/>'
+        for segment in segments
+    )
     plot = "".join(f'<polyline points="{segment}"/>' for segment in segments)
     ticks = "".join(
-        f'<text x="58" y="{y + 4}" text-anchor="end">{_bytes(value)}</text>'
-        f'<line x1="65" y1="{y}" x2="975" y2="{y}"/>'
-        for y, value in ((25, peak), (137.5, peak // 2), (250, 0))
+        f'<text x="110" y="{y + 4}" text-anchor="end">{_bytes(round(scale * fraction))}</text>'
+        f'<line x1="125" y1="{y}" x2="960" y2="{y}"/>'
+        for fraction in (1, 0.75, 0.5, 0.25, 0)
+        for y in (260 - 225 * fraction,)
     )
     ticks += "".join(
-        f'<text x="{x}" y="280" text-anchor="middle">{_time(value)}</text>'
-        for x, value in ((65, 0), (520, duration // 2), (975, duration))
+        f'<text x="{x}" y="285" text-anchor="{anchor}">{_time(value)}</text>'
+        for x, value, anchor in (
+            (125, 0, "start"),
+            (542.5, duration // 2, "middle"),
+            (960, duration, "end"),
+        )
     )
+    peak_x = 125 + 835 * samples[peak_index].elapsed_ns / duration
     cursor_id = _key("memory-cursor", run.id)
     compressed = (
         "Timeline compressed; bucket peaks, troughs, and endpoints are retained."
@@ -1496,10 +1563,19 @@ def _memory_timeline(run: ProfileRun, sources: dict[str, SourceUnit]) -> str:
         else "Line-boundary readings and periodic observations during long calls."
     )
     return (
-        f'<div class="memory-inspector"><p class="muted">{compressed}</p>'
-        f'<svg class="memory-chart" viewBox="0 0 1000 300" role="img"'
+        '<div class="memory-inspector"><div class="memory-chart-heading">'
+        '<h2>Process RAM over time</h2><span class="memory-legend">Resident RAM</span></div>'
+        f'<svg class="memory-chart" viewBox="0 0 1000 320" role="img"'
         f' aria-label="Process RAM over elapsed time; observed peak {_bytes(peak)}">'
-        f'<g class="memory-axis">{ticks}</g><g class="memory-plot">{plot}</g>'
+        f'<defs><linearGradient id="{gradient_id}" x1="0" y1="0" x2="0" y2="1">'
+        '<stop offset="0%" stop-color="#22d3ee" stop-opacity=".28"/>'
+        '<stop offset="100%" stop-color="#22d3ee" stop-opacity=".02"/>'
+        f'</linearGradient></defs><g class="memory-axis">{ticks}'
+        '<text class="memory-axis-title" x="125" y="16">Process RAM</text>'
+        '<text class="memory-axis-title" x="960" y="311" text-anchor="end">'
+        "Elapsed time</text></g>"
+        f'<g class="memory-area">{areas}</g><g class="memory-plot">{plot}</g>'
+        f'<line class="memory-guide" x1="{peak_x:.2f}" x2="{peak_x:.2f}" y1="35" y2="260"/>'
         f'{"".join(points)}</svg><div class="memory-controls">'
         f'<label for="{cursor_id}">Inspect reading</label>'
         f'<input id="{cursor_id}" class="memory-cursor" type="range" min="0"'
@@ -1507,8 +1583,9 @@ def _memory_timeline(run: ProfileRun, sources: dict[str, SourceUnit]) -> str:
         f'<output class="memory-reading" for="{cursor_id}">'
         f"{_time(samples[peak_index].elapsed_ns)} · {_bytes(peak)} · "
         f"{_memory_location(samples[peak_index].location, sources)}</output></div>"
-        f"<details><summary>Retained readings ({len(samples):,})</summary>"
-        f"{_table(['Elapsed', 'Process RAM', 'Source'], rows)}</details></div>"
+        f'<p class="memory-caption">{compressed}</p></div>'
+        f'<details class="memory-readings"><summary>Retained readings ({len(samples):,})</summary>'
+        f"{_table(['Elapsed', 'Process RAM', 'Source'], rows)}</details>"
     )
 
 
@@ -1530,9 +1607,8 @@ def _memory_page(runs: list[ProfileRun], sources: dict[str, SourceUnit]) -> str:
 
     """
     sections = []
-    for run in runs:
-        if not run.memory_samples:
-            continue
+    measured_runs = [run for run in runs if run.memory_samples]
+    for run in measured_runs:
         growth = sorted(
             (
                 line
@@ -1551,19 +1627,24 @@ def _memory_page(runs: list[ProfileRun], sources: dict[str, SourceUnit]) -> str:
             for line in growth[:10]
             if line.ram is not None and line.ram.delta_bytes is not None
         ]
+        heading = ""
+        if len(measured_runs) > 1 or run is not runs[0]:
+            heading = f"<h2>{'Main run' if run is runs[0] else escape(run.name)}</h2>"
         sections.append(
-            f"<h2>{escape(run.name)}</h2>{_memory_timeline(run, sources)}"
+            f'<section class="memory-run" id="{_key("memory-run", run.id)}">{heading}'
+            f"{_memory_badges(run, sources)}{_memory_timeline(run, sources)}"
             f"<h3>Largest accumulated memory growth</h3>"
-            f"{_table(['Mem Change', 'Peak Mem', 'Source'], rows)}"
+            f"{_table(['Mem Change', 'Peak Mem', 'Source'], rows)}</section>"
         )
     return (
         '<section id="memory" class="page" hidden><h1>Memory</h1>'
-        '<p class="intro">Follow process RAM over time and open the source at a spike.</p>'
-        '<p class="semantics">RSS is resident RAM for the whole Python process, including '
+        + "".join(sections)
+        + '<details class="memory-explanation"><summary>About these measurements</summary>'
+        "<p>RSS is resident RAM for the whole Python process, including "
         "native libraries and profiler overhead. Other threads can change it. Mem Change "
         "sums observed line intervals; Peak Mem is the highest reading during a line; peaks are "
         "observed, so brief spikes between readings can be missed. Child process timelines "
-        "are shown separately.</p>" + "".join(sections) + "</section>"
+        "are shown separately.</p></details></section>"
     )
 
 
@@ -1689,12 +1770,13 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
 
     function_rows = [
         [
-            _time(item.total_time_ns),
-            _count(item.samples if sampled else item.calls),
             (
                 f'<a href="{_source_link(item.source_id, item.first_line)}'
                 f'">{escape(item.qualified_name)}()</a>'
             ),
+            _count(item.line_count),
+            _time(item.total_time_ns),
+            _count(item.samples if sampled else item.calls),
         ]
         for item in sorted(functions, key=lambda item: item.total_time_ns or 0, reverse=True)
     ]
@@ -1749,11 +1831,14 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
         f" readable even after your code changes."
         f"</p>{_table(file_headers, file_rows)}</section>"
     )
-    function_headers = ["Self time", "Samples" if sampled else "Calls", "Function"]
+    function_headers = ["Function", "Lines", "Measured time", "Samples" if sampled else "Calls"]
+    function_estimate = " Sampling reports estimate this time." if sampled else ""
     pages.append(
         f'<section id="functions" class="page" hidden><h1>Functions</h1>'
-        f'<p class="muted">Time on the function\'s own lines, excluding nested'
-        f" project callees. Select a function to open its definition."
+        f'<p class="muted">Time spent on each function\'s own lines, excluding time'
+        f" in other project functions it calls.{function_estimate} Select a function to open"
+        f" its definition. The line count includes the definition and body, with blank lines"
+        f" and comments."
         f"</p>{_table(function_headers, function_rows)}</section>"
     )
     notebook_rows = [
@@ -2065,7 +2150,9 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
         f""" http-equiv="Content-Security-Policy" content="default-src 'none'; style-src"""
         f""" 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; font-src 'none';"""
         f""" base-uri 'none'; form-action 'none'"><title>LineScope · Source profile"""
-        f"""</title><style>{css}</style></head>\n<body><a class="skip-link\""""
+        '</title><link rel="icon" type="image/svg+xml" sizes="any"'
+        f""" href="data:image/svg+xml;base64,{logo}"><style>{css}</style></head>\n"""
+        f"""<body><a class="skip-link\""""
         f""" href="#main">Skip to report</a><aside class="sidebar"><a class="brand\""""
         f""" href="#overview"><img class="brand-mark\""""
         f""" src="data:image/svg+xml;base64,{logo}" alt=""><span>Line<span"""

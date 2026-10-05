@@ -403,7 +403,9 @@ class Session:
     ) -> list[FunctionStats]:
         """Index function costs from visible source lines and exact call counts.
 
-        Exclude nested definitions and keep unsupported call counts unavailable.
+        Exclude nested definitions from costs and keep unsupported call counts
+        unavailable. Count the full source span from the definition through the
+        last body statement, independently of which lines were measured.
 
         Parameters
         ----------
@@ -503,6 +505,9 @@ class Session:
                         count,
                         sum(samples)
                         if samples or self.result.capabilities.sample_counts
+                        else None,
+                        line_count=node.end_lineno - node.lineno + 1
+                        if node.end_lineno is not None
                         else None,
                     )
                 )
