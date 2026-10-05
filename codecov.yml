@@ -1,0 +1,12 @@
+coverage:
+  precision: 2
+  status:
+    project:
+      default:
+        target: 95%
+        threshold: 0%
+
+# Installed-wheel reports must resolve to the repository's source layout.
+fixes:
+  - "^.*site-packages/linescope/::src/linescope/"
+  - "^linescope/::src/linescope/"
