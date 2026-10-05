@@ -113,6 +113,7 @@ nav:
   - Getting started: getting_started.md
   - User guide:
       - Introduction: user_guide/introduction.md
+      - Configuration: user_guide/configuration.md
       - Backends: user_guide/backends.md
       - Notebooks: user_guide/notebooks.md
       - Spark: user_guide/spark.md

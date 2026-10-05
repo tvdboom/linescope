@@ -46,6 +46,10 @@ class DisplayMode(StrEnum):
     CELL : [DisplayMode]
         Display the current report after each notebook cell.
 
+    CELL_SUMMARY : [DisplayMode]
+        Display a compact inline summary of each notebook cell's measurements.
+        Keep the full cumulative report available on request.
+
     NONE : [DisplayMode]
         Display reports only when explicitly requested.
 
@@ -53,6 +57,7 @@ class DisplayMode(StrEnum):
 
     END = "end"
     CELL = "cell"
+    CELL_SUMMARY = "cell-summary"
     NONE = "none"
 
 

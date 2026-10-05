@@ -129,7 +129,7 @@ class SourceUnit:
     source : str
         Complete source text frozen when the snapshot is captured.
 
-    kind : [SourceKind] | str
+    kind : str | [SourceKind]
         Source category normalized to [SourceKind] at construction.
 
     See Also
@@ -143,7 +143,7 @@ class SourceUnit:
     id: str
     path: str
     source: str
-    kind: SourceKind | str = SourceKind.PYTHON
+    kind: str | SourceKind = SourceKind.PYTHON
 
     def __post_init__(self) -> None:
         """Normalize the source kind to its enum member.
@@ -160,7 +160,7 @@ class SymbolDefinition:
 
     Attributes
     ----------
-    kind : [SymbolKind] | str
+    kind : str | [SymbolKind]
         Definition category normalized to [SymbolKind] at construction.
 
     qualified_name : str
@@ -183,7 +183,7 @@ class SymbolDefinition:
 
     """
 
-    kind: SymbolKind | str
+    kind: str | SymbolKind
     qualified_name: str
     source_id: str
     line: int
@@ -594,7 +594,7 @@ class SparkExecution:
     jobs : list[int]
         Spark job identifiers associated with this action.
 
-    status : [RunStatus] | str
+    status : str | [RunStatus]
         Action outcome normalized to [RunStatus] at construction.
 
     warnings : list[str]
@@ -628,7 +628,7 @@ class SparkExecution:
 
     stages: list[dict[str, Any]] = field(default_factory=list)
     jobs: list[int] = field(default_factory=list)
-    status: RunStatus | str = RunStatus.SUCCESS
+    status: str | RunStatus = RunStatus.SUCCESS
     warnings: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -674,7 +674,7 @@ class ProfileRun:
     name : str
         Display label for this profiling scope.
 
-    status : [RunStatus] | str
+    status : str | [RunStatus]
         Run outcome or reference role normalized at construction.
 
     metadata : dict[str, Any]
@@ -702,7 +702,7 @@ class ProfileRun:
 
     children: list[ProfileRun] = field(default_factory=list)
     name: str = "Profile"
-    status: RunStatus | str = RunStatus.SUCCESS
+    status: str | RunStatus = RunStatus.SUCCESS
     metadata: dict[str, Any] = field(default_factory=dict)
     memory_samples: list[MemorySample] = field(default_factory=list)
 
@@ -727,7 +727,7 @@ class ProfileResult:
     sources : dict[str, [SourceUnit]]
         Complete source snapshots keyed by stable identifiers.
 
-    backend : [Backend] | str
+    backend : str | [Backend]
         Built-in collector name or registered custom backend name.
 
     capabilities : [BackendCapabilities]
@@ -749,7 +749,7 @@ class ProfileResult:
 
     root_run: ProfileRun
     sources: dict[str, SourceUnit]
-    backend: Backend | str
+    backend: str | Backend
     capabilities: BackendCapabilities
     symbols: list[SymbolDefinition] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)

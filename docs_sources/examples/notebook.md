@@ -32,6 +32,11 @@ two workload cells, and stop it. The full report appears at the final stop
 rather than after every intermediate cell. The last code cell saves the report
 to `notebook.html` so you can reopen it later.
 
+The final section demonstrates `display="cell-summary"` with Trace. Each
+workload cell gets a compact inline overview of its own results. Stop collection
+without an automatic full report, then use `session.show()` or `session.save()`
+when you want to inspect the cumulative session.
+
 Use Python 3.11–3.14 for these Scalene demos. The
 [shared memory collector](../user_guide/backends.md#memory) needs no allocator
 preload or kernel restart.

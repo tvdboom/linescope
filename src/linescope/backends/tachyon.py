@@ -89,7 +89,7 @@ class TachyonBackend:
 
     Attributes
     ----------
-    name : [Backend] | str
+    name : str | [Backend]
         Backend identifier used in configuration and reports.
 
     capabilities : [BackendCapabilities]
@@ -151,7 +151,7 @@ class TachyonBackend:
 
     """
 
-    name: Backend | str = Backend.TACHYON
+    name: str | Backend = Backend.TACHYON
     capabilities = BackendCapabilities(hit_counts=False, sampled=True, sample_counts=True)
 
     def __init__(

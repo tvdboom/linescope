@@ -151,6 +151,9 @@ collection adds allocation tracking, RAM observations, and line-boundary
 tracing, including when timing uses a sampling backend. Live notebook reports
 with `display="cell"` repeat rendering after each cell; use `display="end"` for
 one final display or `display="none"` to save explicitly after collection.
+Use `display="cell-summary"` for a smaller inline overview of each cell's own
+measurements. It still takes collector snapshots at cell boundaries; memory
+allocation snapshots can add substantial work.
 
 Compare results using the same backend, options, inputs, and environment. Check
 an optimization with separate unprofiled runs as well: profiler timings help

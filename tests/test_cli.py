@@ -90,6 +90,11 @@ class TestCommandParsing:
         result = runner.invoke(cli.main, ["--help"])
         assert result.exit_code == 0
         assert "--memory / --no-memory" in result.stdout
+        assert "-b, --backend" in result.stdout
+        assert "-i, --include" in result.stdout
+        assert "-e, --exclude" in result.stdout
+        assert "-r, --root" in result.stdout
+        assert "-d, --display" in result.stdout
         assert "--display [none|end]" in result.stdout
         assert "Parameters" not in result.stdout
         assert "default=None" not in result.stdout
@@ -295,7 +300,25 @@ class TestScriptExecution:
         script = tmp_path / "argument_workload.py"
         script.write_text("import json, sys\nprint(json.dumps(sys.argv[1:]))\n", encoding="utf-8")
         monkeypatch.chdir(tmp_path)
-        flags = ["--help", "--version", "--backend", "custom", "--display=none", "--", "-m"]
+        flags = [
+            "--help",
+            "--version",
+            "--backend",
+            "custom",
+            "--display=none",
+            "-b",
+            "target-backend",
+            "-i",
+            "target-include",
+            "-e",
+            "target-exclude",
+            "-d",
+            "target-display",
+            "-r",
+            "target-root",
+            "--",
+            "-m",
+        ]
         target = ["-m", script.stem] if module else [str(script)]
 
         try:
@@ -344,11 +367,27 @@ class TestScriptExecution:
         assert "PROJECT_CONFIG_WORKLOAD" in text
         assert "trace" in text
 
-    def test_actual_include_and_exclude_filtering(self, runner, tmp_path):
+    @pytest.mark.parametrize(
+        ("backend_option", "include_option", "exclude_option", "display_option", "root_option"),
+        [
+            ("--backend", "--include", "--exclude", "--display", "--root"),
+            ("-b", "-i", "-e", "-d", "-r"),
+        ],
+    )
+    def test_actual_include_and_exclude_filtering(
+        self,
+        runner,
+        tmp_path,
+        backend_option,
+        include_option,
+        exclude_option,
+        display_option,
+        root_option,
+    ):
         """Verify actual include and exclude filtering.
 
-        Invoke the CLI through an isolated runner and inspect its arguments,
-        saved report, or restored process state.
+        Run a script using long or short options and inspect its saved report.
+        Allow both forms in repeated filters while preserving source scope.
 
         """
         package = tmp_path / "cli_filter_package"
@@ -367,12 +406,21 @@ class TestScriptExecution:
                 runner.invoke(
                     cli.main,
                     [
-                        *cli_options(report),
-                        "--include",
+                        backend_option,
+                        "trace",
+                        "--no-spark",
+                        "--no-notebooks",
+                        display_option,
+                        "none",
+                        root_option,
+                        str(tmp_path),
+                        "-o",
+                        str(report),
+                        include_option,
                         "cli_filter_package",
                         "--include",
                         "worker.py",
-                        "--exclude",
+                        exclude_option,
                         "cli_filter_package/omit.py",
                         str(script),
                     ],

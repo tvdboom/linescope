@@ -562,7 +562,7 @@ class Session:
 
         self._refresh()
 
-        if self.config.display != DisplayMode.NONE:
+        if self.config.display in (DisplayMode.END, DisplayMode.CELL):
             self.show()
 
         return self.result

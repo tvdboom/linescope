@@ -40,8 +40,8 @@ profile.stop()
 ```
 
 The default generates one full report at stop. `display="cell"` requests live
-per-cell updates; `display="none"` keeps the session headless for later
-`session.save("notebook.html")`.
+updates of the full cumulative report; `display="none"` keeps the session
+headless for later `session.save("notebook.html")`.
 
 Set `inline=True` to display reports inside the notebook instead of opening
 browser tabs. Repeated live rendering has a cost; see
@@ -51,6 +51,48 @@ Cell source is attached to stable notebook identifiers. Links into imported
 project functions use the same symbol resolution as Python files. Notebook
 function definitions that are available to the session can also be represented
 as virtual source snapshots.
+
+### Debug cell by cell
+
+Use compact summaries to inspect each cell as you run it:
+
+```python
+from linescope import profile
+
+session = profile.start(backend="trace", display="cell-summary")
+```
+
+Each executed cell gets a small inline overview with its elapsed time, outcome,
+and five busiest source lines. The summary fits the notebook output's natural
+height and needs no `inline=True`. Timings and hits belong to that execution,
+including project functions called from earlier cells or imported modules.
+Rerunning a cell shows its new measurements, while the session retains all runs
+for the full report. Failed cells show the available results and leave profiling
+active so you can fix the cell and continue.
+
+Sampling backends show samples when available. Short cells may have no sampled
+line measurements. Unknown metrics stay unavailable. With `memory=True`, the
+summary shows observed RAM changes and net retained Python allocation changes
+separately. Freed allocations remain attributed to their original source line;
+cumulative memory peaks cannot describe an individual cell's peak.
+
+Finish collection when you are done:
+
+```python
+result = profile.stop()
+```
+
+Compact mode does not automatically display a full report at stop. Open or save
+the complete cumulative report explicitly:
+
+```python
+session.show()  # Open the full report in a browser.
+session.save("notebook.html")
+```
+
+For a single cell, use `%%profile --backend trace --display cell-summary`.
+Live summaries take collector snapshots before and after each cell, so they add
+overhead, especially with allocation tracking enabled.
 
 Download the [notebook example](../examples/notebook.md) for a complete local
 walkthrough.

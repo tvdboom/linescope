@@ -90,7 +90,7 @@ class TraceBackend:
 
     Attributes
     ----------
-    name : [Backend] | str
+    name : str | [Backend]
         Backend identifier used in configuration and reports.
 
     accepts : Callable[[str], bool]
@@ -162,7 +162,7 @@ class TraceBackend:
 
     """
 
-    name: Backend | str = Backend.TRACE
+    name: str | Backend = Backend.TRACE
 
     def __init__(
         self,

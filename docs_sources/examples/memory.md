@@ -1,8 +1,8 @@
 # Memory growth
 
 Use process RAM readings to locate a temporary spike and growth inside a loop.
-This example retains about 16.8 MB of input, briefly creates a 50.3 MB processing
-buffer, and accumulates four 4.2 MB batches before releasing them.
+This example retains about 16.8 MB of input, briefly creates a 50.3 MB
+processing buffer, and accumulates four 4.2 MB batches before releasing them.
 
 :: example: memory_example.py
 

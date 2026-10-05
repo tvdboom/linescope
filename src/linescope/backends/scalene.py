@@ -273,7 +273,7 @@ class ScaleneBackend:
 
     Attributes
     ----------
-    name : [Backend] | str
+    name : str | [Backend]
         Backend identifier used in configuration and reports.
 
     accepts : Callable[[str], bool]
@@ -404,7 +404,7 @@ class ScaleneBackend:
 
     """
 
-    name: Backend | str = Backend.SCALENE
+    name: str | Backend = Backend.SCALENE
 
     def __init__(
         self,

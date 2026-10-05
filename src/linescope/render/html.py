@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from base64 import b64encode
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from hashlib import sha256
 from html import escape
 from importlib.resources import files
@@ -31,6 +31,14 @@ from linescope.model import (
     SourceUnit,
     SparkExecution,
     SparkOperator,
+)
+from linescope.render.spark import (
+    _operator_cost,
+    _spark_steps,
+    _SparkCost,
+    _SparkPipeline,
+    _SparkStep,
+    _StepKind,
 )
 
 
@@ -532,7 +540,7 @@ def _operator_metrics(metrics: dict[str, Any]) -> str:
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 value *= 1_000_000 if kind == "timing" else 1
 
-            name = f"Cumulative operator time · {name}"
+            name = f"Reported operator time · {name}"
             formatted = _metric_value(value, "ns")
         elif kind == "size" or (
             not structured and ("byte" in category or str(key).endswith("_bytes"))
@@ -548,69 +556,6 @@ def _operator_metrics(metrics: dict[str, Any]) -> str:
         if rows
         else '<p class="muted">Operator metrics unavailable.</p>'
     )
-
-
-@dataclass(frozen=True)
-class _SparkCost:
-    """Preserve comparable Spark costs without inventing missing metrics.
-
-    Attributes
-    ----------
-    time_ns : int | None
-        Largest reported operator timing in nanoseconds, if available.
-
-    peak_memory_bytes : int | None
-        Largest explicitly labeled peak memory measurement, if available.
-
-    spill_bytes : int | None
-        Largest reported spill measurement in bytes, if available.
-
-    time_label : str
-        Name of the selected timing metric used in report tooltips.
-
-    """
-
-    time_ns: int | None = None
-    peak_memory_bytes: int | None = None
-    spill_bytes: int | None = None
-    time_label: str = ""
-
-
-def _operator_cost(operator: SparkOperator) -> _SparkCost:
-    """Select reported costs without adding overlapping SQL metrics.
-
-    Multiple timings on one node can overlap. Use the largest reported
-    timing, preserving its name, and never derive action totals from it.
-    Byte counters for data size, shuffle, and spill are not peak memory.
-
-    """
-    times: list[tuple[int, str]] = []
-    memory: list[int] = []
-    spills: list[int] = []
-    for key, metric in operator.metrics.items():
-        structured = isinstance(metric, dict)
-        name = str(metric.get("name") or key) if structured else str(key)
-        kind = str(metric.get("type", "")).lower() if structured else ""
-        value = metric.get("value") if structured else metric
-        if (
-            not isinstance(value, (int, float))
-            or isinstance(value, bool)
-            or not isfinite(value)
-            or value < 0
-        ):
-            continue
-
-        category = f"{key} {name}".lower()
-        if kind in ("timing", "nstiming") or (not structured and str(key).endswith("_ns")):
-            times.append((int(value * (1_000_000 if kind == "timing" else 1)), name))
-        elif kind == "size" or (not structured and "byte" in category):
-            if "spill" in category:
-                spills.append(int(value))
-            elif "memory" in category and "peak" in category:
-                memory.append(int(value))
-
-    duration, label = max(times, key=lambda item: item[0]) if times else (None, "")
-    return _SparkCost(duration, max(memory, default=None), max(spills, default=None), label)
 
 
 def _spark_operators(operators: list[SparkOperator]) -> list[tuple[SparkOperator, _SparkCost]]:
@@ -834,6 +779,266 @@ def _spark_operator_rows(
             rows.append(([*cells, *_spark_cost_cells(cost)], cost))
 
     return rows
+
+
+def _spark_step_label(step: _SparkStep) -> tuple[str, str]:
+    """Explain a main operation and the work it performs.
+
+    Parameters
+    ----------
+    step : _SparkStep
+        Main physical operation with its captured description.
+
+    Returns
+    -------
+    tuple[str, str]
+        Plain-language title and brief explanation, without HTML markup.
+
+    """
+    explanations = {
+        _StepKind.READ: "Load rows from a source or cached data.",
+        _StepKind.GENERATE: "Create the input rows inside Spark.",
+        _StepKind.FILTER: "Discard rows that do not match the condition.",
+        _StepKind.JOIN: "Match rows from the separate inputs shown here.",
+        _StepKind.AGGREGATE: "Combine rows into groups and calculate totals or other summaries.",
+        _StepKind.SORT: "Put rows in order; large inputs can require memory or disk.",
+        _StepKind.SHUFFLE: "Redistribute rows so related data reaches the same worker.",
+        _StepKind.BROADCAST: "Send this input to workers so they can join it locally.",
+        _StepKind.PYTHON: "Transfer data to Python workers and run Python code.",
+        _StepKind.WINDOW: "Calculate values using a group or sequence of related rows.",
+        _StepKind.UNION: "Append the rows from each input.",
+        _StepKind.LIMIT: "Keep only the requested portion of the result.",
+        _StepKind.WRITE: "Save the output to its destination.",
+        _StepKind.PROJECT: "Select or calculate columns for each row.",
+        _StepKind.OTHER: "Inspect the captured operator for this operation's details.",
+    }
+    title = str(step.kind)
+    explanation = explanations[step.kind]
+    if step.kind == _StepKind.OTHER:
+        title = step.operator.name
+    elif step.kind == _StepKind.AGGREGATE and "partial_" in step.operator.description.lower():
+        title = "Summarize within each worker"
+        explanation = "Reduce the input before combining summaries across workers."
+    elif step.kind == _StepKind.LIMIT and "takeordered" in step.operator.name.lower():
+        title = "Sort and take a limited result"
+    return title, explanation
+
+
+def _spark_group_label(pipeline: _SparkPipeline) -> str:
+    """Describe which main steps share a fused measurement.
+
+    Parameters
+    ----------
+    pipeline : _SparkPipeline
+        Measured fused group and the main steps inside its boundary.
+
+    Returns
+    -------
+    str
+        Step references or an honest label for unavailable group members.
+
+    """
+    numbers = ", ".join(str(number) for number in pipeline.steps)
+    if len(pipeline.steps) == 1:
+        return f"Step {numbers} pipeline"
+    return f"Steps {numbers} together" if numbers else "Combined pipeline"
+
+
+def _spark_findings(steps: list[_SparkStep], pipelines: list[_SparkPipeline]) -> str:
+    """Point to measured costs and row multiplication.
+
+    Compare independent reported counters rather than adding overlapping
+    costs or calculating percentages of action wall time.
+
+    Parameters
+    ----------
+    steps : list[_SparkStep]
+        Main operations in dependency order.
+
+    pipelines : list[_SparkPipeline]
+        Shared measurements whose work cannot be split into step timings.
+
+    Returns
+    -------
+    str
+        Compact investigation cues above the main-step table.
+
+    """
+    costs = [(f"Step {step.number} · {_spark_step_label(step)[0]}", step.cost) for step in steps]
+    costs.extend((_spark_group_label(pipeline), pipeline.cost) for pipeline in pipelines)
+    cards = []
+    for title, attribute, formatter, missing in (
+        ("Largest reported time", "time_ns", _time, "Separate step timings unavailable."),
+        (
+            "Largest reported memory",
+            "peak_memory_bytes",
+            _bytes,
+            "Peak-memory counters unavailable.",
+        ),
+        ("Largest disk spill", "spill_bytes", _bytes, "Disk-spill counters unavailable."),
+    ):
+        known = [(label, getattr(cost, attribute)) for label, cost in costs]
+        known = [(label, value) for label, value in known if value is not None]
+        label, value = max(known, key=lambda item: item[1]) if known else (missing, None)
+        if attribute == "spill_bytes" and value == 0:
+            label = "Measured counters report no disk spill."
+        cards.append((title, formatter(value), label))
+
+    growth = []
+    for step in steps:
+        if step.kind != _StepKind.JOIN or step.rows is None or len(step.inputs) < 2:
+            continue
+
+        counts = [steps[number - 1].rows for number in step.inputs]
+        if all(count is not None and count > 0 for count in counts):
+            largest = max(count for count in counts if count is not None)
+            if step.rows > largest:
+                growth.append((step.rows / largest, step.number))
+
+    if growth:
+        factor, number = max(growth)
+        cards.append(
+            (
+                "Rows multiplied at a join",
+                f"{factor:,.1f}x",
+                f"Step {number} · versus its largest input",
+            )
+        )
+
+    return (
+        '<div class="spark-findings">'
+        + "".join(
+            f'<div class="spark-finding"><span>{escape(title)}</span>'
+            f"<strong>{escape(value)}</strong>"
+            f"<small>{escape(label)}</small></div>"
+            for title, value, label in cards
+        )
+        + "</div>"
+    )
+
+
+def _spark_plan_overview(execution: SparkExecution) -> str:
+    """Show main data-flow steps, row counts, and separately scoped costs.
+
+    Keep parallel input branches explicit and hide implementation plumbing.
+    Missing row counts remain unknown unless an operation preserves a known
+    input count. Shared pipeline costs are never assigned to children.
+
+    Parameters
+    ----------
+    execution : [SparkExecution]
+        Captured action whose physical plan is summarized.
+
+    Returns
+    -------
+    str
+        Main-step overview with links to original physical-plan details.
+
+    """
+    steps, pipelines = _spark_steps(execution.operators)
+    if not steps and not pipelines:
+        return '<p class="empty">Main plan steps unavailable in this environment.</p>'
+
+    maximum = max((step.cost.time_ns or 0 for step in steps), default=0)
+    rows = []
+    for step in steps:
+        title, explanation = _spark_step_label(step)
+        group = next((pipeline for pipeline in pipelines if step.number in pipeline.steps), None)
+        timing = _spark_cost_cells(step.cost)[0]
+        if step.cost.time_ns is None and group is not None and group.cost.time_ns is not None:
+            group_label = escape(_spark_group_label(group), quote=True)
+            timing = f'<span class="spark-shared" title="{group_label}">Shared timing</span>'
+        elif maximum and step.cost.time_ns is not None:
+            timing += (
+                f'<span class="spark-cost-bar" aria-hidden="true"><span'
+                f' style="width:{100 * step.cost.time_ns / maximum:.1f}%"></span></span>'
+            )
+
+        count = f"<strong>{_count(step.rows)}</strong>"
+        if step.cost.time_ns is not None and step.cost.time_label:
+            timing += f'<small class="spark-secondary">{escape(step.cost.time_label)}</small>'
+        if step.rows is not None:
+            count += (
+                '<small class="spark-secondary">From input · unchanged</small>'
+                if step.rows_from_input
+                else '<small class="spark-secondary">Measured output</small>'
+            )
+        hints = []
+        if step.cost.spill_bytes:
+            hints.append(f"{_bytes(step.cost.spill_bytes)} spilled to disk")
+        if step.rows is not None and len(step.inputs) == 1 and not step.rows_from_input:
+            previous = steps[step.inputs[0] - 1].rows
+            if previous and previous != step.rows:
+                fraction = step.rows / previous
+                percentage = "<0.1%" if 0 < fraction < 0.001 else f"{fraction:,.1%}"
+                hints.append(f"{percentage} of input row count")
+
+        hint = (
+            f'<small class="spark-step-hint">{escape(" · ".join(hints))}</small>' if hints else ""
+        )
+        inputs = " + ".join(f'<span class="spark-input">{number}</span>' for number in step.inputs)
+        cells = [
+            (
+                f'<div class="spark-step-title"><span class="spark-step-number">{step.number}'
+                f'</span><a class="spark-step-link"'
+                f' href="#{_spark_operator_id(execution.id, step.operator.id)}"'
+                f' title="{escape(step.operator.description or step.operator.name, quote=True)}">'
+                f"{escape(title)}</a></div>"
+                f'<small class="spark-step-description">{escape(explanation)}</small>{hint}'
+            ),
+            inputs or '<span class="muted">Source</span>',
+            timing,
+            _bytes(step.cost.peak_memory_bytes),
+            count,
+        ]
+        rows.append(cells)
+
+    shared = ""
+    if pipelines:
+        shared_rows = [
+            [
+                (
+                    f'<a href="#{_spark_operator_id(execution.id, pipeline.operator.id)}">'
+                    f"{escape(_spark_group_label(pipeline))}</a>"
+                ),
+                *_spark_cost_cells(pipeline.cost),
+            ]
+            for pipeline in pipelines
+        ]
+        shared = (
+            '<div class="spark-shared-costs"><h3>Operations measured together</h3>'
+            '<p class="muted">Spark runs these steps as one combined pipeline. Its cost cannot'
+            " be split reliably between the individual steps.</p>"
+            + _table(["Shared steps", "Reported time", "Peak memory", "Spill"], shared_rows)
+            + "</div>"
+        )
+
+    provenance = ""
+    if str(execution.metadata.get("plan_origin", "")).startswith("input DataFrame"):
+        provenance = (
+            '<p class="spark-limitation">Input DataFrame plan only. This may differ from the'
+            " plan used by the action.</p>"
+        )
+    elif execution.metadata.get("aqe_final_plan") is False:
+        provenance = '<p class="spark-limitation">The final adaptive plan was unavailable.</p>'
+
+    step_table = _table(
+        ["Step", "From step", "Reported time", "Peak memory", "Rows after"],
+        rows,
+        css="spark-steps",
+    )
+    return (
+        '<div class="spark-plan-overview"><div class="section-heading"><h2>Main plan steps</h2>'
+        f'<span class="muted">{len(steps)} steps · inputs → result</span></div>{provenance}'
+        f"{_spark_findings(steps, pipelines)}"
+        f"{step_table}"
+        f"{shared}"
+        '<p class="spark-metric-note">Read in data-flow order; separate inputs can run in'
+        " parallel. Reported times can include upstream work or waiting, overlap, and do not"
+        " add up to wall time. Memory is the"
+        " reported peak counter, not total data size. A dash means unavailable;"
+        " “From input” carries a known count through a step that preserves rows.</p></div>"
+    )
 
 
 def _operator(operator: SparkOperator, execution_id: str) -> str:
@@ -1643,12 +1848,37 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
             _spark_operator_rows(executions, result.sources, context=True),
             css="spark-operators",
         )
+        ordered_executions = sorted(
+            executions,
+            key=lambda execution: (
+                execution.stats.wall_time_ns is None,
+                -(execution.stats.wall_time_ns or 0),
+            ),
+        )
+        choices = "".join(
+            f'<option value="{index}">{escape(execution.name)} #{escape(execution.id[:8])}'
+            f" · {_time(execution.stats.wall_time_ns)}</option>"
+            for index, execution in enumerate(ordered_executions)
+        )
+        overviews = "".join(
+            f'<div class="spark-action-overview" data-action="{index}"'
+            f"{' hidden' if index else ''}>"
+            f'<p class="spark-overview-context">'
+            f'<a href="#{_key("spark", execution.id)}">Open action details ↗</a>'
+            f" · {_spark_source_link(execution.location, result.sources)}</p>"
+            f"{_spark_plan_overview(execution)}</div>"
+            for index, execution in enumerate(ordered_executions)
+        )
         pages.append(
             f'<section id="spark" class="page" hidden><h1>Spark</h1>'
-            f'<p class="muted">Start with the largest costs. Switch to Memory or Spill to find'
-            f" what used the most bytes. Select an action for its plans and details.</p>"
-            f"{spark_table}{operator_table}"
-            f"</section>"
+            '<p class="intro">Follow the data through the main steps and see where reported'
+            " time, memory, or row growth stands out.</p>"
+            f'<div class="spark-action-picker"><label for="spark-action-select">'
+            f'Plan overview for</label><select id="spark-action-select">{choices}</select></div>'
+            f'{overviews}<details class="execution-details"><summary>Compare all actions</summary>'
+            f'{spark_table}</details><details class="execution-details">'
+            f"<summary>All operator costs</summary>"
+            f"{operator_table}</details></section>"
         )
 
     for execution in executions:
@@ -1748,7 +1978,7 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
             f"<h1>{escape(execution.name)}</h1>"
             f'<p class="spark-trigger">{trigger}</p><div class="stats spark-stats">'
             f"{cost_cards}</div>"
-            f"{operator_table}"
+            f"{_spark_plan_overview(execution)}"
             f'<details class="execution-details spark-plans"><summary>Query plans</summary>'
             f'<div class="plan-tabs"'
             f' role="group" aria-label="Plan views">{"".join(plan_buttons)}'
@@ -1759,7 +1989,8 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
             f"{collection_notes}<details"
             f' class="execution-details"><summary>Stage and task details'
             f"</summary>{details}</details>"
-            f"</section>"
+            f'<details class="execution-details"><summary>Operator cost ranking</summary>'
+            f"{operator_table}</details></section>"
         )
 
     pages.extend(

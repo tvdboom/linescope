@@ -139,7 +139,7 @@ select = [
     "FLY",  # flynt
     "NPY",  # numpy-specific-rules
     "PERF",  # performance checks
-    "RUF",  # ruff
+    "RUF",  # ruff specific rules
 ]
 ignore = [
     "COM812",  # Trailing comma — conflicts with the ruff formatter
@@ -192,5 +192,7 @@ source = ["linescope"]
 branch = true
 
 [tool.coverage.report]
+fail_under = 95
+precision = 2
 show_missing = true
 exclude_also = ["if TYPE_CHECKING:", "@(abc\\.)?abstractmethod"]

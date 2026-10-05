@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Callable
+from copy import deepcopy
 import hashlib
 import inspect
 import linecache
 import re
 import shlex
+from time import perf_counter_ns
 from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
@@ -36,7 +38,8 @@ class NotebookIntegration:
     ----------
     session : [Session]
         Owning session. Cell hooks never display full reports unless its
-        display mode is explicitly `"cell"`.
+        display mode is explicitly `"cell"`. Use `"cell-summary"` for compact
+        inline measurements of each execution.
 
     shell : [InteractiveShell] | None, default=None
         IPython shell. Detected automatically when omitted.
@@ -87,6 +90,19 @@ class NotebookIntegration:
 
     _inline_captured : set[str]
         Snapshot identifiers already inspected for inline `%run` references.
+
+    _cell_baseline : [ProfileRun] | None
+        Detached measurements before the current cell, or None when a baseline
+        could not be collected. Only used for compact cell summaries.
+
+    _cell_started : int
+        Monotonic cell start in nanoseconds; zero after its summary completes.
+
+    _cell_source : [SourceUnit] | None
+        Current executed cell snapshot, when capture was available.
+
+    _cell_execution_count : int | None
+        Shell execution number used to label the current cell's summary.
 
     See Also
     --------
@@ -162,6 +178,10 @@ class NotebookIntegration:
         self._compiler_owned = False
         self._cell_info: ExecutionInfo | None = None
         self._inline_captured: set[str] = set()
+        self._cell_baseline: ProfileRun | None = ProfileRun()
+        self._cell_started = 0
+        self._cell_source: SourceUnit | None = None
+        self._cell_execution_count: int | None = None
 
     def capture(
         self,
@@ -296,9 +316,41 @@ class NotebookIntegration:
             return
 
         self._cell_info = info
+        self._cell_source = None
+
+        if self.session.config.display == DisplayMode.CELL_SUMMARY:
+            if raw.startswith(INTERNAL_CELL):
+                self._cell_started = 0
+                return
+
+            self._begin_cell()
 
         if self._compiler_wrapper is None and not raw.startswith(INTERNAL_CELL):
-            self.capture(raw, cell_id=getattr(info, "cell_id", None))
+            self._cell_source = self.capture(raw, cell_id=getattr(info, "cell_id", None))
+
+    def _begin_cell(self) -> None:
+        """Snapshot cumulative measurements before timing a new cell.
+
+        Exclude time waiting between cells and summary rendering from elapsed
+        cell duration. A failed baseline disables that cell's summary rather
+        than presenting cumulative data as new measurements.
+
+        """
+        try:
+            self.session._refresh()
+            run = self.session.result.root_run
+            self._cell_baseline = ProfileRun(
+                lines=deepcopy(run.lines),
+                spark_executions=list(run.spark_executions),
+                children=list(run.children),
+            )
+        except Exception as error:  # noqa: BLE001
+            self._cell_baseline = None
+            self.session.result.warnings.append(
+                f"Notebook cell baseline unavailable ({type(error).__name__})."
+            )
+        self._cell_execution_count = getattr(self.shell, "execution_count", None)
+        self._cell_started = perf_counter_ns()
 
     def _observe_compiler(self) -> None:
         """Install a reversible observer around the shell's compiler cache.
@@ -353,7 +405,9 @@ class NotebookIntegration:
 
                 try:
                     if not raw.startswith(INTERNAL_CELL):
-                        self.capture(raw, cell_id=cell_id or str(number), filename=filename)
+                        self._cell_source = self.capture(
+                            raw, cell_id=cell_id or str(number), filename=filename
+                        )
                 except Exception as error:  # noqa: BLE001
                     self.session.result.warnings.append(
                         f"Notebook source metadata unavailable ({type(error).__name__})."
@@ -393,7 +447,9 @@ class NotebookIntegration:
                     )
 
                     if source and not source.startswith(INTERNAL_CELL):
-                        self.capture(source, cell_id=identity, filename=filename)
+                        self._cell_source = self.capture(
+                            source, cell_id=identity, filename=filename
+                        )
                         return
 
                 frame = frame.f_back
@@ -465,9 +521,11 @@ class NotebookIntegration:
                 self.capture(source, cell_id=identity, filename=filename)
 
     def _post_run_cell(self, result: ExecutionResult) -> None:
-        """Display the current report when live cell display is enabled.
+        """Display a live report or compact results for the completed cell.
 
-        Leave ordinary notebook-wide collection to display once at stop.
+        Leave ordinary notebook-wide collection to display once at stop. Keep
+        compact display failures diagnostic without disrupting cell execution
+        or releasing another integration's hooks.
 
         Parameters
         ----------
@@ -475,9 +533,48 @@ class NotebookIntegration:
             Cell execution result or model being processed.
 
         """
-        del result
-        if self._active and self.session.config.display == DisplayMode.CELL:
+        if not self._active:
+            return
+
+        if self.session.config.display == DisplayMode.CELL:
             self.session.show()
+        elif self.session.config.display == DisplayMode.CELL_SUMMARY and self._cell_started:
+            finished = perf_counter_ns()
+            started = max(self._cell_started, self.session._started)
+            self._cell_started = 0
+            if self._cell_baseline is None:
+                return
+
+            try:
+                from IPython.display import HTML, display
+
+                from linescope.notebooks.summary import cell_result
+                from linescope.render.cell import render_cell_summary
+
+                self.session._refresh()
+                failed = (
+                    getattr(result, "error_before_exec", None) is not None
+                    or getattr(result, "error_in_exec", None) is not None
+                )
+                snapshot = cell_result(
+                    self.session.result,
+                    self._cell_baseline,
+                    elapsed_ns=max(0, finished - started),
+                    status=RunStatus.FAILED if failed else RunStatus.SUCCESS,
+                )
+                display(
+                    HTML(
+                        render_cell_summary(
+                            snapshot,
+                            cell=self._cell_source,
+                            execution_count=self._cell_execution_count,
+                        )
+                    )
+                )
+            except Exception as error:  # noqa: BLE001
+                self.session.result.warnings.append(
+                    f"Notebook cell summary unavailable ({type(error).__name__})."
+                )
 
     def start(self) -> None:
         """Register cell hooks and optional Databricks invocation observation.
@@ -496,6 +593,9 @@ class NotebookIntegration:
             self._inline_references(unit)
 
         if self.shell is not None:
+            if self.session.config.display == DisplayMode.CELL_SUMMARY:
+                self._begin_cell()
+
             self._observe_compiler()
 
             for event, callback in (
@@ -520,6 +620,9 @@ class NotebookIntegration:
 
         """
         self._active = False
+        self._cell_started = 0
+        self._cell_baseline = None
+        self._cell_source = None
 
         if self.shell is not None:
             for event, callback in self._registered:

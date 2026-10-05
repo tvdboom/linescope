@@ -30,11 +30,16 @@ from linescope.enums import DisplayMode, SessionState
 @click.version_option(package_name="linescope", prog_name="LineScope")
 @click.option(
     "--backend",
+    "-b",
     help="Collector name: scalene, trace, tachyon, or a registered custom backend. "
     "Defaults to trace on every supported Python version.",
 )
-@click.option("--include", multiple=True, help="Package, path, or glob to include; repeatable.")
-@click.option("--exclude", multiple=True, help="Package, path, or glob to exclude; repeatable.")
+@click.option(
+    "--include", "-i", multiple=True, help="Package, path, or glob to include; repeatable."
+)
+@click.option(
+    "--exclude", "-e", multiple=True, help="Package, path, or glob to exclude; repeatable."
+)
 @click.option(
     "--memory/--no-memory",
     default=None,
@@ -54,9 +59,10 @@ from linescope.enums import DisplayMode, SessionState
 @click.option(
     "--notebooks/--no-notebooks", default=None, help="Capture notebook source; enabled by default."
 )
-@click.option("--root", type=click.Path(file_okay=False), help="Project source root.")
+@click.option("--root", "-r", type=click.Path(file_okay=False), help="Project source root.")
 @click.option(
     "--display",
+    "-d",
     type=click.Choice([DisplayMode.NONE.value, DisplayMode.END.value]),
     help="Open the report after exit; defaults to end.",
 )
@@ -96,14 +102,14 @@ def main(
 
     Parameters
     ----------
-    --backend : str | None, default=None
-        Collector name. Default to Scalene on Python 3.11-3.14 and Trace on
-        Python 3.15. Registered custom backend names are also accepted.
+    --backend, -b : str | None, default=None
+        Collector name. Default to Trace on every supported Python version.
+        Registered custom backend names are also accepted.
 
-    --include : tuple[str, ...], default=()
+    --include, -i : tuple[str, ...], default=()
         Package names, paths, or globs to include. Repeat for multiple entries.
 
-    --exclude : tuple[str, ...], default=()
+    --exclude, -e : tuple[str, ...], default=()
         Package names, paths, or globs to exclude. Repeat for multiple entries.
 
     --memory/--no-memory : bool | None, default=None
@@ -123,10 +129,10 @@ def main(
     --notebooks/--no-notebooks : bool | None, default=None
         Enable or disable notebook source capture. Enabled by default.
 
-    --root : str | None, default=None
+    --root, -r : str | None, default=None
         Project source root. Discover the root from the script when omitted.
 
-    --display : str | None, default=None
+    --display, -d : str | None, default=None
         Display mode: `end` or `none`. Default to `end`.
 
     --output, -o : str | None, default=None

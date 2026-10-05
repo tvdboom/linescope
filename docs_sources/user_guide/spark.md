@@ -52,11 +52,32 @@ workers were idle; they mean the runtime did not expose sufficient information.
 
 ## Plans and metrics
 
-The Spark view starts with ranked actions and operators. Action wall time,
-cumulative executor time, peak memory, and spill are visible together. The
-slowest actions appear first; use Memory or Spill above either table to order
-by bytes instead. Unknown measurements sort after measured values, including
-zero. Operators from child notebook runs appear in the same ranking.
+The Spark view starts with a main-step plan overview. Choose an action in
+**Plan overview for**; the longest measured action is selected first. Actions
+from child notebook runs are included.
+Action wall time, cumulative executor time, peak memory, and spill are visible
+together under **Compare all actions** below the overview. Use Memory or Spill
+above that table to order by bytes instead. Unknown measurements sort after
+measured values, including zero.
+
+**Main plan steps** follows the data from inputs to the result. Plain-language
+labels describe reading, filtering, joining, summarizing, sorting, and moving
+data between workers. Unmeasured projections and internal wrappers are omitted.
+The **From step** column keeps separate branches explicit: `2 + 5` means that
+this operation consumes both inputs, not that those inputs ran sequentially.
+Reported time, peak memory, and total **Rows after** appear beside each step.
+
+The investigation cards identify the largest reported time, memory, and disk
+spill, and row multiplication at joins when both input counts are known.
+They point to measured work to investigate; partial counters cannot establish
+the complete cause of a slow action. Time bars compare measured individual
+steps rather than percentages of the action's elapsed time.
+
+Rows use Spark's output-row counters. Sorts and data exchanges can carry a
+known input count forward because they preserve rows; those values are labeled
+**From input · unchanged**. Missing output counts after filters, joins,
+aggregates, limits, and unknown operations remain unavailable. Estimates,
+partition counts, and shuffle-record counters do not fill missing row counts.
 
 Each action has a Source link showing its captured filename
 and exact action line. Select it to open and highlight the line that triggered
@@ -66,11 +87,12 @@ snapshot is unavailable, the report shows `Trigger source unavailable`.
 
 The captured action line appears beside the link so repeated `collect` or
 `count` calls are easy to distinguish. Select an action to see its cost summary
-and operator ranking. Select an operator's name or ID to open its action's
-physical operator tree, expand and highlight that exact step, and show its
-description and metrics. Query plans, extra action metrics, and stage
-details are collapsed below the ranking. Runtime limitations and plan
-provenance appear under **Plan provenance and collection notes** on each
+and main-step overview. Select a step to open its action's physical operator
+tree, expand and highlight that exact step, and show its
+description and metrics. Query plans, extra action metrics, stage details, and
+the full operator cost ranking are collapsed below the overview. Runtime
+limitations and plan provenance appear under **Plan provenance and collection
+notes** on each
 action's detail page when available.
 
 Query plans prefer the actual executed physical plan after the action
@@ -79,13 +101,18 @@ optimized logical plans provide context. Operator details expose available rows,
 bytes, shuffle, memory, spill, and time metrics.
 
 Operator metrics are supplied by Spark. Operator time shows the largest
-available Spark timing on each node, converted to seconds and cumulative across
-tasks. Hover over the value to see which timing was selected. Fused pipeline
-timings can overlap their children, so the ranking never sums them into an
+available Spark timing on each node, converted to seconds. The selected metric's
+name appears below the main step's time and in its tooltip. Timings can measure
+cumulative worker work, preparation, or waiting for upstream input; they are not
+exclusive durations for individual steps. Fused pipeline timings can overlap
+their children, so the ranking never sums them into an
 action total or assigns a fused pipeline's time to its children. Measured fused
-pipelines remain visible as their own rows. Peak memory uses an explicit
-peak-memory counter; shuffle data size and spill do not stand in for memory
-usage.
+pipelines appear under **Operations measured together**, with the main step
+numbers they cover. A step with no separate timing shows **Shared timing** when
+its pipeline has a measurement. Input adapters end pipeline membership, so
+upstream work is not assigned to a downstream fused group. Peak memory uses an
+explicit peak-memory counter; shuffle data size and spill do not stand in for
+memory usage.
 
 | Metric | Meaning |
 | --- | --- |

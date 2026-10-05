@@ -15,7 +15,7 @@
 | --- | --- |
 | **Repository** | [![Project Status: Active](https://www.repostatus.org/badges/latest/active.svg)](https://www.repostatus.org/#active) [![License: MIT](https://img.shields.io/github/license/tvdboom/linescope)](https://opensource.org/licenses/MIT) [![Downloads](https://static.pepy.tech/badge/linescope)](https://pepy.tech/project/linescope) [![PyPI version](https://img.shields.io/pypi/v/linescope)](https://pypi.org/project/linescope/) |
 | **Build** | [![Publish](https://github.com/tvdboom/linescope/actions/workflows/publish.yml/badge.svg)](https://github.com/tvdboom/linescope/actions/workflows/publish.yml) [![Linting and tests](https://github.com/tvdboom/linescope/actions/workflows/test.yml/badge.svg)](https://github.com/tvdboom/linescope/actions/workflows/test.yml) [![codecov](https://codecov.io/gh/tvdboom/linescope/branch/main/graph/badge.svg)](https://codecov.io/gh/tvdboom/linescope) |
-| **Code** | [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue?logo=python)](https://www.python.org) [![uv-managed](https://img.shields.io/badge/uv-managed-blueviolet)](https://docs.astral.sh/uv/) [![PEP8](https://img.shields.io/badge/code%20style-pep8-orange.svg)](https://www.python.org/dev/peps/pep-0008/) [![ruff](https://custom-icon-badges.demolab.com/badge/Ruff-261230.svg?logo=ruff-logo)](https://docs.astral.sh/ruff/) [![ty](https://custom-icon-badges.demolab.com/badge/ty-261230.svg?logo=ty-astral-logo)](https://docs.astral.sh/ty/) |
+| **Code** | [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14%20%7C%203.15-blue?logo=python)](https://www.python.org) [![uv-managed](https://img.shields.io/badge/uv-managed-blueviolet)](https://docs.astral.sh/uv/) [![PEP8](https://img.shields.io/badge/code%20style-pep8-orange.svg)](https://www.python.org/dev/peps/pep-0008/) [![ruff](https://custom-icon-badges.demolab.com/badge/Ruff-261230.svg?logo=ruff-logo)](https://docs.astral.sh/ruff/) [![ty](https://custom-icon-badges.demolab.com/badge/ty-261230.svg?logo=ty-astral-logo)](https://docs.astral.sh/ty/) |
 
 <br>
 
@@ -56,107 +56,87 @@ reviewing the embedded source.
 
 - **Source first.** Full files and cells, timing heatmaps, and unexecuted lines
   in context.
-- **Follow your code.** Click individual function, class, and reliably resolved
-  method calls.
-- **Several ways to work.** Context managers, explicit start/stop, CLI
-  scripts/modules, and cell magic.
-- **Notebook sessions.** Capture multiple cells and display one report when you
-  stop.
+- **Follow your code.** Click individual function, class, and resolved method calls.
+- **Several ways to work.** Context managers, explicit start/stop, CLI scripts/modules,
+  and cell magic.
 - **Spark aware.** Observe real actions and available executed plans without
   forcing lazy work.
 - **Honest measurements.** Keep missing metrics unknown and driver time separate
   from executor work.
 - **Portable reports.** No server or CDN needed to view the generated HTML.
-- **Pluggable collection.** Trace by default, with optional process RAM and
-  Python allocation tracking; select Scalene or Tachyon for sampling.
-- **Python only.** Universal wheels, no Rust or frontend compilation, MIT
-  licensed.
-
-<br>
-
-🚀 Installation
----------------
-
-```console
-pip install linescope
-```
-
-LineScope defaults to Trace on Python 3.11–3.15 and includes Scalene for optional
-sampling on Python 3.11–3.14.
-Notebook support and local Spark dependencies are optional:
-
-```console
-pip install "linescope[notebook]"
-pip install "linescope[spark]"
-```
-
-In Databricks, install `linescope[databricks]` as a cluster library and use the
-runtime's existing PySpark. Child notebook source and Python measurements are
-included automatically when workspace access permits temporary copies.
+- **Pluggable collection.** Choose from 3 different profiling backends: trace, scalene
+  or trachyon.
 
 <br>
 
 🚀 Getting started
 ------------------
 
-Run the bundled Python example from the checkout:
+## Installation
+
+Install LineScope it in the same environment as your script:
 
 ```console
-uv run python examples/script_example.py
+pip install linescope
 ```
 
-The [script](https://github.com/tvdboom/linescope/blob/main/examples/script_example.py)
-simulates I/O, analyzes generated sensor data, compares two rolling averages,
-and opens a report in a new browser tab. It uses Scalene with driver memory
-collection enabled on Python 3.11–3.14. The
-[documentation](https://tvdboom.github.io/linescope/latest/examples/script/)
-shows that same source file.
-
-Profile an existing script or module:
+or with all optional dependencies:
 
 ```console
-linescope --backend trace --output linescope.html script.py
-linescope --backend trace --include mypackage -m mypackage.job
+pip install linescope[full]
 ```
 
-In a notebook, load `%load_ext linescope`, then run:
+## Usage
+
+### From the terminal
+
+Run your own script under LineScope without changing its source:
+
+```console
+linescope --backend trace --output linescope.html your_script.py
+```
+
+The script runs normally, then LineScope saves `linescope.html` in the current
+directory and opens it in a browser. The report contains your source with
+line-by-line timings and works offline.
+
+Place LineScope options before the script path. Arguments after the path go to
+your script. You can also profile an importable module from your project root:
+
+```console
+linescope --backend trace --output linescope.html your_script.py --input data.csv
+linescope --backend trace --output linescope.html -m your_package.your_module
+```
+
+To save the report without opening a browser:
+
+```console
+linescope --backend trace --display none --output linescope.html your_script.py
+```
+
+### From Python code
+
+Wrap the work you want to measure with `profile` in your own script. Here,
+`main()` is your existing entry point; replace it with the calls you want to
+profile:
 
 ```python
-%%profile --backend trace
-values = list(range(20_000))
-total = sum(value * value for value in values)
+from linescope import profile
+
+if __name__ == "__main__":
+    with profile(backend="trace", output="linescope.html") as session:
+        main()
 ```
 
-Use `profile.start()` and `profile.stop()` for several cells, or `spark=True` to
-observe supported Spark driver actions. See the
-[notebook examples](https://github.com/tvdboom/linescope/tree/main/examples/notebooks)
-and
-[local Spark example](https://github.com/tvdboom/linescope/blob/main/examples/spark_example.py).
-
-For NVIDIA CUDA profiling, run `just demo-gpu` from a checkout. See the
-[GPU example](https://tvdboom.github.io/linescope/latest/examples/gpu/) for
-setup and report interpretation.
-
-Run `just sync` once to install all dependencies, extras, and development groups.
-Every other Just recipe updates that environment as needed while retaining
-installed packages it does not require. Every bundled example has a Just recipe:
+Run the script as usual:
 
 ```console
-just sync
-just demo-script
-just demo-package
-just demo-custom-backend
-just demo-notebook
-just demo-databricks
-just demo-spark
-just demo-spark-notebook
-just demo-gpu
+python your_script.py
 ```
 
-The package example profiles the dummy `sample_package` across modules.
-Notebook recipes execute a copy in `reports` and open it in JupyterLab. Spark
-requires Java, the GPU example requires NVIDIA CUDA, and Databricks workspace
-calls require an existing workspace; its portable notebook cells run locally.
+When the block exits, profiling stops and the report is saved and opened. For
+headless use, add `display="none"` to `profile(...)` and call
+`session.save("linescope.html")` after the block to write the report.
 
 <br>
 

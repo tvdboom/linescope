@@ -24,8 +24,10 @@ you have any other questions, don't hesitate to create a new
 ??? faq "Where does the report open?"
     Reports open in a new browser tab by default, including from notebooks.
     Use `session.show(inline=True)` or `inline=True` in a notebook session to
-    display inside a cell. Use `display="none"` to suppress automatic display
-    and `session.save("report.html")` to keep a file explicitly.
+    display inside a cell. Use `display="cell-summary"` for a compact inline
+    overview after each cell while debugging. Use `display="none"` to suppress
+    automatic display and `session.save("report.html")` to keep a file
+    explicitly.
 
 ??? faq "Can I collect GPU metrics?"
     Yes. Enable `gpu=True` or `--gpu` with Scalene on a supported device.

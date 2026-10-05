@@ -11,6 +11,8 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -306,6 +308,171 @@ def test_forced_cleanup_keeps_diagnostic(monkeypatch):
     collector.stop()
     assert process.killed
     assert any("termination" in message for message in collector.result().warnings)
+
+
+@pytest.mark.parametrize("record", ["", "not json", '{"type": "unknown"}'])
+def test_reader_reports_incomplete_or_corrupt_attachment(record):
+    """Report a missing readiness message without blocking sampler startup.
+
+    Keep malformed protocol records diagnostic and wake the waiting parent
+    even when the worker exits before attachment completes.
+
+    """
+    collector = backend()
+    collector._process = FakeProcess([])
+    collector._process.stdout = StringIO(record)
+    collector._read()
+    assert collector._ready.is_set()
+    assert collector._error
+    if record == "not json":
+        assert "JSONDecodeError" in collector.result().warnings[-1]
+    else:
+        assert "before attachment" in collector._error
+    collector.stop()
+
+
+@pytest.mark.parametrize("failure", ["timeout", "spawn"])
+def test_startup_timeout_and_spawn_error_release_resources(monkeypatch, failure):
+    """Release sampler ownership after attachment timeout or process failure.
+
+    Use a controlled reader that creates no real thread and never waits for
+    the ten-second attachment deadline.
+
+    """
+    process = FakeProcess([])
+    reader = SimpleNamespace(start=Mock(), join=Mock())
+    collector = backend()
+    collector._ready = SimpleNamespace(clear=Mock(), wait=Mock(return_value=False))
+    monkeypatch.setattr(
+        tachyon,
+        "sys",
+        SimpleNamespace(
+            version_info=(3, 15),
+            platform="linux",
+            executable=sys.executable,
+            _getframe=lambda _: None,
+        ),
+    )
+    monkeypatch.setattr(
+        tachyon,
+        "threading",
+        SimpleNamespace(
+            Thread=Mock(return_value=reader),
+            get_native_id=lambda: 123,
+        ),
+    )
+    monkeypatch.setattr(
+        tachyon.subprocess,
+        "Popen",
+        Mock(
+            side_effect=OSError("spawn failed") if failure == "spawn" else None,
+            return_value=process,
+        ),
+    )
+    with pytest.raises((OSError, RuntimeError), match=r"spawn failed|timed out"):
+        collector.start()
+    assert collector._process is None
+    assert collector._reader is None
+    assert not collector._running
+    if failure == "timeout":
+        assert process.stdout.closed
+        assert process.stdin.closed
+        reader.join.assert_called_once()
+
+
+@pytest.mark.parametrize("stdin", ["absent", "broken", "closed"])
+def test_shutdown_handles_missing_or_broken_control_pipe(stdin):
+    """Release worker pipes after missing stdin or a failed stop write.
+
+    Preserve a process exit diagnostic while tolerating an already closed
+    control pipe.
+
+    """
+    process = FakeProcess([])
+    if stdin == "absent":
+        process.stdin = None
+        process.stdout = None
+    elif stdin == "broken":
+        process.stdin = Mock()
+        process.stdin.write.side_effect = BrokenPipeError("worker exited")
+    else:
+        process.returncode = 2
+    collector = backend()
+    collector._process = process
+    collector.stop()
+    assert collector._process is None
+    if stdin == "closed":
+        assert "status 2" in collector.result().warnings[-1]
+
+
+def test_worker_samples_target_thread_and_recovers_inconsistent_stacks(monkeypatch):
+    """Keep sampling after transient stack errors and select the target thread.
+
+    Retain unknown source locations as zero protocol lines, omit unrelated
+    threads, and verify that parent control wakes the stop event.
+
+    """
+    target = SimpleNamespace(
+        thread_id=456,
+        frame_info=[
+            SimpleNamespace(filename="caller.py", location=SimpleNamespace(lineno=7)),
+            SimpleNamespace(filename="native.py", location=None),
+        ],
+    )
+    stack = [SimpleNamespace(threads=[SimpleNamespace(thread_id=999), target])]
+    profiler = SimpleNamespace(
+        dump_stack=Mock(
+            side_effect=[
+                [],
+                RuntimeError("inconsistent"),
+                UnicodeDecodeError("utf8", b"x", 0, 1, "stack"),
+                stack,
+            ]
+        )
+    )
+    factory = Mock(return_value=profiler)
+    stopped = SimpleNamespace(wait=Mock(side_effect=[False, False, False, True]), set=Mock())
+    thread = Mock(return_value=SimpleNamespace(start=Mock()))
+    monkeypatch.setattr(
+        tachyon,
+        "threading",
+        SimpleNamespace(
+            Event=lambda: stopped,
+            Thread=thread,
+        ),
+    )
+    monkeypatch.setattr(
+        tachyon,
+        "importlib",
+        SimpleNamespace(
+            import_module=lambda _: SimpleNamespace(SampleProfiler=factory),
+        ),
+    )
+    monkeypatch.setattr(tachyon, "sys", SimpleNamespace(stdin=StringIO("stop\n")))
+    messages = []
+    monkeypatch.setattr(tachyon, "_send", messages.append)
+    tachyon._run(123, 456, 2000)
+    factory.assert_called_once_with(123, 500, all_threads=True)
+    assert messages[0] == {"type": "ready"}
+    assert messages[1]["frames"] == [["caller.py", 7], ["native.py", 0]]
+    assert messages[1]["duration_ns"] >= 0
+    thread.call_args.kwargs["target"]()
+    stopped.set.assert_called_once()
+
+
+def test_protocol_writer_escapes_unicode_and_flushes(monkeypatch):
+    """Emit a complete ASCII JSON record and flush it for the parent reader.
+
+    Preserve Unicode filename data when decoding the process protocol.
+
+    """
+    stream = Mock(wraps=StringIO())
+    monkeypatch.setattr(tachyon, "sys", SimpleNamespace(stdout=stream))
+    tachyon._send({"filename": "café.py"})
+    assert json.loads(stream.write.call_args.args[0]) == {"filename": "café.py"}
+    assert stream.write.call_args.args[0].isascii()
+    assert stream.write.call_args.args[0].endswith("\n")
+    stream.flush.assert_called_once()
 
 
 @pytest.mark.skipif(sys.version_info < (3, 15), reason="Requires the Python 3.15 sampler")

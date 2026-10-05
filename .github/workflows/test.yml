@@ -1,8 +1,8 @@
-name: Pre-commit and tests
+name: Test
 
 on:
   push:
-    branches: [main, master, development]
+    branches: [master, development]
   pull_request:
   workflow_dispatch:
     inputs:
@@ -11,7 +11,7 @@ on:
         type: string
         default: '3.14'
       spark:
-        description: Run the optional real local Spark integration tests
+        description: Run the local Spark integration tests
         type: boolean
         default: false
 

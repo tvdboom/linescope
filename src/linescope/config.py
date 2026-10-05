@@ -50,7 +50,7 @@ class Config:
 
     Parameters
     ----------
-    backend : [Backend] | str, default=default_backend()
+    backend : str | [Backend], default=default_backend()
         Built-in backend member, its string value, or a registered engine
         name. Default to Trace on Python 3.11-3.15. Select `scalene` for
         Python 3.11-3.14 sampling or `tachyon` for Python 3.15 sampling.
@@ -88,18 +88,22 @@ class Config:
         Automatically snapshot and profile Databricks child notebooks using
         temporary workspace copies when SDK access permits it.
 
-    display : [DisplayMode] | str, default=[DisplayMode].END
-        Display once at completion, after each cell, or never (`none`).
+    display : str | [DisplayMode], default=[DisplayMode].END
+        Display a full report at completion (`end`) or after each cell (`cell`),
+        compact inline cell results (`cell-summary`), or only on request
+        (`none`). Cell summaries do not automatically display a full report
+        at stop.
 
     inline : bool, default=False
-        Display inside a notebook cell instead of opening a new browser tab.
+        Display full reports inside a notebook cell instead of opening a new
+        browser tab. Compact cell summaries always appear inline.
 
     output : str | None, default=None
         Explicit report destination. None opens a temporary HTML report.
 
     Attributes
     ----------
-    backend : [Backend] | str
+    backend : str | [Backend]
         Built-in backend member, its string value, or a registered engine name.
         Default to Trace on Python 3.11-3.15. Select `scalene` for Python
         3.11-3.14 sampling or `tachyon` for Python 3.15 sampling.
@@ -131,11 +135,13 @@ class Config:
         Automatically snapshot and profile Databricks child notebooks using
         temporary workspace copies when SDK access permits it.
 
-    display : [DisplayMode] | str
-        Display once at completion, after each cell, or never (`none`).
+    display : str | [DisplayMode]
+        Full report at completion (`end`) or after each cell (`cell`), compact
+        inline cell results (`cell-summary`), or only on request (`none`).
 
     inline : bool
-        Display inside a notebook cell instead of opening a new browser tab.
+        Display full reports inside a notebook cell instead of opening a new
+        browser tab. Compact cell summaries always appear inline.
 
     output : str | None
         Explicit report destination. None opens a temporary HTML report.
@@ -161,7 +167,7 @@ class Config:
 
     """
 
-    backend: Backend | str = field(default_factory=default_backend)
+    backend: str | Backend = field(default_factory=default_backend)
     memory: bool = False
     gpu: bool = False
     root: str | None = None
@@ -170,7 +176,7 @@ class Config:
     spark: bool = True
     notebooks: bool = True
     child_notebooks: bool = True
-    display: DisplayMode | str = DisplayMode.END
+    display: str | DisplayMode = DisplayMode.END
     inline: bool = False
     output: str | None = None
     sample_rate: int | None = None
@@ -201,7 +207,7 @@ class Config:
         try:
             object.__setattr__(self, "display", DisplayMode(self.display))
         except ValueError as error:
-            raise ValueError("display must be 'end', 'cell', or 'none'") from error
+            raise ValueError("display must be 'end', 'cell', 'cell-summary', or 'none'") from error
 
         if not isinstance(self.spark, bool):
             raise ValueError("spark must be True or False")

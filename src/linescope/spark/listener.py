@@ -900,7 +900,7 @@ class SparkIntegration:
             return set()
 
     def _query_finished(
-        self, name: str, query: Any, duration: int | None, status: RunStatus | str
+        self, name: str, query: Any, duration: int | None, status: str | RunStatus
     ) -> None:
         """Match a JVM completion callback to one pending observed action.
 
@@ -917,7 +917,7 @@ class SparkIntegration:
         duration : int | None
             Query duration reported by Spark, in nanoseconds.
 
-        status : [RunStatus] | str
+        status : str | [RunStatus]
             Observed query completion outcome.
 
         """

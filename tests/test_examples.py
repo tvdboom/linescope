@@ -303,6 +303,9 @@ def test_notebook_demos_request_scalene_and_memory(name):
                 or (isinstance(node.func, ast.Attribute) and node.func.attr == "start")
             ):
                 keywords = {item.arg: ast.literal_eval(item.value) for item in node.keywords}
+                if keywords.get("display") == "cell-summary":
+                    assert keywords["backend"] == "trace"
+                    continue
                 assert keywords["backend"] == "scalene"
                 assert keywords["memory"] is True
                 requests.append(node)

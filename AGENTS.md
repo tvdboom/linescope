@@ -123,6 +123,9 @@ Document optional parameters with `, default=...`, matching the actual default
 or the documented default-factory expression. Do not use `, optional`.
 
 Use Python type syntax such as `dict[str, list[[SourceUnit]]]` in documentation.
+In unions, put built-in types before custom types, including inside containers:
+`str | [DisplayMode]` and `list[str | [SourceUnit]]`. Keep `None` last.
+Use the same order in annotations that supply generated documentation types.
 Use square-bracket references for package and third-party classes that have a
 documentation target. Keep unlinked internal implementation types literal so
 strict documentation builds do not create unresolved references. Use single

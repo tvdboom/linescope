@@ -45,14 +45,14 @@ class Element:
     attributes : dict[str, str | None]
         Parsed HTML attributes used by semantic assertions.
 
-    children : list[Element | str]
+    children : list[str | Element]
         Nested elements and text nodes in document order.
 
     """
 
     tag: str
     attributes: dict[str, str | None] = field(default_factory=dict)
-    children: list[Element | str] = field(default_factory=list)
+    children: list[str | Element] = field(default_factory=list)
 
     def text(self):
         """Provide the controlled behavior used by this test.
@@ -1253,9 +1253,12 @@ class TestReportNavigation:
         plans = page.find_all("details", css="spark-plans")[0]
         assert "open" not in plans.attributes
         assert len(plans.find_all("pre", css="plan-view")) == 5
-        assert text.index("Most expensive operators") < text.index("FINAL AQE EXECUTED PLAN")
+        assert text.index("Main plan steps") < text.index("FINAL AQE EXECUTED PLAN")
+        assert text.index("FINAL AQE EXECUTED PLAN") < text.index("Operator cost ranking")
         assert not document.find_all("p", css="semantics")
-        assert not document.find_all("p", css="spark-metric-note")
+        notes = page.find_all("p", css="spark-metric-note")
+        assert len(notes) == 1
+        assert "Read in data-flow order" in notes[0].text()
         assert not document.find_all("p", css="spark-limitation")
         assert cell_values(source_rows(document)[2])[1] == "120.00 ms"
         self.test_every_internal_link_resolves_and_ids_are_unique(result)
@@ -1305,8 +1308,9 @@ class TestReportNavigation:
             "Peak memory",
             "Spill",
         ]
-        cells = spark.find_all("td")
-        assert cell_values(spark.find_all("tbody")[0].find_all("tr")[0]) == [
+        action_table = spark.find_all("table", css="spark-actions")[0]
+        cells = action_table.find_all("td")
+        assert cell_values(action_table.find_all("tbody")[0].find_all("tr")[0]) == [
             "collect #action",
             f"{label}result = foo(bar(3))",
             "—",
@@ -1353,7 +1357,7 @@ class TestReportNavigation:
         )
         document = parse(result)
         spark = document.find_all("section", id="spark")[0]
-        rows = spark.find_all("tbody")[0].find_all("tr")
+        rows = spark.find_all("table", css="spark-actions")[0].find_all("tbody")[0].find_all("tr")
         links = [row.find_all("td")[1].find_all("a")[0] for row in rows]
         assert [link.text() for link in links] == ["job.py:2", "job.py:1"]
         targets = [document.find_all("tr", id=link.attributes["href"][1:])[0] for link in links]
@@ -1385,7 +1389,7 @@ class TestReportNavigation:
         result.root_run.lines[0].spark_executions = ["action"]
         document = parse(result)
         spark = document.find_all("section", id="spark")[0]
-        cells = spark.find_all("td")
+        cells = spark.find_all("table", css="spark-actions")[0].find_all("td")
         assert cells[1].text() == "Trigger source unavailable"
         assert not cells[1].find_all("a")
         detail = document.find_all("section", id=cells[0].find_all("a")[0].attributes["href"][1:])[
@@ -1415,6 +1419,148 @@ class TestSparkMetricPresentation:
     Spark plans retain their shape without leaking raw JVM metric structures.
 
     """
+
+    def test_main_steps_show_flow_rows_and_shared_timing_above_original_details(self, result):
+        """Explain the main flow and preserve shared timing ownership.
+
+        Keep direct row measurements separate from row-preserving propagation.
+
+        """
+        scan = SparkOperator("scan", "Scan parquet", metrics={"numOutputRows": 1000})
+        filtered = SparkOperator(
+            "filter", "Filter", metrics={"numOutputRows": 100}, children=[scan]
+        )
+        projected = SparkOperator("project", "Project", children=[filtered])
+        sort = SparkOperator(
+            "sort",
+            "Sort",
+            metrics={"peak_memory_bytes": 2048, "spill_bytes": 1024},
+            children=[projected],
+        )
+        pipeline = SparkOperator(
+            "pipeline",
+            "WholeStageCodegen (1)",
+            metrics={"time_ns": 2_000_000_000},
+            children=[sort],
+        )
+        result.root_run.spark_executions = [
+            SparkExecution("action", operators=[pipeline], executed_plan="DETAILED PLAN")
+        ]
+        document = parse(result)
+        for overview in document.find_all("div", css="spark-plan-overview"):
+            table = overview.find_all("table", css="spark-steps")[0]
+            rows = table.find_all("tbody")[0].find_all("tr")
+            assert [row.find_all("td")[1].text() for row in rows] == ["Source", "1", "2"]
+            assert [row.find_all("td")[2].text() for row in rows] == ["Shared timing"] * 3
+            assert [row.find_all("td")[-1].text() for row in rows] == [
+                "1,000Measured output",
+                "100Measured output",
+                "100From input · unchanged",
+            ]
+            assert "Calculate columns" not in table.text()
+            assert "10.0% of input row count" in table.text()
+            assert "1.0 KB spilled to disk" in table.text()
+            shared = overview.find_all("div", css="spark-shared-costs")[0]
+            assert "Steps 1, 2, 3 together" in shared.text()
+            assert "2.00 s" in shared.text()
+            assert "2.0 KB" in table.text()
+        detail = document.find_all("details", css="spark-plans")[0]
+        assert detail.find_all("pre")[0].text() == "DETAILED PLAN"
+        targets = {
+            element.attributes["id"]
+            for element in document.find_all()
+            if "id" in element.attributes
+        }
+        assert all(
+            link.attributes["href"][1:] in targets
+            for link in document.find_all("a", css="spark-step-link")
+        )
+
+    def test_overview_calls_out_measured_join_growth_without_summing_inputs(self, result):
+        """Expose row multiplication and measured costs at the responsible join.
+
+        Partial coverage must not imply that missing timings are zero.
+
+        """
+        left = SparkOperator("left", "Scan", metrics={"numOutputRows": 100})
+        right = SparkOperator("right", "Scan", metrics={"numOutputRows": 20})
+        join = SparkOperator(
+            "join",
+            "HashJoin",
+            metrics={"numOutputRows": 500, "time_ns": 3_000_000_000},
+            children=[left, right],
+        )
+        result.root_run.spark_executions = [SparkExecution("action", operators=[join])]
+        overview = parse(result).find_all("div", css="spark-plan-overview")[0]
+        findings = overview.find_all("div", css="spark-findings")[0].text()
+        assert "Largest reported time3.00 sStep 3 · Combine tables" in findings
+        assert "Rows multiplied at a join5.0xStep 3 · versus its largest input" in findings
+        rows = overview.find_all("table", css="spark-steps")[0].find_all("tbody")[0].find_all("tr")
+        assert rows[-1].find_all("td")[1].text() == "1 + 2"
+        assert rows[-1].find_all("td")[-1].text() == "500Measured output"
+        assert rows[0].find_all("td")[2].text() == "—"
+
+    def test_action_selector_starts_with_slowest_and_includes_child_actions(self, result):
+        """Offer each captured action while initially showing the longest wait.
+
+        Preserve independent overview panels for actions from child notebooks.
+
+        """
+        result.root_run.spark_executions = [SparkExecution("unknown", "unknown")]
+        result.root_run.children = [
+            ProfileRun(
+                spark_executions=[
+                    SparkExecution("slow", "collect", stats=SparkExecutionStats(wall_time_ns=1000))
+                ]
+            )
+        ]
+        document = parse(result)
+        selector = document.find_all("select", id="spark-action-select")[0]
+        assert [option.text() for option in selector.find_all("option")] == [
+            "collect #slow · 1.0 µs",
+            "unknown #unknown · —",
+        ]
+        panels = document.find_all("div", css="spark-action-overview")
+        assert "hidden" not in panels[0].attributes
+        assert "hidden" in panels[1].attributes
+        assert "Main plan steps unavailable" in panels[0].text()
+
+    def test_small_nonzero_row_fraction_is_not_displayed_as_zero(self, result):
+        """Keep small measured output counts visible when percentages round down.
+
+        Reducing many rows to two rows still leaves a nonzero fraction.
+
+        """
+        scan = SparkOperator("scan", "Scan", metrics={"numOutputRows": 30_000})
+        aggregate = SparkOperator(
+            "aggregate", "HashAggregate", metrics={"numOutputRows": 2}, children=[scan]
+        )
+        result.root_run.spark_executions = [SparkExecution("action", operators=[aggregate])]
+        overview = parse(result).find_all("div", css="spark-plan-overview")[0]
+        assert "<0.1% of input row count" in overview.text()
+        assert "0.0% of input row count" not in overview.text()
+
+    def test_plan_limitations_are_visible_before_overview_metrics(self, result):
+        """Label fallback and unfinished adaptive plans beside the main flow.
+
+        Keep collection limitations visible without opening advanced panels.
+
+        """
+        result.root_run.spark_executions = [
+            SparkExecution(
+                "fallback",
+                operators=[SparkOperator("scan", "Scan")],
+                metadata={"plan_origin": "input DataFrame; action query unavailable"},
+            ),
+            SparkExecution(
+                "adaptive",
+                operators=[SparkOperator("scan", "Scan")],
+                metadata={"aqe_final_plan": False},
+            ),
+        ]
+        text = parse(result).text()
+        assert "Input DataFrame plan only. This may differ" in text
+        assert "The final adaptive plan was unavailable." in text
 
     def test_actions_rank_by_wall_time_with_memory_spill_and_source_visible(self, result):
         """Check the expected behavior in this regression case.
@@ -1673,6 +1819,7 @@ class TestSparkMetricPresentation:
             "Action metrics",
             "Plan provenance and collection notes",
             "Stage and task details",
+            "Operator cost ranking",
         ]
         assert all("execution-details" in panel.attributes["class"].split() for panel in panels)
 
@@ -1727,8 +1874,8 @@ class TestSparkMetricPresentation:
         assert rows == [
             ["output rows", "12,345"],
             ["shuffle data size", "3.1 MB"],
-            ["Cumulative operator time · sort time", "1.25 s"],
-            ["Cumulative operator time · build time", "7.50 ms"],
+            ["Reported operator time · sort time", "1.25 s"],
+            ["Reported operator time · build time", "7.50 ms"],
             ["buffer", "1.0 KB"],
             ["files read", "4"],
             ["partitions read", "2"],
@@ -1766,7 +1913,7 @@ class TestSparkMetricPresentation:
         assert rows == [
             ["peak memory", "—"],
             ["output rows", "0"],
-            ["Cumulative operator time · scan time", "—"],
+            ["Reported operator time · scan time", "—"],
             ["custom rows", "42"],
             ["bytes", "4.1 KB"],
             ["custom metric", "7"],

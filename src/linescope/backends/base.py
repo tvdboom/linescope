@@ -96,7 +96,7 @@ class ProfilerBackend(Protocol):
 
     Attributes
     ----------
-    name : [Backend] | str
+    name : str | [Backend]
         Built-in backend identifier or registered custom collector name.
 
     capabilities : [BackendCapabilities]
@@ -110,7 +110,7 @@ class ProfilerBackend(Protocol):
 
     """
 
-    name: Backend | str
+    name: str | Backend
     capabilities: BackendCapabilities
 
     def start(self) -> None:
@@ -166,7 +166,7 @@ def register_backend(name: str, factory: BackendFactory) -> None:
     _factories[name] = factory
 
 
-def create_backend(name: Backend | str, **options: Any) -> ProfilerBackend:
+def create_backend(name: str | Backend, **options: Any) -> ProfilerBackend:
     """Construct a backend lazily.
 
     Import optional measurement packages only when their backend is selected.
@@ -176,7 +176,7 @@ def create_backend(name: Backend | str, **options: Any) -> ProfilerBackend:
 
     Parameters
     ----------
-    name : [Backend] | str
+    name : str | [Backend]
         Built-in backend member or its string value. Registered custom
         backend names are accepted as strings.
 

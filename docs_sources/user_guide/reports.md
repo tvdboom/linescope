@@ -50,7 +50,7 @@ report rather than a benchmark.
 | Functions | Where is it defined, and what time was attributed to it? |
 | Memory | When did process RAM grow, and which line was active? |
 | Notebooks | Which captured cells and child notebooks belong to this run? |
-| Spark | Which actions and operators cost the most time or memory? |
+| Spark | How does data flow, and which steps cost time or memory? |
 
 ## Report header
 
@@ -163,7 +163,7 @@ has an identifier, original path, text, and kind (`python` or `notebook`).
 Python source titles and file lists show only the filename. Files with the same
 name keep distinct navigation targets through their original source identities.
 
-See [configuration](introduction.md#configuration) for scope controls.
+See [configuration](configuration.md) for scope controls.
 
 ## Source navigation
 

@@ -237,17 +237,8 @@ body {
     width: 100px;
     height: 100px;
 }
-.column .icon a:hover {
-    color: var(--linescope-blue);
-}
-.column .icon a:active {
-    color: var(--linescope-blue);
-}
-.column .icon a:visited {
-    color: var(--linescope-blue);
-}
-.column .icon a:link {
-    color: var(--linescope-blue);
+.column .icon a {
+    color: #0f766e;
 }
 
 .support-logos {

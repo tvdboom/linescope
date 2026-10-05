@@ -131,6 +131,11 @@
       section.querySelector('.table-scroll').scrollTop = 0;
     });
   });
+  document.getElementById('spark-action-select')?.addEventListener('change', event => {
+    document.querySelectorAll('.spark-action-overview').forEach(panel => {
+      panel.hidden = panel.dataset.action !== event.target.value;
+    });
+  });
   document.querySelectorAll('.memory-cursor').forEach(cursor => {
     cursor.addEventListener('input', () => {
       const inspector = cursor.closest('.memory-inspector');

@@ -139,12 +139,16 @@ uv run tox -e docs
 ```
 
 Tox tests installed wheels on Python 3.11–3.15. CI runs these on Linux, Windows,
-and macOS. Python 3.14 records branch coverage with a 70% floor. The minimum
+and macOS. Python 3.14 records branch coverage with a 95% floor. The minimum
 environment resolves the oldest supported direct dependencies rather than
 reusing only the latest lock resolution. The workflow lists pre-commit first,
 unit, notebook, and package checks next, then Scalene, optional Spark, and
 documentation last. Jobs can run in parallel; documentation waits for the
 notebook checks. Pre-commit covers linting without a separate lint environment.
+
+The coverage environment loads the project's branch-coverage configuration
+explicitly. Codecov requires at least 95% overall project coverage and maps
+installed-wheel filenames back to `src/linescope` for source annotations.
 
 ### Notebook execution
 
