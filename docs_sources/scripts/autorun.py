@@ -14,9 +14,7 @@ from doctest import DocTestParser
 from io import StringIO
 import sys
 
-from pygments import highlight
-from pygments.formatters import HtmlFormatter
-from pygments.lexers import PythonConsoleLexer
+from markdown import Markdown
 from pymdownx.superfences import SuperFencesException
 
 
@@ -90,11 +88,11 @@ def execute(src: str) -> tuple[list[list[str]], list[str]]:
 
 def formatter(
     src: str,
-    language: str,  # noqa: ARG001 - required by SuperFences
-    css_class: str,  # noqa: ARG001 - required by SuperFences
-    options: dict | None,  # noqa: ARG001 - required by SuperFences
-    md: object,  # noqa: ARG001 - required by SuperFences
-    **kwargs: object,  # noqa: ARG001 - required by SuperFences
+    language: str,
+    css_class: str,
+    options: dict | None,
+    md: Markdown,
+    **kwargs: object,
 ) -> str:
     """Render an executable `pycon` fence and fail on example errors.
 
@@ -112,7 +110,7 @@ def formatter(
     options : dict | None
         Fence options passed by SuperFences.
 
-    md : object
+    md : Markdown
         Markdown renderer.
 
     **kwargs : object
@@ -129,6 +127,14 @@ def formatter(
     except Exception as exc:
         raise SuperFencesException(f"Example failed:\n{src}") from exc
 
-    return highlight(
-        "\n".join(blocks[0]), PythonConsoleLexer(), HtmlFormatter(cssclass="highlight")
+    # Reuse SuperFences' normal formatter so Material supplies the same code
+    # container, highlighting, line numbers, and copy controls as other fences.
+    to_html = md.preprocessors["fenced_code_block"].extension.superfences[0]["formatter"]
+    return to_html(
+        src="\n".join(blocks[0]),
+        class_name=css_class,
+        language=language,
+        md=md,
+        options=options,
+        **kwargs,
     )

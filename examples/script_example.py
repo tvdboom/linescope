@@ -164,7 +164,7 @@ def main() -> None:
     Run the pipeline and open one HTML report in a new browser tab.
 
     """
-    with profile(backend="scalene", memory=True, root=str(Path(__file__).parent), spark=False):
+    with profile(memory=True, root=str(Path(__file__).parent), spark=False):
         # Keep line-by-line RAM collection practical while retaining repeated work.
         source = generate_csv(stations=8, minutes=300)
         readings = load_readings(source)

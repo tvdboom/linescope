@@ -247,7 +247,7 @@ class PreparedChild:
         notebook_path = posixpath.join(posixpath.dirname(self.path), f"_linescope_{token}")
         self.profile_path = notebook_path + ".json"
         options = asdict(self.session.config)
-        options.update(display="none", inline=False, output=None)
+        options.update(display="none", output=None)
         context = {
             "path": self.path,
             "correlation_id": self.correlation_id,

@@ -26,6 +26,7 @@ from linescope.notebooks.databricks import (
 )
 from linescope.notebooks.ipython import (
     NotebookIntegration,
+    _local_notebook_path,
     load_ipython_extension,
     unload_ipython_extension,
 )
@@ -242,6 +243,80 @@ def test_capture_preserves_full_cell_and_compiler_alias():
     assert source.source == "# full cell\nx = 4\n"
     assert session.registry.snapshot("<cell-7>") is source
     assert linecache.getline("<cell-7>", 2) == "x = 4\n"
+
+
+@pytest.mark.parametrize(
+    ("namespace", "environment", "expected"),
+    [
+        ({"__vsc_ipynb_file__": "C:\\work\\example.ipynb"}, None, "C:\\work\\example.ipynb"),
+        ({"__session__": "/work/example.ipynb"}, None, "/work/example.ipynb"),
+        ({}, "/work/example.ipynb", "/work/example.ipynb"),
+        (
+            {"__vsc_ipynb_file__": "current.ipynb", "__session__": "old.ipynb"},
+            "older.ipynb",
+            "current.ipynb",
+        ),
+        ({"__vsc_ipynb_file__": None, "__session__": "session-id"}, "console.py", None),
+        ({"__vsc_ipynb_file__": 42, "__session__": ""}, "example.IPYNB", "example.IPYNB"),
+        ({}, None, None),
+    ],
+)
+def test_local_notebook_identity_uses_only_frontend_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    namespace: dict[str, object],
+    environment: str | None,
+    expected: str | None,
+) -> None:
+    """Resolve frontend filenames while rejecting non-notebook session labels.
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        Owned environment changes restored after each case.
+
+    namespace : dict[str, object]
+        Notebook metadata exposed by the execution frontend.
+
+    environment : str | None
+        Jupyter kernel-start path, when available.
+
+    expected : str | None
+        Preferred notebook filename, or None for unavailable identity.
+
+    """
+    monkeypatch.delenv("JPY_SESSION_NAME", raising=False)
+    if environment is not None:
+        monkeypatch.setenv("JPY_SESSION_NAME", environment)
+    assert _local_notebook_path(SimpleNamespace(user_ns=namespace)) == expected
+    assert _local_notebook_path(None) is None
+
+
+@pytest.mark.parametrize("child_path", [None, "/Workspace/original-child"])
+def test_workspace_notebook_identity_takes_priority(
+    monkeypatch: pytest.MonkeyPatch, child_path: str | None
+) -> None:
+    """Retain workspace and original child paths ahead of local metadata.
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        Owned Databricks context and local environment replacements.
+
+    child_path : str | None
+        Original child path overriding a generated notebook's runtime context.
+
+    """
+    monkeypatch.setenv("JPY_SESSION_NAME", "local.ipynb")
+    monkeypatch.setattr(
+        "linescope.notebooks.databricks.notebook_path", lambda _dbutils: "/Workspace/runtime"
+    )
+    session = Session()
+    session._notebook_path = child_path
+    ipython = shell()
+    ipython.user_ns["__vsc_ipynb_file__"] = "editor.ipynb"
+    adapter = NotebookIntegration(session, ipython, SimpleNamespace())
+    assert adapter.path == (child_path or "/Workspace/runtime")
+    assert adapter.databricks.path == adapter.path
 
 
 def test_edited_cell_keeps_previous_snapshot():

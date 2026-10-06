@@ -17,6 +17,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from linescope import Session
 from linescope.backends import scalene
 from linescope.backends.scalene import ScaleneBackend, normalize_scalene
 
@@ -141,7 +142,7 @@ class TestScaleneSetup:
     def test_dependency_missing(self, monkeypatch, python_version):
         """Check dependency missing.
 
-        An unavailable default engine gives explicit installation guidance.
+        An unavailable optional engine gives explicit installation guidance.
 
         """
         monkeypatch.setattr(scalene.sys, "version_info", python_version)
@@ -156,10 +157,58 @@ class TestScaleneSetup:
             raise PackageNotFoundError
 
         monkeypatch.setattr(scalene, "version", missing)
-        with pytest.raises(ImportError, match=r"pip install linescope") as error:
+        with pytest.raises(ImportError, match=r"linescope\[scalene\]") as error:
             scalene._load_scalene()
-        assert "optional dependency" not in str(error.value)
-        assert "linescope[scalene]" not in str(error.value)
+        assert "optional Scalene dependency" in str(error.value)
+
+    def test_missing_dependency_releases_session_resources(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Release session ownership when optional Scalene cannot start.
+
+        Preserve interpreter hooks and allow a default Trace session after
+        repeated startup failures.
+
+        Parameters
+        ----------
+        tmp_path : Path
+            Isolated project directory supplied by pytest.
+
+        monkeypatch : pytest.MonkeyPatch
+            Fixture restoring simulated dependencies and configuration.
+
+        """
+        monkeypatch.setattr(scalene.sys, "version_info", (3, 14))
+        monkeypatch.setattr("linescope.config._overrides", {})
+
+        def missing(_name: str) -> str:
+            """Reject metadata lookup for an uninstalled optional engine.
+
+            Simulate a base installation independently of the test environment.
+
+            Parameters
+            ----------
+            _name : str
+                Package name requested by the optional loader.
+
+            """
+            raise PackageNotFoundError
+
+        monkeypatch.setattr(scalene, "version", missing)
+        previous_trace, previous_profile = sys.gettrace(), sys.getprofile()
+        options = {"root": str(tmp_path), "display": "none", "spark": False, "notebooks": False}
+        for _ in range(2):
+            with pytest.raises(ImportError, match=r"linescope\[scalene\]"):
+                Session(backend="scalene", **options).start()
+            assert sys.gettrace() is previous_trace
+            assert sys.getprofile() is previous_profile
+
+        with Session(**options) as session:
+            assert session.result.backend == "trace"
+        assert sys.gettrace() is previous_trace
+        assert sys.getprofile() is previous_profile
 
     def test_version_guard(self, monkeypatch):
         """Check version guard.
@@ -353,7 +402,7 @@ def run_probe(tmp_path, source, *, preload=False):
     """
     specification = find_spec("scalene")
     if specification is None:
-        pytest.skip("Install LineScope with Scalene on a supported Python for real backend tests")
+        pytest.skip("Install linescope[scalene] on a supported Python for real backend tests")
     if (
         preload
         and sys.platform == "win32"

@@ -56,9 +56,6 @@ extra:
     - icon: fontawesome/brands/python
       link: https://pypi.org/project/linescope/
       name: Pypi
-    - icon: fontawesome/brands/medium
-      link: https://tvdboom.medium.com/
-      name: Medium
     - icon: fontawesome/solid/envelope
       link: mailto:m.524687@gmail.com
       name: Email
@@ -71,12 +68,18 @@ plugins:
       include_requirejs: true
       include_source: true
       ignore_h1_titles: true
-      execute: false
+      execute: true
+      execute_ignore: ["gpu_example.ipynb"]
+      allow_errors: false
+      kernel_name: python3
+      cache: false
   - mkdocs-simple-hooks:
       hooks:
+        on_files: docs_sources.scripts:prepare_notebooks
         on_page_markdown: docs_sources.scripts:render
         on_page_content: docs_sources.scripts:corrections
-        on_post_build: docs_sources.scripts:clean_search
+        on_post_build: docs_sources.scripts:finish_build
+        on_build_error: docs_sources.scripts:cleanup_notebooks
 
 markdown_extensions:
   - admonition
@@ -122,72 +125,24 @@ nav:
   - CLI:
       - linescope: cli/linescope.md
   - API:
-      - backends:
-          - ProfilerBackend: api/backends/profilerbackend.md
-          - RawLine: api/backends/rawline.md
-          - RawBackendResult: api/backends/rawbackendresult.md
-          - register_backend: api/backends/register_backend.md
-          - TraceBackend: api/backends/tracebackend.md
-          - ScaleneBackend: api/backends/scalenebackend.md
-          - normalize_scalene: api/backends/normalize_scalene.md
-          - memory_preload_environment: api/backends/memory_preload_environment.md
-          - TachyonBackend: api/backends/tachyonbackend.md
-      - configuration:
+      - Profiling:
+          - profile / profiler: api/profiling/profilecontroller.md
+          - Session: api/profiling/session.md
+      - Configuration:
           - Config: api/configuration/config.md
           - configure: api/configuration/configure.md
-      - enums:
-          - Backend: api/enums/backend.md
-          - DisplayMode: api/enums/displaymode.md
-          - SessionState: api/enums/sessionstate.md
-          - SourceKind: api/enums/sourcekind.md
-          - SymbolKind: api/enums/symbolkind.md
-          - RunStatus: api/enums/runstatus.md
-      - model:
-          - BackendCapabilities: api/model/backendcapabilities.md
-          - SourceLocation: api/model/sourcelocation.md
-          - SourceUnit: api/model/sourceunit.md
-          - SymbolDefinition: api/model/symboldefinition.md
-          - SymbolRef: api/model/symbolref.md
-          - MemoryStats: api/model/memorystats.md
-          - ProcessMemoryStats: api/model/processmemorystats.md
-          - MemorySample: api/model/memorysample.md
-          - LineStats: api/model/linestats.md
-          - FunctionStats: api/model/functionstats.md
-          - SparkExecutionStats: api/model/sparkexecutionstats.md
-          - SparkOperator: api/model/sparkoperator.md
-          - SparkExecution: api/model/sparkexecution.md
-          - ProfileRun: api/model/profilerun.md
-          - ProfileResult: api/model/profileresult.md
-          - GPUStats: api/model/gpustats.md
-      - notebooks:
-          - ChildContext: api/notebooks/childcontext.md
-          - merge_child: api/notebooks/merge_child.md
-          - NotebookIntegration: api/notebooks/notebookintegration.md
-      - profiling:
-          - Session: api/profiling/session.md
-          - ProfileController: api/profiling/profilecontroller.md
-      - source:
-          - SourceRegistry: api/source/sourceregistry.md
-          - discover_root: api/source/discover_root.md
-          - SymbolIndex: api/source/symbolindex.md
-          - build_navigation: api/source/build_navigation.md
-      - spark:
-          - SparkIntegration: api/spark/sparkintegration.md
-          - capture_query: api/spark/capture_query.md
-          - parse_plan: api/spark/parse_plan.md
+      - Data models:
+          - Results: api/model/profileresult.md
+          - Measurements: api/model/linestats.md
+          - Memory and GPU measurements: api/model/memorystats.md
+          - Source snapshots: api/model/sourceunit.md
+          - Spark executions: api/model/sparkexecution.md
+          - Options and states: api/model/options.md
+      - Backend registration: api/backends/register_backend.md
   - Examples:
-      - Python script: examples/script.md
-      - Package profiling: examples/package.md
-      - Memory growth: examples/memory.md
-      - Notebook session: examples/notebook.md
-      - Databricks notebooks: examples/databricks.md
-      - Local Spark: examples/spark.md
-      - GPU workload: examples/gpu.md
-      - Custom backend: examples/backend.md
-      - Rendered notebooks:
-          - Notebook quickstart: examples/notebooks/notebook_example.ipynb
-          - Databricks: examples/notebooks/databricks_example.ipynb
-          - Local Spark: examples/notebooks/spark_example.ipynb
+      - Notebook Quick Start: examples/notebooks/notebook_example.ipynb
+      - Local Spark: examples/notebooks/spark_example.ipynb
+      - GPU workload: examples/notebooks/gpu_example.ipynb
   - Development: development.md
   - FAQ: faq.md
   - Dependencies: dependencies.md

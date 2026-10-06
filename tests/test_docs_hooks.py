@@ -365,3 +365,63 @@ def test_incorrect_documented_defaults_fail_the_build():
 
     with pytest.raises(ValueError, match="doesn't match"):
         AutoDocs(example).get_table(["parameters"])
+
+
+def test_attribute_selection_excludes_internal_fields_and_descriptions():
+    """Select user-facing fields without folding private state into their text.
+
+    Exercise includes, exclusions, and remaining directive configuration so
+    documentation can retain complete library docstrings while presenting the
+    public interface alone.
+
+    """
+    rendered = render(
+        ":: linescope:Session\n"
+        "    :: signature\n"
+        "    :: table:\n"
+        "        - attributes:\n"
+        "            include: [config, result, state]\n"
+    )
+    assert "session-config" in rendered
+    assert "session-result" in rendered
+    assert "session-state" in rendered
+    assert "_backend" not in rendered
+    assert "_resources" not in rendered
+    assert "launch_root" not in rendered
+    assert "SourceRegistry" not in rendered
+    selected = AutoDocs.get_obj("linescope:ProfileController").get_table(
+        [{"attributes": {"exclude": ["_.*"]}}]
+    )
+    assert "_session" not in selected
+    assert "profilecontroller-result" in selected
+
+
+def test_api_console_examples_use_standard_copyable_code_blocks():
+    """Render the reported multiline example with standard fenced-code markup.
+
+    Preserve continuation indentation and actual expression outputs while
+    supplying the code container required by Material styling and copying.
+
+    """
+    from bs4 import BeautifulSoup
+    from markdown import Markdown
+
+    from docs_sources.scripts.autorun import formatter
+
+    source = render(":: linescope.backends.tachyon:TachyonBackend\n    :: examples")
+    markdown = Markdown(
+        extensions=["pymdownx.superfences", "pymdownx.highlight"],
+        extension_configs={
+            "pymdownx.superfences": {
+                "custom_fences": [{"name": "pycon", "class": "pycon", "format": formatter}]
+            }
+        },
+    )
+    page = BeautifulSoup(markdown.convert(source), "html.parser")
+    code = page.select_one(".highlight pre code")
+    assert code is not None
+    assert (
+        "...     accepts=lambda filename: True, on_source=lambda filename: None" in code.get_text()
+    )
+    assert "(True, False)" in code.get_text()
+    assert code.select_one(".k").get_text() == "lambda"

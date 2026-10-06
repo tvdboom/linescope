@@ -2,7 +2,8 @@
 
 LineScope captures executed notebook cells as source snapshots and connects them
 to the same report as imported project code. Use the extension for one cell or
-the start/stop API for a notebook-wide session.
+the start/stop API for a notebook-wide session. Trace is the default backend;
+select another backend explicitly when you want sampling.
 
 ## Jupyter notebooks
 
@@ -21,8 +22,8 @@ values = list(range(100_000))
 total = sum(value * value for value in values)
 ```
 
-The report opens after the cell finishes. Add `--inline` to display it inside
-the notebook. The whole input is captured as a virtual source unit; it remains
+The report displays inside the notebook after the cell finishes. The whole
+input is captured as a virtual source unit; it remains
 reproducible if the cell is later edited.
 
 ### Profile several cells
@@ -37,20 +38,34 @@ Run the cells you want to investigate, then finish in another cell:
 
 ```python
 profile.stop()
+result = profile.result
 ```
 
-The default generates one full report at stop. `display="cell"` requests live
-updates of the full cumulative report; `display="none"` keeps the session
-headless for later `session.save("notebook.html")`.
+`profile.stop()` returns None; use `profile.result` or `session.result` to
+inspect measurements programmatically. The default generates one full report
+at stop. `display="cell"` requests live updates of the full cumulative report;
+`display="none"` keeps the session headless for later
+`session.save("notebook.html")`.
 
-Set `inline=True` to display reports inside the notebook instead of opening
-browser tabs. Repeated live rendering has a cost; see
+Full reports display inside the notebook automatically. Choose a browser with
+`session.show(inline=False)` when showing a report explicitly. The `inline`
+option belongs only to `show()`, not `profile.start()` or configuration.
+Repeated live rendering has a cost; see
 [backend performance](backends.md#performance).
 
 Cell source is attached to stable notebook identifiers. Links into imported
 project functions use the same symbol resolution as Python files. Notebook
 function definitions that are available to the session can also be represented
 as virtual source snapshots.
+
+Reports show only the notebook filename and extension, without its directory,
+throughout Files, Functions, Memory, and source views. The full captured path
+still identifies each notebook and its source links. If frontend metadata is
+unavailable, LineScope checks local Jupyter sessions for the active kernel or
+the input notebook of its owning nbconvert process. Unavailable or ambiguous
+notebook identities keep the `interactive` label. Source tables place code in
+the final column; select **Source** after sorting by a metric to restore line
+order within each cell.
 
 ### Debug cell by cell
 
@@ -62,16 +77,34 @@ from linescope import profile
 session = profile.start(backend="trace", display="cell-summary")
 ```
 
-Each executed cell gets a small inline overview with its elapsed time, outcome,
-and five busiest source lines. The summary fits the notebook output's natural
-height and needs no `inline=True`. Timings and hits belong to that execution,
-including project functions called from earlier cells or imported modules.
+Each cell gets a compact table in source order, including lines with zero
+samples. Blank lines, docstrings, and comment-only rows are omitted. A thicker
+divider marks gaps; hover over the next line number for the omitted count.
+Original line numbers are preserved. Called project source snapshots also
+appear, with red shading for measured time hotspots. The full report retains
+complete source.
+The narrow, unnamed first column contains line numbers, followed by Time and
+the other metrics, with complete source text in the final column. The table
+fits its content and keeps source lines unwrapped; narrow outputs scroll
+horizontally. Hover over a line number to see the path of called project code.
+Click a metric column's arrow to sort its values; click again to reverse the
+order. Unknown measurements stay last. Click Source to sort by original line
+order, ascending by default. Source-gap dividers return with that order. Sorting
+works in trusted notebook HTML outputs and stays local to each cell table.
+Compact summaries always display inside the notebook. Timings and hits belong
+to that execution, including project
+functions called from earlier cells or imported modules.
 Rerunning a cell shows its new measurements, while the session retains all runs
 for the full report. Failed cells show the available results and leave profiling
 active so you can fix the cell and continue.
 
+The summary contains only the table. Elapsed time, execution outcomes, and
+collection diagnostics remain available in the full report and result object.
+Cells without line measurements still show their captured source.
+
 Sampling backends show samples when available. Short cells may have no sampled
-line measurements. Unknown metrics stay unavailable. With `memory=True`, the
+line measurements. Known zero counts appear as `0`; unknown metrics stay
+unavailable and appear as `—`. With `memory=True`, the
 summary shows observed RAM changes and net retained Python allocation changes
 separately. Freed allocations remain attributed to their original source line;
 cumulative memory peaks cannot describe an individual cell's peak.
@@ -79,23 +112,28 @@ cumulative memory peaks cannot describe an individual cell's peak.
 Finish collection when you are done:
 
 ```python
-result = profile.stop()
+profile.stop()
+result = profile.result
 ```
 
 Compact mode does not automatically display a full report at stop. Open or save
 the complete cumulative report explicitly:
 
 ```python
-session.show()  # Open the full report in a browser.
-session.save("notebook.html")
+_ = session.show(inline=True)  # Display the full overview in this cell.
+report_path = session.save("notebook.html")
 ```
+
+Assign the return value of `show()` to suppress its HTML string in the cell's
+text output. Use `session.show(inline=False)` to open a browser tab instead.
 
 For a single cell, use `%%profile --backend trace --display cell-summary`.
 Live summaries take collector snapshots before and after each cell, so they add
 overhead, especially with allocation tracking enabled.
 
-Download the [notebook example](../examples/notebook.md) for a complete local
-walkthrough.
+Download [Notebook Quick Start](../examples/notebooks/notebook_example.ipynb)
+for a complete local walkthrough with cell summaries and a report shown at
+the end.
 
 ## Databricks
 
@@ -158,9 +196,8 @@ omitted from invocation metadata; reports still contain the user's source
 snapshots.
 
 Use `profile.start(child_notebooks=False)` to retain parent-side observation
-only. The [correlation API](../api/notebooks/childcontext.md) also supports
-merging profiles collected through a separate deployment or artifact store.
+only. Profiles collected through a separate deployment or artifact store can
+also be merged through the notebook correlation interfaces.
 
-Use the [Databricks example](../examples/databricks.md) and the manual
-acceptance checklist in [testing](../development.md#testing) to validate your
-runtime's supported hooks.
+Use the manual [Databricks checks](../development.md#databricks-checks) to
+validate your runtime's supported hooks.

@@ -158,8 +158,9 @@ def cell_result(
     """Build a cell result while retaining the cumulative session untouched.
 
     Include project functions defined in earlier cells or imported files when
-    they received new measurements. Child runs and Spark actions remain
-    separate from driver line time.
+    they received new measurements, including first observations with zero
+    counts. Exclude unchanged earlier observations. Child runs and Spark actions
+    remain separate from driver line time.
 
     Parameters
     ----------
@@ -189,7 +190,17 @@ def cell_result(
     run = ProfileRun(
         elapsed_ns=elapsed_ns,
         status=status,
-        lines=[line for line in changes if _has_activity(line)],
+        lines=[
+            line
+            for line in changes
+            if _has_activity(line)
+            or (
+                line.location not in baseline
+                and any(
+                    value is not None for value in (line.wall_time_ns, line.hits, line.samples)
+                )
+            )
+        ],
         spark_executions=[
             deepcopy(execution)
             for execution in current.root_run.spark_executions

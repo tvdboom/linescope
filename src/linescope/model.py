@@ -686,7 +686,7 @@ class ProfileRun:
     metadata : dict[str, Any]
         Run context, correlation identifiers, and collection diagnostics.
 
-    memory_samples : list[MemorySample]
+    memory_samples : list[[MemorySample]]
         Process RAM observations ordered by elapsed collection time.
 
     See Also

@@ -94,10 +94,6 @@ class Config:
         (`none`). Cell summaries do not automatically display a full report
         at stop.
 
-    inline : bool, default=False
-        Display full reports inside a notebook cell instead of opening a new
-        browser tab. Compact cell summaries always appear inline.
-
     output : str | None, default=None
         Explicit report destination. None opens a temporary HTML report.
 
@@ -139,10 +135,6 @@ class Config:
         Full report at completion (`end`) or after each cell (`cell`), compact
         inline cell results (`cell-summary`), or only on request (`none`).
 
-    inline : bool
-        Display full reports inside a notebook cell instead of opening a new
-        browser tab. Compact cell summaries always appear inline.
-
     output : str | None
         Explicit report destination. None opens a temporary HTML report.
 
@@ -177,7 +169,6 @@ class Config:
     notebooks: bool = True
     child_notebooks: bool = True
     display: str | DisplayMode = DisplayMode.END
-    inline: bool = False
     output: str | None = None
     sample_rate: int | None = None
 
@@ -200,7 +191,7 @@ class Config:
         else:
             object.__setattr__(self, "backend", backend)
 
-        for name in ("memory", "gpu", "notebooks", "child_notebooks", "inline"):
+        for name in ("memory", "gpu", "notebooks", "child_notebooks"):
             if not isinstance(getattr(self, name), bool):
                 raise TypeError(f"{name} must be a boolean")
 

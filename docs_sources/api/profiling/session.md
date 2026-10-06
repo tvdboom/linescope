@@ -6,7 +6,8 @@
     :: head
     :: table:
         - parameters
-        - attributes
+        - attributes:
+            include: [config, result, state]
         - returns
     :: see also
 

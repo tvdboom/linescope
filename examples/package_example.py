@@ -20,7 +20,6 @@ def main() -> None:
 
     """
     with profile(
-        backend="scalene",
         memory=True,
         root=str(Path(__file__).parent),
         include=("package_example.py", "sample_package"),

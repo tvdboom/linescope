@@ -186,9 +186,9 @@ def _load_scalene() -> Any:
         installed = version("scalene")
     except PackageNotFoundError:
         raise ImportError(
-            "The Scalene backend requires Scalene, included with LineScope on Python 3.11-3.14. "
-            "Install it with `pip install linescope`, "
-            "or explicitly select backend='trace'."
+            "The Scalene backend requires the optional Scalene dependency. "
+            'Install it with `uv pip install "linescope[scalene]"` on Python 3.11-3.14, '
+            "or select backend='trace'."
         ) from None
 
     if installed.split(".")[:2] != ["2", "3"]:

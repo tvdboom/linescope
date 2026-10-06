@@ -243,7 +243,7 @@ class TestSourceReport:
         assert [
             row.find_all("td", css="source-code")[0].text() for row in rows
         ] == unit.source.splitlines()
-        assert cell_values(rows[3])[1:4] == ["—", "0", "—"]
+        assert [cell_values(rows[3])[index] for index in (1, 2, 3)] == ["—", "0", "—"]
         assert "UNEXECUTED_SOURCE_MARKER" in rows[3].text()
 
     def test_hits_average_and_heat(self, result):
@@ -254,8 +254,16 @@ class TestSourceReport:
 
         """
         rows = source_rows(parse(result))
-        assert cell_values(rows[2])[1:4] == ["120.00 ms", "2", "60.00 ms"]
+        assert [cell_values(rows[2])[index] for index in (1, 2, 3)] == [
+            "120.00 ms",
+            "2",
+            "60.00 ms",
+        ]
+        assert rows[2].attributes["data-heat-time"] == "1.00000"
         assert rows[2].attributes["style"] == "--heat:1.00000"
+        assert all(
+            row.attributes["style"] == f"--heat:{row.attributes['data-heat-time']}" for row in rows
+        )
         assert rows[3].attributes["style"] == "--heat:0.00000"
 
     @pytest.mark.parametrize("multiplier", [1, 1000])
@@ -274,7 +282,7 @@ class TestSourceReport:
             for number, duration in enumerate(durations, 1)
         ]
         rows = source_rows(parse(result))
-        heat = [float(row.attributes["style"].removeprefix("--heat:")) for row in rows]
+        heat = [float(row.attributes["data-heat-time"]) for row in rows]
 
         assert 0.09 < heat[0] < 0.11
         assert 0.3 < heat[1] < 0.4
@@ -304,8 +312,8 @@ class TestSourceReport:
         )
         rows = source_rows(parse(result))
 
-        assert rows[2].attributes["style"] == rows[4].attributes["style"]
-        assert 0.3 < float(rows[5].attributes["style"].removeprefix("--heat:")) < 0.4
+        assert rows[2].attributes["data-heat-time"] == rows[4].attributes["data-heat-time"]
+        assert 0.3 < float(rows[5].attributes["data-heat-time"]) < 0.4
 
     @pytest.mark.parametrize("duration", [None, 0])
     def test_zero_and_unavailable_times_have_no_heat(self, result, duration):
@@ -428,7 +436,7 @@ class TestSourceReport:
         root = re.search(r":root\{([^}]+)\}", css).group(1)
         dark = re.search(r"body\.dark\{([^}]+)\}", css).group(1)
         system = re.search(r"body:not\(\.light\):not\(\.dark\)\{([^}]+)\}", css).group(1)
-        row = re.search(r"\.source-row\{([^}]+)\}", css).group(1)
+        row = re.search(r"\.heat-row\{([^}]+)\}", css).group(1)
 
         assert "var(--panel)" in row
         assert "color:var(--ink)" in row
@@ -489,11 +497,70 @@ class TestSourceReport:
         assert title in header.children
         assert summary in header.children
         assert count in summary.children
-        assert count.text() == f"{line_count} lines"
+        assert count.text() == f"{line_count} lines · Total time: 120.00 ms"
         assert not scroller.find_all("h1")
         assert not scroller.find_all("p")
         assert len(scroller.find_all("table", css="source-table")) == 1
         assert len(source_rows(scroller)) == line_count
+
+    @pytest.mark.parametrize("sampled", [False, True])
+    @pytest.mark.parametrize(
+        ("durations", "expected"),
+        [
+            ([], "—"),
+            ([None], "—"),
+            ([0], "0 µs"),
+            ([10_000_000, None, 20_000_000], "30.00 ms"),
+            ([1_000_000_000, 2_000_000_000], "3.00 s"),
+        ],
+    )
+    def test_source_summary_shows_its_total_line_time(
+        self,
+        result: ProfileResult,
+        durations: list[int | None],
+        expected: str,
+        *,
+        sampled: bool,
+    ) -> None:
+        """Sum only the source's line times beside its line count.
+
+        Match the Files summary while preserving unknown and zero durations.
+        Exclude the run's elapsed time and measurements from other files.
+
+        Parameters
+        ----------
+        result : ProfileResult
+            Controlled trace profile containing a four-line Python file.
+
+        durations : list[int | None]
+            Available or unknown line durations in nanoseconds.
+
+        expected : str
+            Total formatted with the report's shared duration units.
+
+        sampled : bool
+            Whether line durations are estimates from sampling.
+
+        """
+        unit = next(iter(result.sources.values()))
+        other = SourceUnit("other", "other.py", "work()\n")
+        result.sources[other.id] = other
+        result.capabilities = BackendCapabilities(sampled=sampled, hit_counts=not sampled)
+        result.root_run.lines = [
+            LineStats(SourceLocation(unit.id, number), duration)
+            for number, duration in enumerate(durations, 1)
+        ] + [LineStats(SourceLocation(other.id, 1), 9_000_000_000)]
+        document = parse(result)
+        page = document.find_all("section", css="source-page")[0]
+        summary = page.find_all("div", css="source-summary")[0].find_all("p")[0]
+        file_rows = document.find_all("section", id="files")[0].find_all("tbody")[0]
+        file_row = next(row for row in file_rows.find_all("tr") if "main.py" in row.text())
+
+        assert summary.text() == f"4 lines · Total time: {expected}"
+        assert cell_values(file_row)[0] == expected
+        assert summary.find_all("span")[0].attributes["title"] == (
+            "Sampled estimates of Python line time" if sampled else "Python line time"
+        )
 
     @pytest.mark.parametrize(
         ("backend", "capabilities", "count_header"),
@@ -530,7 +597,7 @@ class TestSourceReport:
             Collection method and supported count measurements.
 
         count_header : str
-            Expected label for the final column.
+            Expected label for the count column after the location.
 
         count : int | None
             Recorded count, including unavailable and measured-zero cases.
@@ -546,16 +613,17 @@ class TestSourceReport:
         table = document.find_all("section", id="functions")[0].find_all("table")[0]
 
         assert [header.text() for header in table.find_all("th")] == [
-            "Function",
-            "Lines",
-            "Measured time",
+            "Time",
+            "Location",
             count_header,
+            "Source",
+            "Lines",
         ]
         rows = table.find_all("tr")[1:]
         expected_count = "—" if count is None else f"{count:,}"
         assert [cell_values(row) for row in rows] == [
-            ["foo()", "1", "70.00 ms", expected_count],
-            ["bar()", "1", "50.00 ms", expected_count],
+            ["70.00 ms", "main.py:1", expected_count, "foo()", "1"],
+            ["50.00 ms", "main.py:2", expected_count, "bar()", "1"],
         ]
         for row, line in zip(rows, [1, 2], strict=True):
             link = row.find_all("a")[0]
@@ -595,15 +663,16 @@ class TestSourceReport:
         table = parse(result).find_all("section", id="functions")[0].find_all("table")[0]
 
         assert [header.text() for header in table.find_all("th")] == [
-            "Function",
-            "Lines",
-            "Measured time",
+            "Time",
+            "Location",
             "Samples",
+            "Source",
+            "Lines",
         ]
         assert [cell_values(row) for row in table.find_all("tr")[1:]] == [
-            ["sampled()", "2", "90.00 ms", "23"],
-            ["foo()", "1", "70.00 ms", "—"],
-            ["bar()", "1", "50.00 ms", "—"],
+            ["90.00 ms", "child.py:1", "23", "sampled()", "2"],
+            ["70.00 ms", "main.py:1", "—", "foo()", "1"],
+            ["50.00 ms", "main.py:2", "—", "bar()", "1"],
         ]
         assert result.root_run.functions[0].calls == 1
 
@@ -636,7 +705,7 @@ class TestSourceReport:
         table = page.find_all("table")[0]
         expected = "—" if line_count is None else f"{line_count:,}"
 
-        assert cell_values(table.find_all("tr")[1])[1] == expected
+        assert cell_values(table.find_all("tr")[1])[-1] == expected
         assert "Self time" not in page.text()
         assert "excluding time in other project functions it calls" in page.text()
         assert ("Sampling reports estimate this time." in page.text()) is sampled
@@ -659,12 +728,14 @@ class TestSourceReport:
         assert [cell.text() for cell in rows[3].find_all("td", css="metric")] == ["—"]
         table = document.find_all("table", css="source-table")[0]
         assert [header.text() for header in table.find_all("th")] == [
-            "Line",
-            "Estimated time",
+            "",
+            "Time",
             "Source",
         ]
         assert result.root_run.lines[0].hits is None
-        assert "Estimated time" in document.text()
+        assert table.find_all("th")[1].attributes["title"] == (
+            "Sampled estimates of Python line time"
+        )
         header = document.find_all("header", css="topbar")[0]
         assert header.find_all("span", css="header-value")[-1].text() == "Sampling"
         assert "Observed lines" in document.text()
@@ -684,8 +755,8 @@ class TestSourceReport:
         table = parse(result).find_all("table", css="source-table")[0]
 
         assert [header.text() for header in table.find_all("th")] == [
-            "Line",
-            "Estimated time",
+            "",
+            "Time",
             "Samples",
             "Source",
         ]
@@ -704,8 +775,8 @@ class TestSourceReport:
         table = parse(result).find_all("table", css="source-table")[0]
 
         assert [header.text() for header in table.find_all("th")] == [
-            "Line",
-            "Python time",
+            "",
+            "Time",
             "Hits",
             "Avg / hit",
             "Source",
@@ -767,11 +838,11 @@ class TestSourceReport:
         assert cell_values(rows[3])[1] == "—"
 
     @pytest.mark.parametrize("memory", [False, True])
-    def test_line_order_controls_default_to_line_number(self, result, memory):
-        """Verify line order controls default to line number.
+    def test_source_headers_sort_and_heat_defaults_to_time(self, result, memory):
+        """Expose column sorters and select time heat on initial load.
 
-        Inspect rendered report elements and attributes using the lightweight
-        DOM rather than launching a browser.
+        Preserve line order initially, keep controls above the scrollable
+        source, and offer memory heat only when those measurements apply.
 
         """
         result.capabilities = BackendCapabilities(hit_counts=True, memory=memory)
@@ -779,43 +850,39 @@ class TestSourceReport:
         header = page.find_all("div", css="source-header")[0]
         summary = header.find_all("div", css="source-summary")[0]
         toolbars = summary.find_all("div", css="source-controls")[0]
-        heat_toolbar, toolbar = toolbars.find_all("div", css="source-toolbar")
-        group = toolbar.find_all("div", css="source-order-controls")[0]
-        controls = group.find_all("button", css="source-order")
+        heat_toolbar = toolbars.find_all("div", css="source-toolbar")[0]
+        heat_group = heat_toolbar.find_all("div", css="source-heat-controls")[0]
+        heat_controls = heat_group.find_all("button", css="source-heat")
 
         assert header.children[0].tag == "h1"
         assert summary in header.children
-        assert summary.children[0].text() == "4 lines"
-        assert toolbars in summary.children
-        assert heat_toolbar in toolbars.children
-        assert toolbar in toolbars.children
-        assert toolbar.find_all("span")[0].text() == "Order lines by"
-        assert group.attributes["role"] == "group"
-        assert group.attributes["aria-label"] == "Order source lines"
-        assert [control.attributes["data-order"] for control in controls] == (
-            ["line", "time", "memory"] if memory else ["line", "time"]
-        )
-        assert [control.attributes["aria-pressed"] for control in controls] == (
-            ["true", "false", "false"] if memory else ["true", "false"]
-        )
-        assert [control.text() for control in controls] == (
-            ["Line number", "Time", "Mem Growth"] if memory else ["Line number", "Time"]
-        )
-        heat_group = heat_toolbar.find_all("div", css="source-heat-controls")[0]
-        heat_controls = heat_group.find_all("button", css="source-heat")
+        assert summary.children[0].text() == "4 lines · Total time: 120.00 ms"
+        assert toolbars is summary.children[-1]
+        assert not page.find_all("button", css="source-order")
         assert heat_toolbar.find_all("span")[0].text() == "Heatmap by"
         assert heat_group.attributes["role"] == "group"
-        assert heat_group.attributes["aria-label"] == "Color source lines"
+        assert heat_group.attributes["aria-label"] == "Color table rows"
         assert [control.attributes["data-heat"] for control in heat_controls] == (
-            ["time", "memory"] if memory else ["time"]
+            ["none", "time", "memory"] if memory else ["none", "time"]
         )
         assert [control.text() for control in heat_controls] == (
-            ["Time", "Mem Growth"] if memory else ["Time"]
+            ["None", "Time", "Mem Growth"] if memory else ["None", "Time"]
         )
         assert [control.attributes["aria-pressed"] for control in heat_controls] == (
-            ["true", "false"] if memory else ["true"]
+            ["false", "true", "false"] if memory else ["false", "true"]
         )
-        assert not page.find_all("div", css="source-scroll")[0].find_all("button")
+        table = page.find_all("table", css="source-table")[0]
+        sorters = table.find_all("button", css="table-sort")
+        assert [button.attributes["data-sort"] for button in sorters] == (
+            ["time", "hits", "average", "memory", "peak", "line"]
+            if memory
+            else ["time", "hits", "average", "line"]
+        )
+        active = table.find_all("th", **{"aria-sort": "ascending"})
+        assert len(active) == 1
+        assert active[0].find_all("button")[0].attributes["data-sort"] == "line"
+        assert active[0].text() == "Source"
+        assert not table.find_all("thead")[0].find_all("th")[0].find_all("button")
         assert [row.attributes["data-line"] for row in source_rows(page)] == ["1", "2", "3", "4"]
 
     @pytest.mark.parametrize("duration", [None, 0, 999, 1_234_567_890])
@@ -1184,10 +1251,17 @@ class TestReportNavigation:
 
         document = parse(result)
         views = {link.attributes["href"] for link in document.find_all("a", css="nav-link")}
-        has_notebooks = notebook_context != "none" or spark_context == "nested"
         has_spark = spark_context != "none"
-        assert ("#notebooks" in views) == has_notebooks
-        assert bool(document.find_all("section", id="notebooks")) == has_notebooks
+        assert "#notebooks" not in views
+        assert not document.find_all("section", id="notebooks")
+        files = document.find_all("section", id="files")[0]
+        invocations = files.find_all("table", css="notebook-invocations")
+        assert bool(invocations) == bool(result.root_run.children)
+        if invocations:
+            expected_count = int(notebook_context == "child") + (
+                2 if spark_context == "nested" else 0
+            )
+            assert len(invocations[0].find_all("tbody")[0].find_all("tr")) == expected_count
         assert ("#spark" in views) == has_spark
         assert bool(document.find_all("section", id="spark")) == has_spark
         assert ("Spark executions" in document.text()) == has_spark
@@ -1229,6 +1303,14 @@ class TestReportNavigation:
         assert "Grandchild" in document.text()
         assert "Parent wait:" in document.text()
         assert "parent wait only" in document.text()
+        files = document.find_all("section", id="files")[0]
+        invocations = files.find_all("table", css="notebook-invocations")[0]
+        assert [cell_values(row) for row in invocations.find_all("tbody")[0].find_all("tr")] == [
+            ["Child", "70.00 ms", "success"],
+            ["Grandchild", "20.00 ms", "success"],
+        ]
+        for link in invocations.find_all("a"):
+            assert document.find_all("section", id=link.attributes["href"][1:])
         badge = source_rows(document)[2].find_all("a", css="badge")[0]
         child_page = document.find_all("section", id=badge.attributes["href"][1:])[0]
         assert "Child" in child_page.text()
@@ -1325,7 +1407,7 @@ class TestReportNavigation:
             (r"C:\project\jobs\main.py", "python", "main.py:3"),
             ('/project/action<&".py', "python", 'action<&".py:3'),
             ("Cell 7", "notebook", "Cell 7:3"),
-            ('/Workspace/ETL <&"/Cell 7', "notebook", '/Workspace/ETL <&"/Cell 7:3'),
+            ('/Workspace/ETL <&"/Cell 7', "notebook", "Cell 7:3"),
         ],
     )
     def test_spark_list_and_detail_link_to_exact_trigger(self, result, path, kind, label):

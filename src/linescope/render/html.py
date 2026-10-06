@@ -8,6 +8,7 @@ Description: Self-contained, escaped, accessible source profiling reports.
 from __future__ import annotations
 
 from base64 import b64encode
+from collections import Counter
 from copy import deepcopy
 from dataclasses import replace
 from hashlib import sha256
@@ -121,11 +122,7 @@ def _spark_source_link(location: SourceLocation | None, sources: dict[str, Sourc
     if unit is None or location is None or not 0 < location.line <= len(unit.source.splitlines()):
         return "Trigger source unavailable"
 
-    path = (
-        PurePath(unit.path.replace("\\", "/")).name
-        if unit.kind == SourceKind.PYTHON
-        else unit.path
-    )
+    path = _source_name(unit)
     label = f"{path}:{location.line}"
     return (
         f'<a href="{_source_link(location.source_id, location.line)}"'
@@ -356,6 +353,34 @@ def _code(text: str, spans: list[tuple[int, int, str]], stats: LineStats | None)
     return "".join(result) or " "
 
 
+def _profile_headers(count_header: str | None = None, *, source: bool = True) -> list[str]:
+    """Order shared profiling columns before table-specific measurements.
+
+    Keep the same labels for line, function, file, and notebook costs. Omit
+    counts and source text only when those fields do not apply to the table.
+
+    Parameters
+    ----------
+    count_header : str | None, default=None
+        Available count label, such as Samples or Calls.
+
+    source : bool, default=True
+        Whether the table includes source text or a function name.
+
+    Returns
+    -------
+    list[str]
+        Shared headings in time, location, count, and source order.
+
+    """
+    return [
+        "Time",
+        "Location",
+        *([count_header] if count_header else []),
+        *(["Source"] if source else []),
+    ]
+
+
 def _table(headers: list[str], rows: list[list[str]], *, css: str = "") -> str:
     """Render prepared HTML cells in a scrollable table.
 
@@ -387,6 +412,194 @@ def _table(headers: list[str], rows: list[list[str]], *, css: str = "") -> str:
     return (
         f'<div class="table-scroll"><table class="{css}"><thead><tr>{head}</tr></thead>'
         f"<tbody>{body}</tbody></table></div>"
+    )
+
+
+def _sort_header(
+    label: str,
+    key: str,
+    *,
+    numeric: bool = True,
+    active: bool = False,
+    descending: bool = True,
+    title: str = "",
+    css: str = "",
+) -> str:
+    """Render a keyboard-accessible column sorter with a direction arrow.
+
+    Keep the visible label separate from the arrow and expose the current
+    direction through the column's `aria-sort` attribute.
+
+    Parameters
+    ----------
+    label : str
+        Visible column name, escaped before rendering. An empty name uses the
+        tooltip or sort key as its accessible name.
+
+    key : str
+        Row data attribute containing the raw sortable value.
+
+    numeric : bool, default=True
+        Whether to compare raw numbers rather than alphabetical text.
+
+    active : bool, default=False
+        Whether this column describes the initially rendered row order.
+
+    descending : bool, default=True
+        Initial direction when this column is selected.
+
+    title : str, default=''
+        Measurement explanation retained on the heading.
+
+    css : str, default=''
+        Heading class used to size a narrow line-number column.
+
+    Returns
+    -------
+    str
+        Heading markup with an accessible button and sorting metadata.
+
+    """
+    direction = "descending" if descending else "ascending"
+    next_direction = ("ascending" if descending else "descending") if active else direction
+    state = f' aria-sort="{direction}"' if active else ""
+    tooltip = f' title="{escape(title, quote=True)}"' if title else ""
+    heading_class = f' class="{escape(css, quote=True)}"' if css else ""
+    name = label or title or key
+    heading_label = f' aria-label="{escape(name, quote=True)}"' if not label else ""
+    return (
+        f'<th scope="col"{heading_class}{state}{tooltip}{heading_label}>'
+        '<button type="button" class="table-sort"'
+        f' data-sort="{escape(key, quote=True)}"'
+        f' data-sort-type="{"number" if numeric else "text"}"'
+        f' data-sort-direction="{direction}"'
+        f' data-sort-label="{escape(name, quote=True)}"'
+        f' aria-label="Sort by {escape(name, quote=True)}, {next_direction}">'
+        f'<span class="table-sort-label">{escape(label)}</span>'
+        '<svg class="table-sort-icon" viewBox="0 0 12 12" fill="none"'
+        ' stroke="currentColor" stroke-width="1.2" stroke-linecap="round"'
+        ' stroke-linejoin="round" aria-hidden="true" focusable="false">'
+        '<path class="sort-neutral" d="M3 10V2m-2 2 2-2 2 2M9 2v8m-2-2 2 2 2-2"></path>'
+        '<path class="sort-ascending" d="M6 10V2M3 5l3-3 3 3"></path>'
+        '<path class="sort-descending" d="M6 2v8M3 7l3 3 3-3"></path>'
+        "</svg></button></th>"
+    )
+
+
+def _sort_values(values: dict[str, str | int | None]) -> str:
+    """Encode raw row values without turning missing measurements into zero.
+
+    Parameters
+    ----------
+    values : dict[str, str | int | None]
+        Sort keys and values in original units; `None` becomes an empty value.
+
+    Returns
+    -------
+    str
+        Escaped HTML data attributes for numeric and alphabetical sorting.
+
+    """
+    return "".join(
+        f' data-{escape(key, quote=True)}="'
+        f'{escape(str(value), quote=True) if value is not None else ""}"'
+        for key, value in values.items()
+    )
+
+
+def _heat_controls(*, memory: bool = False, enabled: bool = True) -> str:
+    """Render the heatmap selector with the page's initial selection.
+
+    Parameters
+    ----------
+    memory : bool, default=False
+        Whether process-memory growth is available for these source lines.
+
+    enabled : bool, default=True
+        Whether to select Time initially instead of disabling row heat.
+
+    Returns
+    -------
+    str
+        Right-aligned heat selector with available measurement choices.
+
+    """
+    memory_heat = (
+        '<button type="button" class="source-heat" data-heat="memory" aria-pressed="false"'
+        ' title="Color by positive accumulated process memory change">Mem Growth</button>'
+        if memory
+        else ""
+    )
+    return (
+        '<div class="source-controls"><div class="source-toolbar"><span>Heatmap by</span>'
+        '<div class="source-heat-controls" role="group" aria-label="Color table rows">'
+        '<button type="button" class="source-heat" data-heat="none"'
+        f' aria-pressed="{str(not enabled).lower()}"'
+        ' title="Disable heatmap">None</button>'
+        '<button type="button" class="source-heat" data-heat="time"'
+        f' aria-pressed="{str(enabled).lower()}"'
+        f' title="Color by time">Time</button>{memory_heat}</div></div></div>'
+    )
+
+
+def _summary_table(
+    headers: list[tuple[str, str]],
+    rows: list[list[str]],
+    values: list[dict[str, str | int | None]],
+) -> str:
+    """Render sortable summary rows with independently selectable time heat.
+
+    Scale heat against the largest duration in this table. Preserve stable
+    order for ties and keep unavailable times below measured zeroes. Leave
+    rows uncolored until time heat is selected.
+
+    Parameters
+    ----------
+    headers : list[tuple[str, str]]
+        Visible column labels paired with their row data keys.
+
+    rows : list[list[str]]
+        Prepared HTML cells for each function or source snapshot.
+
+    values : list[dict[str, str | int | None]]
+        Raw measurements and names aligned with the prepared rows.
+
+    Returns
+    -------
+    str
+        Scrollable table or an empty-state message when no rows are available.
+
+    """
+    if not rows:
+        return '<p class="empty">No measurements available in this run.</p>'
+
+    head = "".join(
+        _sort_header(
+            label,
+            key,
+            numeric=key not in {"name", "kind"},
+            active=key == "time",
+            descending=key not in {"name", "kind", "line"},
+        )
+        for label, key in headers
+    )
+    maximum = max((int(value["time"] or 0) for value in values), default=0)
+    ordered = sorted(
+        zip(rows, values, strict=True),
+        key=lambda item: (item[1]["time"] is None, -int(item[1]["time"] or 0)),
+    )
+    body = []
+    for row, value in ordered:
+        duration = int(value["time"]) if value["time"] is not None else None
+        intensity = _heat(duration, maximum)
+        body.append(
+            '<tr class="heat-row" style="--heat:0.00000"'
+            f' data-heat-time="{intensity:.5f}"'
+            f"{_sort_values(value)}>{''.join(f'<td>{cell}</td>' for cell in row)}</tr>"
+        )
+    return (
+        '<div class="table-scroll"><table class="sortable-table summary-table">'
+        f"<thead><tr>{head}</tr></thead><tbody>{''.join(body)}</tbody></table></div>"
     )
 
 
@@ -1105,22 +1318,140 @@ def _heat(value: int | None, maximum: int) -> float:
     return log1p(999 * max(value or 0, 0) / maximum) / log1p(999) if maximum else 0
 
 
-def _source_page(
-    unit: SourceUnit,
-    data: dict[tuple[str, int], LineStats],
-    maximum: int,
-    maximum_memory: int,
-    capabilities: BackendCapabilities,
-) -> str:
-    """Render complete captured source with line metrics and navigation.
+def _notebook_path(unit: SourceUnit) -> str:
+    """Identify the notebook shared by its captured cell snapshots.
 
-    Keep unknown measurements, heat scaling, and optional memory or GPU columns
-    consistent.
+    Prefer the canonical notebook URI so display labels cannot merge different
+    notebooks. Preserve path characters before the final cell fragment.
 
     Parameters
     ----------
     unit : [SourceUnit]
-        Captured source snapshot being inspected.
+        Notebook snapshot whose identity or cell label supplies its path.
+
+    Returns
+    -------
+    str
+        Notebook path without a cell or snapshot suffix.
+
+    """
+    if unit.id.startswith("notebook://"):
+        identity = unit.id.removeprefix("notebook://")
+        path, separator, fragment = identity.rpartition("#")
+        return path if separator and fragment.startswith(("cell-", "snapshot-")) else identity
+
+    return unit.path.rsplit(" · cell ", 1)[0]
+
+
+def _source_name(unit: SourceUnit, *, include_cell: bool = True) -> str:
+    """Display a source filename while retaining its canonical identity.
+
+    Strip directories using either platform's path separator. Notebook names
+    come from their canonical paths, so identically named notebooks remain
+    separate source groups and keep their original navigation targets.
+
+    Parameters
+    ----------
+    unit : [SourceUnit]
+        Captured source whose filename is displayed.
+
+    include_cell : bool, default=True
+        Whether to retain the captured notebook cell label for line links.
+
+    Returns
+    -------
+    str
+        Filename with its extension and optional notebook cell label.
+
+    """
+    notebook = unit.kind == SourceKind.NOTEBOOK
+    path = _notebook_path(unit) if notebook else unit.path
+    name = PurePath(path.replace("\\", "/")).name
+    if notebook and include_cell:
+        _, separator, cell = unit.path.rpartition(" · cell ")
+        if separator:
+            name += f" · cell {cell}"
+    return name
+
+
+def _source_groups(sources: list[SourceUnit]) -> list[list[SourceUnit]]:
+    """Group notebook cells while retaining independent Python snapshots.
+
+    Keep notebooks and their cells in capture order. Group only presentation;
+    measurements and navigation continue to use each snapshot's identity.
+
+    Parameters
+    ----------
+    sources : list[[SourceUnit]]
+        Display snapshots in their original capture order.
+
+    Returns
+    -------
+    list[list[[SourceUnit]]]
+        One group per notebook or individual Python source snapshot.
+
+    """
+    groups: dict[tuple[SourceKind, str], list[SourceUnit]] = {}
+    for unit in sources:
+        identity = _notebook_path(unit) if unit.kind == SourceKind.NOTEBOOK else unit.id
+        groups.setdefault((SourceKind(unit.kind), identity), []).append(unit)
+    return list(groups.values())
+
+
+def _cell_label(unit: SourceUnit, position: int) -> str:
+    """Label a captured cell without exposing its source digest.
+
+    Retain frontend cell IDs or execution counts when supplied. Use the capture
+    position for snapshots without a cell identity.
+
+    Parameters
+    ----------
+    unit : [SourceUnit]
+        Notebook snapshot whose cell identity is displayed.
+
+    position : int
+        One-based position within the notebook's captured snapshots.
+
+    Returns
+    -------
+    str
+        Cell label or a label for an unsplit notebook snapshot.
+
+    """
+    _, separator, label = unit.path.rpartition(" · cell ")
+    if separator:
+        return f"Cell {label}"
+
+    fragment = unit.id.rpartition("#")[2]
+    if fragment.startswith("snapshot-"):
+        return f"Snapshot {position}"
+    if fragment.startswith("cell-"):
+        identity = fragment.removeprefix("cell-")
+        cell, separator, digest = identity.rpartition("-")
+        if separator and len(digest) == 12 and all(char in "0123456789abcdef" for char in digest):
+            identity = cell
+        return f"Cell {identity}"
+    return f"Cell {position}"
+
+
+def _source_page(
+    units: list[SourceUnit],
+    data: dict[tuple[str, int], LineStats],
+    maximum: int,
+    maximum_memory: int,
+    capabilities: dict[str, BackendCapabilities],
+    default_capabilities: BackendCapabilities,
+    total_time: int | None,
+) -> str:
+    """Render complete captured source with line metrics and navigation.
+
+    Show total measured line time beside the source count. Keep unknown
+    measurements, heat scaling, and optional memory or GPU columns consistent.
+
+    Parameters
+    ----------
+    units : list[[SourceUnit]]
+        Captured notebook cells or one Python source snapshot.
 
     data : dict[tuple[str, int], LineStats]
         Normalized or serialized values used by this operation.
@@ -1132,8 +1463,15 @@ def _source_page(
         Largest visible positive process-memory change, in bytes, used to
         scale memory-growth heat.
 
-    capabilities : [BackendCapabilities]
-        Measurements supported by the relevant collector.
+    capabilities : dict[str, [BackendCapabilities]]
+        Collector capabilities indexed by individual snapshot identity.
+
+    default_capabilities : [BackendCapabilities]
+        Collector capabilities for snapshots without their own entry.
+
+    total_time : int | None
+        Sum of available line times in nanoseconds across this source group,
+        matching the Files summary; None when no line time is available.
 
     Returns
     -------
@@ -1141,37 +1479,46 @@ def _source_page(
         Complete source page markup with available measurements.
 
     """
-    page = _key("source", unit.id)
-    spans = _tokens(unit.source)
-    memory = capabilities.memory
-    gpu = capabilities.gpu
-    source_lines = unit.source.splitlines() or [""]
-    source_stats = [data.get((unit.id, number)) for number in range(1, len(source_lines) + 1)]
+    page = _key("source", units[0].id)
+    notebook = units[0].kind == SourceKind.NOTEBOOK
+    title = _source_name(units[0], include_cell=False)
+    spans = {unit.id: _tokens(unit.source) for unit in units}
+    collectors = {unit.id: capabilities.get(unit.id, default_capabilities) for unit in units}
+    memory = any(item.memory for item in collectors.values())
+    gpu = any(item.gpu for item in collectors.values())
+    source_lines = [
+        (unit, number, text, data.get((unit.id, number)))
+        for unit in units
+        for number, text in enumerate(unit.source.splitlines() or [""], 1)
+    ]
+    source_stats = [stats for _, _, _, stats in source_lines]
     # Preserve known counts on sources shared by collectors with different capabilities.
-    hit_counts = capabilities.hit_counts or any(
+    hit_counts = any(item.hit_counts for item in collectors.values()) or any(
         stats is not None and stats.hits is not None for stats in source_stats
     )
-    sample_counts = capabilities.sample_counts or any(
+    sample_counts = any(item.sample_counts for item in collectors.values()) or any(
         stats is not None and stats.samples is not None for stats in source_stats
     )
     context = any(
         stats is not None and (stats.spark_executions or stats.notebook_runs)
         for stats in source_stats
     )
-    rows = []
+    rows: dict[str, list[str]] = {unit.id: [] for unit in units}
 
-    for number, (text, stats) in enumerate(zip(source_lines, source_stats, strict=True), 1):
+    for unit, number, text, stats in source_lines:
+        collector = collectors[unit.id]
+        anchor = _key("source", unit.id)
         duration = stats.wall_time_ns if stats else None
-        ram = stats.ram if memory and stats else None
+        ram = stats.ram if collector.memory and stats else None
         delta = ram.delta_bytes if ram else None
-        hits = stats.hits if stats else (0 if capabilities.hit_counts else None)
+        hits = stats.hits if stats else (0 if collector.hit_counts else None)
 
-        if hits is None and capabilities.hit_counts and duration is None:
+        if hits is None and collector.hit_counts and duration is None:
             hits = 0
 
         average = None if duration is None or not hits else duration // hits
         samples = stats.samples if stats else None
-        if samples is None and capabilities.sample_counts and (stats is None or duration is None):
+        if samples is None and collector.sample_counts and (stats is None or duration is None):
             samples = 0
         hit_cells = (
             f'<td class="metric">{_count(hits)}</td><td class="metric">{_time(average)}</td>'
@@ -1202,6 +1549,7 @@ def _source_page(
         context_cell = f'<td class="references">{"".join(refs)}</td>' if context else ""
         memory_cells = ""
         allocation = None
+        peak = None
 
         if memory:
             peak = ram.peak_bytes if ram else None
@@ -1211,73 +1559,112 @@ def _source_page(
                 f'<td class="metric">{_bytes(peak)}</td>'
             )
         gpu_cells = ""
+        gpu_time = stats.gpu.time_ns if collector.gpu and stats and stats.gpu else None
+        gpu_memory = stats.gpu.peak_memory_bytes if collector.gpu and stats and stats.gpu else None
         if gpu:
             gpu_cells = (
-                f"<td"
-                f' class="metric">{_time(stats.gpu.time_ns if stats and stats.gpu else None)}'
-                f"</td><td"
-                f' class="metric">'
-                f"{_bytes(stats.gpu.peak_memory_bytes if stats and stats.gpu else None)}</td>"
+                f'<td class="metric">{_time(gpu_time)}</td>'
+                f'<td class="metric">{_bytes(gpu_memory)}</td>'
             )
 
-        rows.append(
-            f'<tr id="{page}-L{number}" class="source-row" style="--heat:{intensity:.5f}"'
+        values: dict[str, str | int | None] = {
+            "line": number,
+            "time": duration,
+            "hits": hits,
+            "average": average,
+            "samples": samples,
+            "memory": delta,
+            "peak": peak,
+            "gpu-time": gpu_time,
+            "gpu-memory": gpu_memory,
+            "allocation": allocation,
+            "context": (
+                " ".join(
+                    [f"Spark #{value[:8]}" for value in stats.spark_executions]
+                    + ["Notebook" for _ in stats.notebook_runs]
+                )
+                if stats
+                else ""
+            ),
+        }
+        rows[unit.id].append(
+            f'<tr id="{anchor}-L{number}" class="source-row heat-row"'
+            f' style="--heat:{intensity:.5f}"'
             f' data-heat-time="{intensity:.5f}" data-heat-memory="{memory_intensity:.5f}"'
-            f' data-line="{number}" data-time="{"" if duration is None else duration}"'
-            f' data-memory="{"" if delta is None else delta}"'
-            f' data-allocation="{"" if allocation is None else allocation}">'
-            f'<td class="line-number"><a href="#{page}-L{number}" aria-label="Line'
-            f' {number}">{number}</a></td><td class="metric">{_time(duration)}</td>'
-            f"{hit_cells}{sample_cell}{memory_cells}{gpu_cells}<td"
-            f' class="source-code"><code>{_code(text, spans.get(number, []), stats)}'
-            f"</code></td>{context_cell}</tr>"
+            f"{_sort_values(values)}>"
+            f'<td class="line-number"><a href="#{anchor}-L{number}" aria-label="Line'
+            f' {number}">{number}</a></td>'
+            f'<td class="metric">{_time(duration)}</td>{sample_cell}'
+            f"{hit_cells}{memory_cells}{gpu_cells}{context_cell}<td"
+            f' class="source-code"><code>{_code(text, spans[unit.id].get(number, []), stats)}'
+            f"</code></td></tr>"
         )
 
     memory_head = (
-        '<th scope="col" title="Process memory changes across executions of this line">'
-        'Mem Change</th><th scope="col" title="Highest process memory observed during this line">'
-        "Peak Mem</th>"
+        _sort_header(
+            "Mem Change", "memory", title="Process memory changes across executions of this line"
+        )
+        + _sort_header(
+            "Peak Mem", "peak", title="Highest process memory observed during this line"
+        )
         if memory
         else ""
     )
-    gpu_head = "<th>Estimated GPU time</th><th>GPU peak memory</th>" if gpu else ""
-    hit_head = '<th scope="col">Hits</th><th scope="col">Avg / hit</th>' if hit_counts else ""
-    sample_head = '<th scope="col">Samples</th>' if sample_counts else ""
-    context_head = '<th scope="col">Context</th>' if context else ""
-    memory_order = (
-        '<button type="button" class="source-order" data-order="memory" aria-pressed="false"'
-        ' title="Order by accumulated process memory change, highest first">Mem Growth</button>'
-        if memory
+    gpu_head = (
+        _sort_header("Estimated GPU time", "gpu-time")
+        + _sort_header("GPU peak memory", "gpu-memory")
+        if gpu
         else ""
     )
-    memory_heat = (
-        '<button type="button" class="source-heat" data-heat="memory" aria-pressed="false"'
-        ' title="Color by positive accumulated process memory change">Mem Growth</button>'
-        if memory
-        else ""
+    hit_head = (
+        _sort_header("Hits", "hits") + _sort_header("Avg / hit", "average") if hit_counts else ""
     )
+    sample_head = _sort_header("Samples", "samples") if sample_counts else ""
+    context_head = (
+        _sort_header("Context", "context", numeric=False, descending=False) if context else ""
+    )
+    timing = (
+        "Sampled estimates of Python line time"
+        if any(item.sampled for item in collectors.values())
+        else "Python line time"
+    )
+    line_head = '<th scope="col" class="line-number" aria-label="Line number"></th>'
+    source_head = _sort_header(
+        "Source", "line", active=True, descending=False, title="Sort by line number"
+    )
+    time_head = _sort_header("Time", "time", title=timing)
+    bodies = []
+    labels = [_cell_label(unit, index) for index, unit in enumerate(units, 1)] if notebook else []
+    label_counts = Counter(labels)
+    revisions: dict[str, int] = {}
+    columns = 3 + sample_counts + 2 * hit_counts + 2 * memory + 2 * gpu + context
+    for index, unit in enumerate(units):
+        heading = ""
+        if notebook:
+            label = labels[index]
+            revisions[label] = revisions.get(label, 0) + 1
+            if label_counts[label] > 1:
+                label += f" · snapshot {revisions[label]}"
+            heading = (
+                f'<tr class="source-cell-heading"><th scope="rowgroup" colspan="{columns}">'
+                f"{escape(label)}</th></tr>"
+            )
+        bodies.append(f"<tbody>{heading}{''.join(rows[unit.id])}</tbody>")
+    count = f"{len(source_lines)} lines"
+    if notebook:
+        count = f"{len(units)} cells · {count}"
     return (
         f'<section id="{page}" class="page source-page" hidden><div class="source-header">'
-        f'<h1 id="{page}-title" class="path-title">{escape(unit.path)}</h1>'
-        f'<div class="source-summary"><p class="muted">{len(source_lines)} lines</p>'
-        f'<div class="source-controls"><div class="source-toolbar"><span>Heatmap by</span>'
-        f'<div class="source-heat-controls" role="group" aria-label="Color source lines">'
-        f'<button type="button" class="source-heat" data-heat="time" aria-pressed="true"'
-        f' title="Color by time">Time</button>{memory_heat}</div></div>'
-        f'<div class="source-toolbar"><span>Order lines by</span>'
-        f'<div class="source-order-controls" role="group" aria-label="Order source lines">'
-        f'<button type="button" class="source-order" data-order="line" aria-pressed="true"'
-        f' title="Order by line number">Line number</button>'
-        f'<button type="button" class="source-order" data-order="time" aria-pressed="false"'
-        f' title="Order by time, highest first">Time</button>{memory_order}'
-        f"</div></div></div></div></div>"
+        f'<h1 id="{page}-title" class="path-title">{escape(title)}</h1>'
+        f'<div class="source-summary"><p class="muted">{count} · '
+        f'<span title="{timing}">Total time: {_time(total_time)}</span></p>'
+        f"{_heat_controls(memory=memory)}</div></div>"
         f'<div class="source-scroll" tabindex="0" role="region"'
         f' aria-labelledby="{page}-title"><table'
-        f' class="source-table"><thead><tr><th scope="col">Line</th><th'
-        f' scope="col">{"Estimated time" if capabilities.sampled else "Python time"}</th>'
-        f'{hit_head}{sample_head}{memory_head}{gpu_head}<th scope="col">Source</th>'
-        f"{context_head}</tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody></table></div></section>"
+        f' class="source-table sortable-table"><thead><tr>{line_head}{time_head}{sample_head}'
+        f"{hit_head}{memory_head}{gpu_head}{context_head}"
+        f"{source_head}</tr></thead>"
+        f"{''.join(bodies)}</table></div></section>"
     )
 
 
@@ -1401,6 +1788,24 @@ def _source_capabilities(
     }
 
 
+def _notebook_icon() -> str:
+    """Render a notebook outline for decorative source navigation.
+
+    Returns
+    -------
+    str
+        Embedded SVG inheriting the surrounding navigation text color.
+
+    """
+    return (
+        '<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+        ' stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">'
+        '<rect x="5" y="3" width="15" height="18" rx="2"></rect>'
+        '<path d="M9 3v18M3 7h4m-4 5h4m-4 5h4M12 8h5m-5 4h5'
+        'm-5 4h3"></path></svg>'
+    )
+
+
 def _memory_location(location: SourceLocation | None, sources: dict[str, SourceUnit]) -> str:
     """Link a RAM observation to valid snapshotted source.
 
@@ -1420,9 +1825,35 @@ def _memory_location(location: SourceLocation | None, sources: dict[str, SourceU
     """
     unit = sources.get(location.source_id) if location is not None else None
     if unit is None or location is None or not 0 < location.line <= len(unit.source.splitlines()):
-        return "Baseline / outside project"
-    name = PurePath(unit.path.replace("\\", "/")).name
+        return "No linked project line"
+    name = _source_name(unit)
     return f'<a href="{_source_link(unit.id, location.line)}">{escape(name)}:{location.line}</a>'
+
+
+def _memory_source(location: SourceLocation, sources: dict[str, SourceUnit]) -> str:
+    """Render the captured code line for a memory-growth measurement.
+
+    Escape snapshot text and keep missing or invalid locations unavailable.
+
+    Parameters
+    ----------
+    location : [SourceLocation]
+        One-based source line associated with the measured change.
+
+    sources : dict[str, [SourceUnit]]
+        Snapshots available for displaying the captured source text.
+
+    Returns
+    -------
+    str
+        Escaped code markup, or an em dash when no snapshot line is available.
+
+    """
+    unit = sources.get(location.source_id)
+    if unit is None or not 0 < location.line <= len(unit.source.splitlines()):
+        return "—"
+    text = unit.source.splitlines()[location.line - 1].strip()
+    return f"<code>{escape(text)}</code>"
 
 
 def _memory_badges(run: ProfileRun, sources: dict[str, SourceUnit]) -> str:
@@ -1437,12 +1868,12 @@ def _memory_badges(run: ProfileRun, sources: dict[str, SourceUnit]) -> str:
         Run owning the process RAM readings and accumulated line changes.
 
     sources : dict[str, [SourceUnit]]
-        Snapshots available for links to the peak and largest line change.
+        Snapshots available for linking the largest line change.
 
     Returns
     -------
     str
-        Two metric badges with source links when observations are available.
+        Peak-memory value and largest line change with its source link.
 
     """
     peak = max(
@@ -1454,11 +1885,6 @@ def _memory_badges(run: ProfileRun, sources: dict[str, SourceUnit]) -> str:
         (line for line in run.lines if line.ram is not None and line.ram.delta_bytes is not None),
         key=lambda line: (line.ram.delta_bytes or 0) if line.ram is not None else 0,
         default=None,
-    )
-    peak_detail = (
-        f"{_time(peak.elapsed_ns)} · {_memory_location(peak.location, sources)}"
-        if peak is not None
-        else "No available RAM readings"
     )
     change_detail = (
         _memory_location(change.location, sources)
@@ -1472,8 +1898,9 @@ def _memory_badges(run: ProfileRun, sources: dict[str, SourceUnit]) -> str:
     )
     return (
         '<dl class="stats memory-stats"><div class="stat">'
-        '<dt title="Highest observed resident RAM for this process">Peak memory</dt>'
-        f"<dd><strong>{peak_value}</strong><small>{peak_detail}</small></dd></div>"
+        '<dt title="Highest observed physical RAM used by the whole Python process">'
+        "Peak memory</dt>"
+        f"<dd><strong>{peak_value}</strong></dd></div>"
         '<div class="stat"><dt title="Highest accumulated process-memory change on a single '
         'source line; repeated executions are summed">Largest line change</dt>'
         f"<dd><strong>{change_value}</strong><small>{change_detail}</small></dd></div></dl>"
@@ -1489,12 +1916,12 @@ def _memory_timeline(run: ProfileRun, sources: dict[str, SourceUnit]) -> str:
         Run containing chronological process RAM observations.
 
     sources : dict[str, [SourceUnit]]
-        Snapshots available for point and table navigation.
+        Snapshots available for point and hover navigation.
 
     Returns
     -------
     str
-        Interactive SVG chart and accessible retained-reading table.
+        Interactive SVG chart with exact readings and source links on hover.
 
     """
     samples = run.memory_samples
@@ -1508,30 +1935,43 @@ def _memory_timeline(run: ProfileRun, sources: dict[str, SourceUnit]) -> str:
     points = []
     segments: list[str] = []
     segment: list[str] = []
-    rows = []
     for index, sample in enumerate(samples):
         location = _memory_location(sample.location, sources)
-        rows.append([_time(sample.elapsed_ns), _bytes(sample.rss_bytes), location])
+        x = 125 + 835 * sample.elapsed_ns / duration
+        seconds, nanoseconds = divmod(sample.elapsed_ns, 1_000_000_000)
+        elapsed = f"{seconds}.{nanoseconds:09d}".rstrip("0").rstrip(".") + " s"
+        ram = (
+            f"{_bytes(sample.rss_bytes)} ({sample.rss_bytes:,} bytes)"
+            if sample.rss_bytes is not None
+            else "Unavailable"
+        )
+        label = f"Time: {elapsed} · RAM: {ram}"
+        point = ""
         if sample.rss_bytes is None:
             if segment:
                 segments.append(" ".join(segment))
                 segment = []
-            continue
-        x = 125 + 835 * sample.elapsed_ns / duration
-        y = 260 - 225 * sample.rss_bytes / scale
-        segment.append(f"{x:.2f},{y:.2f}")
-        label = f"{_time(sample.elapsed_ns)} · {_bytes(sample.rss_bytes)}"
-        point = (
-            f'<circle class="memory-point{" selected" if index == peak_index else ""}"'
-            f' cx="{x:.2f}" cy="{y:.2f}" r="3" data-index="{index}"'
-            f' data-label="{escape(label, quote=True)}"><title>{escape(label)}</title></circle>'
-        )
+        else:
+            y = 260 - 225 * sample.rss_bytes / scale
+            segment.append(f"{x:.2f},{y:.2f}")
+            point = (
+                f'<circle class="memory-point" cx="{x:.2f}" cy="{y:.2f}" r="3">'
+                f"<title>{escape(label)}</title></circle>"
+            )
         if location.startswith("<a") and sample.location is not None:
+            unit = sources[sample.location.source_id]
+            name = _source_name(unit)
+            source_label = f"{name}:{sample.location.line}"
             point = (
                 f'<a href="{_source_link(sample.location.source_id, sample.location.line)}"'
-                f' aria-label="Open source for {escape(label, quote=True)}">{point}</a>'
+                f' data-source-label="{escape(source_label, quote=True)}" tabindex="-1"'
+                f' aria-label="{escape(source_label + " · " + label, quote=True)}">{point}</a>'
             )
-        points.append(point)
+        points.append(
+            f'<g class="memory-observation" data-index="{index}" data-x="{x:.6f}"'
+            f' data-time="{elapsed}" data-ram="{ram}"'
+            f' data-label="{escape(label, quote=True)}">{point}</g>'
+        )
     if segment:
         segments.append(" ".join(segment))
     gradient_id = _key("memory-fill", run.id)
@@ -1555,37 +1995,26 @@ def _memory_timeline(run: ProfileRun, sources: dict[str, SourceUnit]) -> str:
             (960, duration, "end"),
         )
     )
-    peak_x = 125 + 835 * samples[peak_index].elapsed_ns / duration
-    cursor_id = _key("memory-cursor", run.id)
-    compressed = (
-        "Timeline compressed; bucket peaks, troughs, and endpoints are retained."
-        if run.metadata.get("memory_timeline_compressed")
-        else "Line-boundary readings and periodic observations during long calls."
-    )
+    tooltip_id = _key("memory-tooltip", run.id)
     return (
         '<div class="memory-inspector"><div class="memory-chart-heading">'
-        '<h2>Process RAM over time</h2><span class="memory-legend">Resident RAM</span></div>'
-        f'<svg class="memory-chart" viewBox="0 0 1000 320" role="img"'
-        f' aria-label="Process RAM over elapsed time; observed peak {_bytes(peak)}">'
+        "<h2>Memory Usage</h2></div>"
+        '<div class="memory-chart-scroll">'
+        f'<svg class="memory-chart" viewBox="0 0 1000 320" role="group" tabindex="0"'
+        f' data-initial-index="{peak_index}" aria-describedby="{tooltip_id}"'
+        f' aria-label="RAM over elapsed time; observed peak {_bytes(peak)}. '
+        'Use the arrow keys to inspect readings and Enter to open linked source.">'
         f'<defs><linearGradient id="{gradient_id}" x1="0" y1="0" x2="0" y2="1">'
         '<stop offset="0%" stop-color="#22d3ee" stop-opacity=".28"/>'
         '<stop offset="100%" stop-color="#22d3ee" stop-opacity=".02"/>'
         f'</linearGradient></defs><g class="memory-axis">{ticks}'
-        '<text class="memory-axis-title" x="125" y="16">Process RAM</text>'
         '<text class="memory-axis-title" x="960" y="311" text-anchor="end">'
         "Elapsed time</text></g>"
         f'<g class="memory-area">{areas}</g><g class="memory-plot">{plot}</g>'
-        f'<line class="memory-guide" x1="{peak_x:.2f}" x2="{peak_x:.2f}" y1="35" y2="260"/>'
-        f'{"".join(points)}</svg><div class="memory-controls">'
-        f'<label for="{cursor_id}">Inspect reading</label>'
-        f'<input id="{cursor_id}" class="memory-cursor" type="range" min="0"'
-        f' max="{len(samples) - 1}" value="{peak_index}">'
-        f'<output class="memory-reading" for="{cursor_id}">'
-        f"{_time(samples[peak_index].elapsed_ns)} · {_bytes(peak)} · "
-        f"{_memory_location(samples[peak_index].location, sources)}</output></div>"
-        f'<p class="memory-caption">{compressed}</p></div>'
-        f'<details class="memory-readings"><summary>Retained readings ({len(samples):,})</summary>'
-        f"{_table(['Elapsed', 'Process RAM', 'Source'], rows)}</details>"
+        '<line class="memory-guide" x1="125" x2="125" y1="35" y2="260"/>'
+        f"{''.join(points)}</svg>"
+        f'<div id="{tooltip_id}" class="memory-tooltip" role="status" hidden></div>'
+        "</div></div>"
     )
 
 
@@ -1623,6 +2052,7 @@ def _memory_page(runs: list[ProfileRun], sources: dict[str, SourceUnit]) -> str:
                 _bytes(line.ram.delta_bytes, signed=True),
                 _bytes(line.ram.peak_bytes),
                 _memory_location(line.location, sources),
+                _memory_source(line.location, sources),
             ]
             for line in growth[:10]
             if line.ram is not None and line.ram.delta_bytes is not None
@@ -1630,21 +2060,17 @@ def _memory_page(runs: list[ProfileRun], sources: dict[str, SourceUnit]) -> str:
         heading = ""
         if len(measured_runs) > 1 or run is not runs[0]:
             heading = f"<h2>{'Main run' if run is runs[0] else escape(run.name)}</h2>"
+        table = _table(["Mem Change", "Peak Mem", "Location", "Source"], rows, css="memory-growth")
         sections.append(
             f'<section class="memory-run" id="{_key("memory-run", run.id)}">{heading}'
             f"{_memory_badges(run, sources)}{_memory_timeline(run, sources)}"
             f"<h3>Largest accumulated memory growth</h3>"
-            f"{_table(['Mem Change', 'Peak Mem', 'Source'], rows)}</section>"
+            f"{table}</section>"
         )
     return (
         '<section id="memory" class="page" hidden><h1>Memory</h1>'
         + "".join(sections)
-        + '<details class="memory-explanation"><summary>About these measurements</summary>'
-        "<p>RSS is resident RAM for the whole Python process, including "
-        "native libraries and profiler overhead. Other threads can change it. Mem Change "
-        "sums observed line intervals; Peak Mem is the highest reading during a line; peaks are "
-        "observed, so brief spikes between readings can be missed. Child process timelines "
-        "are shown separately.</p></details></section>"
+        + "</section>"
     )
 
 
@@ -1673,12 +2099,15 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
     runs = _walk(result.root_run)
     data = _combined_lines(runs)
     lines = list(data.values())
+    lines_by_source: dict[str, list[LineStats]] = {}
+    for line in lines:
+        lines_by_source.setdefault(line.location.source_id, []).append(line)
     capabilities = _source_capabilities(result, runs)
     mixed = any(
         run.metadata.get("child_backend", result.backend) != result.backend for run in runs
     )
     sampled = result.capabilities.sampled or any(item.sampled for item in capabilities.values())
-    sample_headers = ["Samples"] if sampled else []
+    count_header = "Samples" if sampled else None
     functions = [function for run in runs for function in run.functions]
     executions = [execution for run in runs for execution in run.spark_executions]
     measured = [
@@ -1700,13 +2129,10 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
     del root
     sources = []
     for unit in result.sources.values():
-        label = (
-            PurePath(unit.path.replace("\\", "/")).name
-            if unit.kind == SourceKind.PYTHON
-            else unit.path
-        )
+        label = _source_name(unit)
         sources.append(replace(unit, path=label))
     source_names = {unit.id: unit.path for unit in sources}
+    source_groups = _source_groups(sources)
     has_notebooks = any(unit.kind == SourceKind.NOTEBOOK for unit in sources) or len(runs) > 1
     contexts = ["function"]
     if has_notebooks:
@@ -1717,7 +2143,7 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
     intro = f"Follow the work from a source line to its {' or '.join(contexts)}."
     cards = [
         ("Elapsed wall time", _time(result.root_run.elapsed_ns)),
-        ("Source snapshots", str(len(sources))),
+        ("Source snapshots", str(len(source_groups))),
         ("Functions", str(len(functions))),
         (
             "Observed lines" if sampled else "Executed lines",
@@ -1752,40 +2178,52 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
         if unit and 0 < line.location.line <= len(unit.source.splitlines()):
             source_line = unit.source.splitlines()[line.location.line - 1].strip()
 
-        filename = PurePath(
-            source_names.get(line.location.source_id, line.location.source_id)
-        ).name
+        filename = source_names.get(line.location.source_id, line.location.source_id)
         label = f"{filename}:{line.location.line}"
         hot_rows.append(
             [
-                f'<strong class="hot-time">{_time(line.wall_time_ns)}</strong>',
+                _time(line.wall_time_ns),
                 (
                     f'<a href="{_source_link(line.location.source_id, line.location.line)}'
                     f'">{escape(label)}</a>'
                 ),
-                f"<code>{escape(source_line)}</code>",
                 *([_count(line.samples)] if sampled else []),
+                f"<code>{escape(source_line)}</code>",
             ]
         )
 
     function_rows = [
         [
+            _time(item.total_time_ns),
+            (
+                f'<a href="{_source_link(item.source_id, item.first_line)}">'
+                f"{escape(source_names.get(item.source_id, item.source_id))}:{item.first_line}</a>"
+            ),
+            _count(item.samples if sampled else item.calls),
             (
                 f'<a href="{_source_link(item.source_id, item.first_line)}'
                 f'">{escape(item.qualified_name)}()</a>'
             ),
             _count(item.line_count),
-            _time(item.total_time_ns),
-            _count(item.samples if sampled else item.calls),
         ]
-        for item in sorted(functions, key=lambda item: item.total_time_ns or 0, reverse=True)
+        for item in functions
     ]
-    hot_table = _table(["Time", "Location", "Source", *sample_headers], hot_rows, css="hot-lines")
+    function_values: list[dict[str, str | int | None]] = [
+        {
+            "name": item.qualified_name,
+            "line": item.first_line,
+            "lines": item.line_count,
+            "time": item.total_time_ns,
+            "count": item.samples if sampled else item.calls,
+        }
+        for item in functions
+    ]
+    hot_table = _table(_profile_headers(count_header), hot_rows, css="hot-lines")
     pages = [
         (
             f'<section id="overview" class="page"><h1>Overview</h1>'
             f'<p class="intro">{intro}</p><div'
-            f' class="stats">{card_html}</div><div class="section-heading">'
+            f' class="stats overview-stats">{card_html}</div><div class="section-heading">'
             f"<h2>Most expensive"
             f' lines</h2><a href="#files">Explore all sources <span aria-hidden="true">↗</span>'
             f"</a></div>"
@@ -1796,56 +2234,53 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
     has_memory = any(run.memory_samples for run in runs)
     if has_memory:
         pages.append(_memory_page(runs, result.sources))
-    file_rows = [
-        [
-            f'<a href="{_source_link(unit.id)}">{escape(unit.path)}</a>',
-            "Notebook" if unit.kind == SourceKind.NOTEBOOK else "Python",
-            str(len(unit.source.splitlines())),
-            _time(
-                _total([line.wall_time_ns for line in lines if line.location.source_id == unit.id])
-            ),
-            *(
-                [
-                    _count(
-                        _total(
-                            [line.samples for line in lines if line.location.source_id == unit.id]
-                        )
-                        if not capabilities.get(unit.id, result.capabilities).sample_counts
-                        else sum(
-                            line.samples or 0
-                            for line in lines
-                            if line.location.source_id == unit.id
-                        )
-                    )
-                ]
-                if sampled
-                else []
-            ),
-        ]
-        for unit in sources
-    ]
-    file_headers = ["Source", "Kind", "Lines", "Measured time", *sample_headers]
-    pages.append(
-        f'<section id="files" class="page" hidden><h1>Files</h1>'
-        f'<p class="muted">Source snapshots stay'
-        f" readable even after your code changes."
-        f"</p>{_table(file_headers, file_rows)}</section>"
+    file_rows = []
+    file_values: list[dict[str, str | int | None]] = []
+    source_times: dict[str, int | None] = {}
+    for units in source_groups:
+        unit = units[0]
+        label = _source_name(unit, include_cell=False)
+        unit_lines = [line for item in units for line in lines_by_source.get(item.id, [])]
+        duration = _total([line.wall_time_ns for line in unit_lines])
+        source_times[unit.id] = duration
+        samples = _total(
+            [
+                (
+                    sum(line.samples or 0 for line in lines_by_source.get(item.id, []))
+                    if capabilities.get(item.id, result.capabilities).sample_counts
+                    else _total([line.samples for line in lines_by_source.get(item.id, [])])
+                )
+                for item in units
+            ]
+        )
+        kind = "Notebook" if unit.kind == SourceKind.NOTEBOOK else "Python"
+        length = sum(len(item.source.splitlines()) for item in units)
+        file_rows.append(
+            [
+                _time(duration),
+                f'<a href="{_source_link(unit.id)}">{escape(label)}</a>',
+                *([_count(samples)] if sampled else []),
+                kind,
+                str(length),
+            ]
+        )
+        file_values.append(
+            {
+                "name": label,
+                "kind": kind,
+                "lines": length,
+                "time": duration,
+                "samples": samples,
+            }
+        )
+    file_headers = [*_profile_headers(count_header, source=False), "Kind", "Lines"]
+    file_columns = list(
+        zip(
+            file_headers,
+            ["time", "name", *(["samples"] if sampled else []), "kind", "lines"],
+            strict=True,
+        )
     )
-    function_headers = ["Function", "Lines", "Measured time", "Samples" if sampled else "Calls"]
-    function_estimate = " Sampling reports estimate this time." if sampled else ""
-    pages.append(
-        f'<section id="functions" class="page" hidden><h1>Functions</h1>'
-        f'<p class="muted">Time spent on each function\'s own lines, excluding time'
-        f" in other project functions it calls.{function_estimate} Select a function to open"
-        f" its definition. The line count includes the definition and body, with blank lines"
-        f" and comments."
-        f"</p>{_table(function_headers, function_rows)}</section>"
-    )
-    notebook_rows = [
-        row
-        for unit, row in zip(sources, file_rows, strict=True)
-        if unit.kind == SourceKind.NOTEBOOK
-    ]
     child_rows = [
         [
             f'<a href="#{_key("run", run.id)}">{escape(run.name)}</a>',
@@ -1854,15 +2289,35 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
         ]
         for run in runs[1:]
     ]
-    if has_notebooks:
-        notebook_headers = ["Snapshot", "Kind", "Lines", "Measured time", *sample_headers]
-        pages.append(
-            f'<section id="notebooks" class="page" hidden><h1>Notebooks'
-            f"</h1>{_table(notebook_headers, notebook_rows)}"
-            f"<h2>Notebook invocations"
-            f"</h2>{_table(['Notebook', 'Parent wait', 'Status'], child_rows)}</section>"
-        )
-
+    invocations = (
+        "<h2>Notebook invocations</h2>"
+        + _table(["Notebook", "Parent wait", "Status"], child_rows, css="notebook-invocations")
+        if child_rows
+        else ""
+    )
+    pages.append(
+        f'<section id="files" class="page" hidden><div class="summary-header"><h1>Files</h1>'
+        f"{_heat_controls(enabled=False)}</div>"
+        f'<p class="muted">Source snapshots stay'
+        f" readable even after your code changes."
+        f"</p>{_summary_table(file_columns, file_rows, file_values)}"
+        f"{invocations}</section>"
+    )
+    function_headers = [*_profile_headers("Samples" if sampled else "Calls"), "Lines"]
+    function_columns = list(
+        zip(function_headers, ["time", "line", "count", "name", "lines"], strict=True)
+    )
+    function_estimate = " Sampling reports estimate this time." if sampled else ""
+    pages.append(
+        f'<section id="functions" class="page" hidden><div class="summary-header">'
+        f"<h1>Functions</h1>"
+        f"{_heat_controls(enabled=False)}</div>"
+        f'<p class="muted">Time spent on each function\'s own lines, excluding time'
+        f" in other project functions it calls.{function_estimate} Select a function to open"
+        f" its definition. The line count includes the definition and body, with blank lines"
+        f" and comments."
+        f"</p>{_summary_table(function_columns, function_rows, function_values)}</section>"
+    )
     for run in runs[1:]:
         source = (
             f'<a href="{_source_link(run.source.id)}">Open captured notebook source ↗</a>'
@@ -2080,33 +2535,52 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
 
     pages.extend(
         _source_page(
-            unit, data, maximum, maximum_memory, capabilities.get(unit.id, result.capabilities)
+            units,
+            data,
+            maximum,
+            maximum_memory,
+            capabilities,
+            result.capabilities,
+            source_times[units[0].id],
         )
-        for unit in sources
+        for units in source_groups
     )
-    source_nav = "".join(
-        (
+    source_items = []
+    for units in source_groups:
+        unit = units[0]
+        label = _source_name(unit, include_cell=False)
+        icon = _notebook_icon() if unit.kind == SourceKind.NOTEBOOK else "⌘"
+        source_items.append(
             f'<a class="source-item" href="{_source_link(unit.id)}"'
-            f' title="{escape(unit.path, quote=True)}"><span'
-            f' class="file-icon">{"▤" if unit.kind == SourceKind.NOTEBOOK else "⌘"}'
-            f"</span>{escape(PurePath(unit.path).name)}</a>"
+            f' title="{escape(label, quote=True)}"><span'
+            f' class="file-icon" aria-hidden="true">{icon}'
+            f"</span>{escape(label)}</a>"
         )
-        for unit in sources
-    )
+    source_nav = "".join(source_items)
     views = [
         ("overview", "◈", "Overview"),
         ("files", "▤", "Files"),
         ("functions", "ƒ", "Functions"),
     ]
     if has_memory:
-        views.append(("memory", "▥", "Memory"))
-    if has_notebooks:
-        views.append(("notebooks", "▦", "Notebooks"))
+        views.append(
+            (
+                "memory",
+                (
+                    '<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+                    ' stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">'
+                    '<rect x="5" y="7" width="14" height="10" rx="2"></rect>'
+                    '<path d="M8 4v3m4-3v3m4-3v3M8 17v3m4-3v3m4-3v3'
+                    'M2 10h3m-3 4h3m14-4h3m-3 4h3M9 10h6v4H9z"></path></svg>'
+                ),
+                "Memory",
+            ),
+        )
     if executions:
         views.append(("spark", "✧", "Spark"))
 
     navigation = "".join(
-        f'<a href="#{page}" class="nav-link"><span>{icon}</span>{label}</a>'
+        f'<a href="#{page}" class="nav-link"><span aria-hidden="true">{icon}</span>{label}</a>'
         for page, icon, label in views
     )
     css = files("linescope.render").joinpath("assets/styles.css").read_text(encoding="utf-8")

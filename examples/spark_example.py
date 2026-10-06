@@ -87,7 +87,7 @@ def main() -> None:
     )
 
     try:
-        with profile(backend="scalene", memory=True, spark=True, display="none") as session:
+        with profile(memory=True, spark=True, display="none") as session:
             # Build a deterministic event stream and a small dimension table.
             values = spark.range(60_000).filter("id % 2 = 0")
             events = (

@@ -74,17 +74,95 @@ reviewing the embedded source.
 
 ## Installation
 
-Install LineScope it in the same environment as your script:
+Install or upgrade LineScope in the same environment as your script or
+notebook. Python 3.11–3.15 is supported:
 
 ```console
-pip install linescope
+uv pip install --upgrade linescope
 ```
 
-or with all optional dependencies:
+Use an existing virtual environment, or create one with `uv venv` first.
+Activate it with `.venv\Scripts\Activate.ps1` in PowerShell or
+`source .venv/bin/activate` on Linux and macOS. With pip, use
+`python -m pip install --upgrade linescope`; you can replace `uv pip` with
+`python -m pip` in the commands below.
+
+The base package includes the default Trace profiler, CLI, HTML reports, and
+driver memory collection.
+
+### Latest source
+
+Install unreleased changes directly from the `main` branch. Git is required:
 
 ```console
-pip install linescope[full]
+uv pip install --upgrade "git+https://github.com/tvdboom/linescope.git@main"
 ```
+
+### Optional dependencies
+
+- **`scalene`** installs Scalene for CPU sampling and supported GPU measurements
+  on Python 3.11–3.14. Select it with `--backend scalene` or
+  `backend="scalene"`; it is omitted on Python 3.15.
+
+  ```console
+  uv pip install --upgrade "linescope[scalene]"
+  ```
+
+- **`notebook`** installs IPython and ipykernel for cell magics, notebook
+  capture, and inline reports.
+
+  ```console
+  uv pip install --upgrade "linescope[notebook]"
+  ```
+
+- **`spark`** installs PySpark for Spark action, plan, and task metric
+  correlation. Local Spark also needs a compatible Java runtime.
+
+  ```console
+  uv pip install --upgrade "linescope[spark]"
+  ```
+
+- **`databricks`** includes notebook support and `databricks-sdk` for workspace
+  source capture and child notebook report retrieval. It reuses the runtime's
+  bundled PySpark.
+
+  ```console
+  uv pip install --upgrade "linescope[databricks]"
+  ```
+
+- **`full`** installs all four extras. Scalene is omitted on Python 3.15;
+  development tools and GPU demo dependencies are separate.
+
+  ```console
+  uv pip install --upgrade "linescope[full]"
+  ```
+
+Combine individual extras with `linescope[scalene,notebook]`. In managed Spark
+or Databricks environments, reuse bundled PySpark and choose the base package,
+`notebook`, or `databricks` as needed.
+
+Install the latest source with all integrations directly from Git:
+
+```console
+uv pip install "linescope[full] @ git+https://github.com/tvdboom/linescope"
+```
+
+### Contributing
+
+Install the locked development environment from a checkout:
+
+```console
+git clone https://github.com/tvdboom/linescope.git
+cd linescope
+uv sync --locked
+```
+
+See the [installation guide] for more setup details and the
+[development guide] for contribution checks.
+
+[installation guide]:
+  https://tvdboom.github.io/linescope/latest/getting_started/#installation
+[development guide]: https://tvdboom.github.io/linescope/latest/development/
 
 ## Usage
 

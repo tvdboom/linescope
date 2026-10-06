@@ -153,7 +153,7 @@ one lineage can participate in multiple actions. These plans do not imply exact
 per-line Spark runtimes.
 
 For a real integration test without an external cluster, use
-[local Spark](../examples/spark.md).
+[local Spark notebook](../examples/notebooks/spark_example.ipynb).
 
 Where a runtime permits a query-execution listener, the observer can capture the
 final action plan, including writes. If listener access is restricted, a writer

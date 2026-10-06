@@ -1,8 +1,7 @@
 """LineScope.
 
 Author: Mavs
-Description: Run with linescope --backend scalene --memory -m
-examples.sample_package.
+Description: Run with linescope --memory -m examples.sample_package.
 
 """
 

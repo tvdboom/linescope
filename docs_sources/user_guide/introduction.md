@@ -42,12 +42,14 @@ from linescope import profile
 session = profile.start(backend="trace", display="none")
 run_pipeline()
 profile.stop()
+result = profile.result
 session.save("pipeline.html")
 ```
 
 `profiler` is an alias for the same convenient controller. Keep a reference to a
-session when working with several runs. Call `stop()` before inspecting its
-normalized result.
+session when working with several runs. `profile.stop()` returns None, so a
+notebook displays only the configured report. Retrieve the completed normalized
+result through `profile.result` or `session.result` after stopping collection.
 
 ### Headless execution
 

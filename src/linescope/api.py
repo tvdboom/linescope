@@ -663,12 +663,17 @@ class Session:
     def show(self, *, inline: bool | None = None) -> str:
         """Open a browser report or display it inside a notebook cell.
 
+        Detect notebook kernels for automatic inline display. Scripts and
+        terminal IPython open a browser. Raise `RuntimeError` when an explicit
+        inline request has no active notebook kernel, and `TypeError` when
+        `inline` is neither a boolean nor None.
+
         Parameters
         ----------
         inline : bool | None, default=None
-            Override the session's `inline` setting. False opens a browser
-            tab; True displays an isolated iframe in the current notebook
-            cell.
+            Choose the display destination for this report. None detects the
+            environment; False opens a browser tab, and True displays an
+            isolated iframe in the current notebook cell.
 
         Returns
         -------
@@ -676,18 +681,28 @@ class Session:
             The self-contained HTML used for display.
 
         """
-        html = self.html()
+        if inline is not None and not isinstance(inline, bool):
+            raise TypeError("inline must be a boolean or None")
 
-        display_inline = self.config.inline if inline is None else inline
+        notebook = False
+        if inline is not False:
+            try:
+                from IPython import get_ipython
+            except ImportError:
+                pass
+            else:
+                notebook = getattr(get_ipython(), "kernel", None) is not None
+
+        display_inline = notebook if inline is None else inline
+        if display_inline and not notebook:
+            raise RuntimeError("Inline display requires an active IPython notebook")
+
+        html = self.html()
 
         if display_inline:
             from html import escape
 
-            from IPython import get_ipython
-            from IPython.display import HTML, display
-
-            if get_ipython() is None:
-                raise RuntimeError("Inline display requires an active IPython notebook")
+            from IPython.display import IFrame, display
 
             # srcdoc inherits the notebook URL, so pin fragment links to the report.
             # Set the base before the report's CSP rejects subsequent base changes.
@@ -695,10 +710,16 @@ class Session:
 
             # An iframe isolates report CSS and scripts from the notebook itself.
             display(
-                HTML(
-                    f'<iframe title="LineScope report" srcdoc="{escape(inline_html, quote=True)}" '
-                    'style="width:100%;height:760px;border:0" '
-                    'sandbox="allow-scripts allow-same-origin"></iframe>'
+                IFrame(
+                    src="about:blank",
+                    width="100%",
+                    height=760,
+                    extras=[
+                        'title="LineScope report"',
+                        f'srcdoc="{escape(inline_html, quote=True)}"',
+                        'style="width:100%;height:760px;border:0"',
+                        'sandbox="allow-scripts allow-same-origin"',
+                    ],
                 )
             )
         else:
@@ -724,6 +745,11 @@ class ProfileController:
     ----------
     _session : [Session] | None
         Most recent explicit session, or None before `start` is called.
+
+    result : [ProfileResult]
+        Latest normalized measurements of the most recent explicit session.
+        Read-only access to the same object as `session.result`; finalized
+        after `stop` completes.
 
     See Also
     --------
@@ -804,7 +830,8 @@ class ProfileController:
             backend="trace", display="none", notebooks=False, spark=False
         )
         total = sum(range(10))
-        result = controller.stop()
+        controller.stop()
+        result = controller.result
         (total, str(session.state), str(result.backend))
         ```
 
@@ -833,23 +860,35 @@ class ProfileController:
 
         return self._session
 
-    def stop(self) -> ProfileResult:
-        """Stop and return the current explicit session's result.
+    @property
+    def result(self) -> ProfileResult:
+        """Retrieve the current explicit session's normalized result.
+
+        Return the same object as `session.result` without refreshing or
+        displaying measurements. Stop collection first to finalize the run.
+        Raise `RuntimeError` if no explicit session has started.
+
+        Returns
+        -------
+        [ProfileResult]
+            Captured source snapshots, latest measurements, and run tree.
+
+        """
+        return self._current().result
+
+    def stop(self) -> None:
+        """Stop the current explicit session without returning its result.
 
         Instrumentation is restored before any configured report display.
-        Repeated calls return the completed result without displaying again.
+        Retrieve the completed result through `profile.result` or
+        `session.result`. Repeated calls do nothing without displaying again.
 
         Raise `RuntimeError` if no explicit session has started, or a running
         session is stopped from a different thread than the one that started
         it.
 
-        Returns
-        -------
-        [ProfileResult]
-            Captured source snapshots, normalized measurements, and run tree.
-
         """
-        return self._current().stop()
+        self._current().stop()
 
     def save(self, path: str | Path) -> Path:
         """Save the current session without displaying it.
@@ -877,9 +916,9 @@ class ProfileController:
     def show(self, *, inline: bool | None = None) -> str:
         """Display the current session.
 
-        Reports open in a new browser tab by default. Use `inline=True` to
-        display inside a notebook cell. Stop collection first when displaying
-        a finalized sampling result.
+        Reports display inside notebook cells automatically and open a browser
+        elsewhere. Use `inline` to choose the destination for this report.
+        Stop collection first when displaying a finalized sampling result.
 
         Raise `RuntimeError` if no explicit session exists or the collector
         cannot return measurements while it is still running.
@@ -890,7 +929,8 @@ class ProfileController:
         Parameters
         ----------
         inline : bool | None, default=None
-            Override the session's notebook display preference.
+            Choose the destination for this report. None detects the
+            environment; True requires a notebook, and False opens a browser.
 
         Returns
         -------

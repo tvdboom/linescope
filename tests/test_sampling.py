@@ -510,28 +510,36 @@ def test_sampling_counts_in_all_report_views_and_serialization(known):
     assert restored.root_run.metadata["sample_rate"] == 250
     document = ReportDOM(render_html(restored)).root
     expected = "1,234" if known else "—"
-    for page_id in ("overview", "files", "notebooks"):
+    for page_id in ("overview", "files"):
         page = document.find_all("section", id=page_id)[0]
         table = page.find_all("table")[0]
-        assert table.find_all("th")[-1].text() == "Samples"
-        assert cell_values(table.find_all("tr")[-1])[-1] == expected
+        assert table.find_all("th")[2].text() == "Samples"
+        assert cell_values(table.find_all("tr")[-1])[2] == expected
     function_table = document.find_all("section", id="functions")[0].find_all("table")[0]
     assert [header.text() for header in function_table.find_all("th")] == [
-        "Function",
-        "Lines",
-        "Measured time",
+        "Time",
+        "Location",
         "Samples",
+        "Source",
+        "Lines",
     ]
-    assert cell_values(function_table.find_all("tr")[-1]) == ["work()", "2", "10.00 ms", expected]
+    assert cell_values(function_table.find_all("tr")[-1]) == [
+        "10.00 ms",
+        "cell:1",
+        expected,
+        "work()",
+        "2",
+    ]
     rows = document.find_all("tr", css="source-row")
     table = document.find_all("table", css="source-table")[0]
-    assert [header.text() for header in table.find_all("th")] == (
-        ["Line", "Estimated time", "Samples", "Source"]
-        if known
-        else ["Line", "Estimated time", "Source"]
+    assert [header.text() for header in table.find_all("thead")[0].find_all("th")] == (
+        ["", "Time", "Samples", "Source"] if known else ["", "Time", "Source"]
     )
-    assert cell_values(rows[1])[1:-1] == (["10.00 ms", expected] if known else ["10.00 ms"])
-    assert cell_values(rows[2])[1:-1] == (["—", "0"] if known else ["—"])
+    assert cell_values(rows[1])[1] == "10.00 ms"
+    assert cell_values(rows[2])[1] == "—"
+    if known:
+        assert cell_values(rows[1])[2] == expected
+        assert cell_values(rows[2])[2] == "0"
     assert "Target samples / sec250" in document.text()
 
 
@@ -559,8 +567,8 @@ def test_merged_sampling_counts_add_without_mutating_originals():
     document = ReportDOM(render_html(result)).root
     table = document.find_all("table", css="source-table")[0]
     assert [header.text() for header in table.find_all("th")] == [
-        "Line",
-        "Estimated time",
+        "",
+        "Time",
         "Source",
     ]
     assert cell_values(document.find_all("tr", css="source-row")[0]) == ["1", "3.0 µs", "work()"]

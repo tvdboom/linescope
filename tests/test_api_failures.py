@@ -140,3 +140,30 @@ def test_inline_show_requires_a_live_shell(monkeypatch):
         pass
     with pytest.raises(RuntimeError, match="active IPython"):
         session.show(inline=True)
+
+
+def test_controller_retains_result_and_releases_hooks_after_display_failure(monkeypatch):
+    """Keep finalized measurements accessible when final display fails.
+
+    Release collector ownership and make a repeated stop harmless so callers
+    can inspect the result and start another session after the error.
+
+    """
+    collector = backend()
+    monkeypatch.setattr("linescope.api.create_backend", lambda *_args, **_kwargs: collector)
+    controller = ProfileController()
+    session = controller.start(display="end", spark=False, notebooks=False)
+    show = Mock(side_effect=RuntimeError("display unavailable"))
+    monkeypatch.setattr(session, "show", show)
+
+    with pytest.raises(RuntimeError, match="display unavailable"):
+        controller.stop()
+
+    assert session.state == "stopped"
+    assert controller.result is session.result
+    assert controller.result.root_run.elapsed_ns is not None
+    assert controller.stop() is None
+    show.assert_called_once_with()
+    collector.stop.assert_called_once_with()
+    with Session(display="none", spark=False, notebooks=False):
+        pass

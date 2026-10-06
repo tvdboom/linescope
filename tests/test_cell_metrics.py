@@ -114,10 +114,10 @@ def test_cell_omits_unchanged_lines_and_treats_counter_reset_as_unknown():
 
 
 @pytest.mark.parametrize("metrics", [False, True])
-def test_cell_rendering_escapes_sources_and_limits_busiest_rows(metrics):
-    """Escape source and diagnostics while rendering available metric domains.
+def test_cell_rendering_escapes_sources_and_shows_all_rows(metrics):
+    """Escape source while rendering available metric domains in a table.
 
-    Show only the busiest five locations, include external source origins,
+    Show every source line and measured location, include external origins,
     and preserve unknown measurements with an em dash.
 
     """
@@ -153,33 +153,35 @@ def test_cell_rendering_escapes_sources_and_limits_busiest_rows(metrics):
     document = ReportDOM(html).root
     assert "<script>" not in html
     assert "iframe" not in html
-    assert len(document.find_all("tr")) == 6
-    assert "LineScope · Cell 4" in document.text()
-    assert "Failed" in document.text()
-    assert "Showing the 5 busiest of 7 measured lines" in document.text()
+    assert len(document.find_all("tr")) == 8
+    assert (
+        document.find_all("table")[0].attributes["aria-label"]
+        == "LineScope cell 4: 7 source lines"
+    )
+    assert document.find_all("section")[0].attributes["data-status"] == "failed"
     assert "Unavailable" in document.text()
-    assert "1 Spark actions" in document.text()
-    assert "1 notebook runs" in document.text()
+    assert not document.find_all("header")
+    assert not document.find_all("p")
+    assert not document.find_all("details")
     assert ("Hits" in document.text()) is metrics
     assert ("Samples" in document.text()) is metrics
-    assert ("RAM change" in document.text()) is metrics
+    assert ("Mem Change" in document.text()) is metrics
     assert ("GPU time" in document.text()) is metrics
-    assert "—" in document.text()
-    assert "&lt;script&gt;secret()&lt;/script&gt;" in html
+    assert ("—" in document.find_all("tbody")[0].text()) is metrics
+    assert "secret()" not in html
+    assert result.warnings == ["<script>secret()</script>"]
     same_cell = render_cell_summary(result, cell=source)
-    assert "<small>" not in same_cell
+    locations = ReportDOM(same_cell).root.find_all("tbody")[0].find_all("tr")
+    assert all("title" not in row.find_all("td")[0].attributes for row in locations)
 
 
-def test_empty_cell_summary_is_completed_and_preserves_unknown_elapsed():
-    """Display a compact empty result without invented elapsed measurements.
+def test_empty_cell_summary_preserves_status_without_inventing_metrics():
+    """Suppress an empty summary without inventing elapsed measurements.
 
-    Omit the table and diagnostics when the cell collected no line activity.
+    Retain the execution outcome and unknown elapsed time in the input result.
 
     """
-    result = ProfileResult(ProfileRun(), {}, "trace", BackendCapabilities())
-    document = ReportDOM(render_cell_summary(result)).root
-    assert "Cell results" in document.text()
-    assert "Completed" in document.text()
-    assert "No line measurements" in document.text()
-    assert not document.find_all("table")
-    assert not document.find_all("details")
+    result = ProfileResult(ProfileRun(elapsed_ns=None), {}, "trace", BackendCapabilities())
+    assert render_cell_summary(result) == ""
+    assert result.root_run.status == RunStatus.SUCCESS
+    assert result.root_run.elapsed_ns is None

@@ -1,332 +1,333 @@
 # Development
 -------------
 
-Contributions to code, tests, examples, and documentation are welcome. Read the
-repository's [Code of Conduct][code-of-conduct] and `AGENTS.md` before starting.
-Discuss large changes in an issue so the design stays focused on source-level
-profiling.
+Are you interested in contributing to LineScope? Do you want to report a bug?
+Do you have a question? Before you do, please read the following guidelines.
 
-## Set up
+<br>
+
+
+## Submission context
+
+### Question or problem?
+
+For quick questions, there's no need to open an issue. Check first if the
+question isn't already answered in the [FAQ](faq.md) section. If not, reach us
+through the [discussions] page.
+
+
+### Report a bug?
+
+If you found a bug in the source code, you can help by submitting an issue
+to the [issue tracker](https://github.com/tvdboom/linescope/issues) in the
+GitHub repository. Even better, you can
+submit a Pull Request with a fix. However, before doing so, please read the
+[submission guidelines](#submission-guidelines).
+
+
+### Missing a feature?
+
+You can request a new feature by submitting an
+[issue](https://github.com/tvdboom/linescope/issues) to the GitHub repository.
+If you would like to implement a new feature, please submit
+an issue with a proposal for your work first. Please consider what kind of
+change it is:
+
+* For a **major feature**, first open an issue and outline your proposal so
+  that it can be discussed. This will also allow us to better coordinate our
+  efforts, prevent duplication of work, and help you to craft the change so
+  that it is successfully accepted into the project.
+
+* **Small features and bugs** can be crafted and directly submitted as a Pull
+  Request. However, there is no guarantee that your feature will make it into
+  `main`, as it's always a matter of opinion whether it benefits the
+  overall functionality of the project.
+
+<br><br>
+
+
+## Project layout
+
+Make sure to familiarize yourself with the project layout before making any
+major contributions.
+
+### Folder structure
+
+```text
+linescope/                         # Repository root
+|-- pyproject.toml                 # Package metadata, dependencies & tools
+|-- tox.ini                        # Test / CI task runner configuration
+|-- uv.lock                        # Locked dependency versions
+|-- justfile                       # Convenience task recipes for just
+|-- mkdocs.yml                     # Documentation site configuration
+|-- .pre-commit-config.yaml        # Pre-commit hook definitions
+|
+|-- src/
+|   `-- linescope/                 # Python package
+|       |-- __init__.py            # Public API exports and notebook extension
+|       |-- api.py                 # Profiling sessions and controller
+|       |-- cli.py                 # Click CLI entry point
+|       |-- config.py              # Project and session configuration
+|       |-- enums.py               # Backend, display, and lifecycle choices
+|       |-- memory.py              # Shared driver memory collection
+|       |-- model.py               # Normalized measurements and source models
+|       |-- backends/              # Trace, Scalene, and Tachyon collectors
+|       |-- source/                # Source discovery, snapshots, and links
+|       |-- notebooks/             # Cell capture and Databricks child profiles
+|       |-- spark/                 # Actions, plans, and runtime metrics
+|       `-- render/                # Self-contained HTML reports and assets
+|
+|-- tests/                         # Python unit and integration tests
+|-- examples/                      # Runnable scripts and sample package
+|   `-- notebooks/                 # Executable notebook examples
+|
+|-- docs_sources/                  # MkDocs documentation sources
+|   |-- user_guide/                # User-guide pages
+|   |-- api/                       # API reference pages
+|   |-- examples/                  # Example guides and notebook copies
+|   |-- img/                       # Images, icons, and logos
+|   |-- overrides/                 # MkDocs Material theme overrides
+|   |-- scripts/                   # Build-time documentation hooks
+|   `-- stylesheets/               # Documentation CSS
+|
+`-- images/                        # Branding assets and report screenshots
+```
+
+### Key technologies
+
+| Layer | Technology |
+| --- | --- |
+| Source profiling | Trace, Scalene, and Tachyon backends |
+| Python API | Context managers and session control |
+| Notebook support | IPython and Databricks integrations |
+| Spark support | Driver action and query-plan observation |
+| Reports | Self-contained HTML, CSS, and JavaScript |
+| CLI | [Click](https://click.palletsprojects.com/) |
+| Docs | [MkDocs Material][mkdocs-material] |
+| Testing | [pytest](https://docs.pytest.org/) |
+| Linting | Ruff, ty, and pre-commit |
+| Task runner | tox with tox-uv; just for local recipes |
+| Package management | [uv](https://docs.astral.sh/uv/) |
+
+## Development setup
+
+### 1. Clone the repository
 
 ```console
 git clone https://github.com/tvdboom/linescope.git
 cd linescope
+```
+
+### 2. Create a virtual environment and install
+
+```console
+uv venv
 uv sync --locked --all-extras --all-groups
+```
+
+This installs LineScope in editable mode together with its optional
+integrations and development dependency groups.
+
+### 3. Install pre-commit hooks
+
+```console
 uv run pre-commit install
 ```
 
-The source lives under `src/linescope`. This is a pure Python package. Normal
-development needs no Rust toolchain, Node installation, [Java] runtime, or Spark
-cluster. Optional integrations have their own environments.
+### 4. (Optional) install just for local task recipes
 
-The lint group installs `databricks-sdk` for its official `dbutils` stubs and
-SDK client annotations. Integration types are imported under `TYPE_CHECKING`
-with postponed annotations, so they add no runtime imports to LineScope.
-Normal package installations do not include the development groups.
-
-## Everyday checks
+A `justfile` at the repository root provides convenience recipes such as
+`just build`, `just test`, `just lint`, `just docs` and `just demo`.
 
 ```console
-uv run pre-commit run --all-files
-uv run pytest
-uv build
-uv run python -m mkdocs build --strict
+uv tool install rust-just
+just --list
 ```
 
-Pre-commit runs Ruff linting/formatting, ty, lockfile validation, and file
-hygiene checks.
-
-`just` is optional: `uv tool install rust-just`, then `just --list`. The package
-named `rust-just` supplies the task-runner binary; LineScope itself contains no
-Rust code.
-
-Run `just sync` to install all project dependencies, extras, and dependency
-groups, including development tools, notebook demos, Spark, Databricks, and
-CUDA-enabled PyTorch where supported. Other recipes use `uv run` with its
-default inexact sync: they update dependencies when the project changes and
-retain installed packages they do not require. Pre-commit's type checker also
-uses inexact synchronization. Tox and pre-commit still manage their own isolated
-tool environments.
-
-Use Backtide's NumPy-style docstrings with an imperative summary, a description,
-and `Parameters`, `Returns`, and `See Also` sections where useful. Separate
-parameters with blank lines and write optional values as `, default=...`. Use
-types such as `dict[str, list[[SourceUnit]]]`, with square-bracket references
-for package and third-party classes. Use single backticks for inline code. Move
-notes and failure conditions into the description. Keep `Examples` in documented
-public APIs, and leave a blank line before closing triple quotes. Wrap
-documentation and docstrings at 80 columns.
-
-Use a consistent module header:
-
-```python
-"""LineScope.
-
-Author: Mavs
-Description: Explain the module's responsibility.
-
-"""
-```
-
-Separate logical steps with blank lines. Comments should explain non-obvious
-decisions, ownership, or cleanup. Annotate public interfaces and cover changed
-behavior with regression tests. Prefer assertions about semantics and structure
-over exact timings.
-
-Keep function signatures on one line when they fit within 99 columns. For
-multiline signatures, put each parameter and parameter separator on its own line
-and end the parameter list with a trailing comma so Ruff preserves the layout.
+<br><br>
 
 
-<br>
+## Running tests
 
-## Architecture
+### Python tests
 
-```text
-Backend collection
-    Ã¢â€ “
-Backend adaptation / normalized measurements
-    Ã¢â€ “
-Project filtering and source snapshots
-    Ã¢â€ “
-Symbol index + notebook correlation + Spark observation
-    Ã¢â€ “
-ProfileResult / ProfileRun tree
-    Ã¢â€ “
-Self-contained HTML renderer
-```
-
-### Boundaries
-
-`backends` collects measurements. `source` discovers project files, snapshots
-text, and resolves navigation. `notebooks` captures virtual source and child
-relationships. `spark` observes actions and normalizes plans/metrics. The
-normalized `model` joins these concerns without depending on a backend's raw
-result format. Rendering owns presentation only.
-
-### Invariants
-
-1. Full source is primary; functions are an index over source measurements.
-2. Third-party implementation details stay outside the default source browser.
-3. Missing metrics stay unknown, and sampling never fabricates hit counts.
-4. Source links target individual resolvable symbols, not arbitrary whole lines.
-5. Spark transformations remain lazy; observer code never adds an action.
-6. Python wall time, distributed executor metrics, and memory domains stay
-   separate.
-7. Notebook source is snapshotted; separate child runs form a tree.
-8. Hooks and patched methods are restored after errors as well as successful
-   runs.
-9. Reports escape source/metadata and work without external scripts or
-   stylesheets.
-
-
-<br>
-
-## Testing
-
-The normal pytest suite is offline and covers project discovery, source
-snapshots, symbol resolution, timing normalization, report escaping,
-lifecycle/error cleanup, CLI scripts/modules, notebook sessions, child
-correlation, and Spark adapters using controlled fakes.
+Python tests live in the `tests/` directory and are executed with **pytest**:
 
 ```console
-uv run tox -e pre-commit
 uv run pytest -m "not spark and not scalene and not databricks"
-uv run pytest --cov=linescope --cov-report=term-missing
-uv run tox -m unit
-uv run tox -e py311-min
-uv run tox -e docs
 ```
 
-Tox tests installed wheels on Python 3.11–3.15. CI runs these on Linux, Windows,
-and macOS. Python 3.14 records branch coverage with a 95% floor. The minimum
-environment resolves the oldest supported direct dependencies rather than
-reusing only the latest lock resolution. The workflow lists pre-commit first,
-unit, notebook, and package checks next, then Scalene, optional Spark, and
-documentation last. Jobs can run in parallel; documentation waits for the
-notebook checks. Pre-commit covers linting without a separate lint environment.
-
-The coverage environment loads the project's branch-coverage configuration
-explicitly. Codecov requires at least 95% overall project coverage and maps
-installed-wheel filenames back to `src/linescope` for source annotations.
+The unit suite runs offline and uses controlled fakes for Spark and Databricks.
+It covers source snapshots, navigation, measurements, report rendering, CLI
+entry points, notebook sessions, and cleanup after errors.
 
 ### Notebook execution
 
-Like ATOM, LineScope uses the `nbmake` pytest plugin to run example notebooks
-from top to bottom in real Python kernels. Run the separate environment with
-[Java] 17 (or a version supported by your Spark release) available:
+Portable notebooks are executed from top to bottom in real Python kernels with
+**nbmake**:
 
 ```console
 uv run tox -e notebooks
 ```
 
-This environment installs the built wheel with the notebook and Spark extras,
-registers its own Python kernel, and executes every notebook in
-`examples/notebooks` with a 600-second cell timeout. It runs copies in tox's
-temporary directory so generated reports stay out of the source examples. Cell
-errors fail the check; the original notebooks keep their unexecuted cells and
-empty outputs. The Databricks example's portable cells run locally, while
-workspace-specific `%run` and child-job checks still require the manual
-acceptance below.
+This environment installs the notebook and Spark extras, registers its own
+kernel, and runs copies from `examples/notebooks` in a temporary directory.
+Local Spark cells require a compatible [Java] runtime. Cell errors fail the
+check; generated reports stay out of the source examples. The GPU notebook
+retains saved CUDA outputs and requires GPU hardware to execute again.
 
-The `examples-tests` CI job runs on every push and pull request, with [Java] and
-PySpark available. Documentation builds wait for that job. Release validation
-also runs `notebooks` before building distribution artifacts, publishing the
-package, or deploying documentation. MkDocs continues to render notebooks with
-`execute: false`; ordinary unit tests do not start Spark.
+### Optional integrations
 
-### Optional integration environments
+Run real Scalene sampling and local Spark checks in their separate
+environments:
 
 ```console
 uv run tox -e scalene
 uv run tox -e spark
 ```
 
-The unit suite tests Scalene normalization and lifecycle with controlled fakes.
-Its separate integration environment uses the included Scalene dependency and
-verifies real CPU sampling, native memory collection, repeated sessions, source
-snapshots, live previews, and hook/thread cleanup. This keeps native collection
-out of the ordinary unit matrix. Run it on a supported Windows/Linux/macOS
-environment. Sampling tests assert structure rather than exact timings.
+Scalene checks require a supported Python version and platform. Spark checks
+use `local[2]` and need compatible [Java]; no external cluster is required.
+Ordinary unit tests mock these integrations.
 
-Local Spark uses [Java] 17 (or a version supported by your Spark release) and
-`local[2]`; there is no external cluster. Its environment sets
-`LINESCOPE_TEST_SPARK=1`. Both integration jobs use Python 3.11 to exercise
-LineScope's minimum supported Python; this is a baseline coverage choice, not a
-Spark-specific Python requirement. The optional manual CI input enables the real
-Spark job, while the ordinary suite exercises fake JVM/Databricks objects.
-Windows parquet-write success cases require Hadoop native tools and skip when
-those are absent; the Linux integration covers the corresponding write/scan
-behavior. Failed action tests verify that profiling preserves the workload's
-original exception.
+### Databricks checks
 
-Databricks itself requires a manual workspace check: profile a cell, several
+Databricks runtime checks require a workspace. Profile a single cell, several
 cells, inline `%run`, a child notebook call, and a Spark action. Verify source
-identity, one final report, child relationships, parameter redaction, and
-available final plans. For automatic child collection, check full source and
-line measurements after normal completion, a failed cell, and notebook exit.
-Check nested calls, relative paths, original argument/return values, and removal
-of temporary sibling notebooks and profile files. Restricted workspace access
-must retain available source and honest warnings. Mock tests cannot validate
-workspace access policies or every Databricks runtime variation.
+identity, one final report, child measurements, and available executed plans.
+Check child completion, failure, notebook exit, and nested calls, including
+cleanup of temporary notebooks and profile files. Restricted workspace access
+should retain available source and honest warnings. See the
+[Databricks guide](user_guide/notebooks.md#databricks) for runtime setup.
 
-For report acceptance, open a generated HTML file and verify file, symbol,
-Spark, and notebook links, browser back/forward navigation, light/dark styling,
-and narrow-screen layout. Reports must work offline without a JavaScript CDN.
+<br><br>
 
-<br>
 
-## Documentation development
+## Tox
 
-LineScope uses Backtide's Material for MkDocs setup, adapted for a Python-only
-project. The source is `docs_sources`; generated output is `docs` and stays out
-of version control.
+[Tox](https://tox.wiki/) is used as the unified task runner for the project.
+It is configured in `tox.ini` and uses the [tox-uv] plugin so environments are
+created with `uv` instead of plain `venv`.
+
+### Available environments
+
+| Environment | What it does |
+| --- | --- |
+| `py311` ... `py315` | Build the wheel and run pytest on that Python version. |
+| `py311-min` | Test the oldest compatible direct runtime dependencies. |
+| `pre-commit` | Run all pre-commit hooks, including Ruff and ty. |
+| `notebooks` | Execute example notebooks in a real Python kernel. |
+| `scalene` | Run the real Scalene integration checks. |
+| `spark` | Run local Spark integration checks with Java. |
+| `docs` | Build the MkDocs documentation in strict mode. |
+
+Run the unit matrix or an individual environment with:
 
 ```console
-uv run python -m mkdocs serve --dev-addr 127.0.0.1:8001
+uv run tox -m unit
+uv run tox -e py311-min
+```
+
+Python 3.14 records branch coverage with a 95% minimum. The minimum-dependency
+environment resolves the oldest supported direct dependencies separately from
+the lockfile.
+
+<br><br>
+
+
+## Pre-commit & linting
+
+The project uses [pre-commit](https://pre-commit.com/) to enforce code quality
+on every commit. The hooks are defined in `.pre-commit-config.yaml`. To run all
+hooks manually:
+
+```console
+uv run pre-commit run --all-files
+```
+
+Or through tox:
+
+```console
+uv run tox -e pre-commit
+```
+
+<br><br>
+
+
+## Building the documentation
+
+The docs are built with [MkDocs Material][mkdocs-material] and live in
+`docs_sources/`. Build-time hooks in `docs_sources/scripts/` handle
+auto-generated API reference pages.
+
+Portable notebooks execute during the build and include their outputs. Install
+the notebook and Spark extras and provide compatible [Java] for the local
+Spark example. Execution uses temporary copies, so generated reports do not
+change source notebooks. Cell errors fail the build. The GPU notebook retains
+outputs captured on a CUDA device so documentation builders do not need a GPU.
+Run it again with the `gpu` dependency group to refresh its saved outputs.
+
+```console
+# Live preview with hot-reload
+uv run python -m mkdocs serve
+
+# Production build (strict mode)
 uv run python -m mkdocs build --strict
 ```
 
-### API pages
+Or via tox:
 
-`docs_sources/scripts/autodocs.py` is adapted from Backtide's renderer. It reads
-NumPy-style docstrings and supports signatures, summaries, parameter tables,
-return values, methods, examples, and source links. A page uses directives such
-as:
-
-```text
-:: linescope:configure
-    :: signature
-    :: head
-    :: table:
-        - parameters
-        - returns
-    :: see also
+```console
+uv run tox -e docs
 ```
 
-Use ordinary Markdown links for prose. The custom reference helper also
-understands Backtide's short reference syntax. Keep symbols documented before
-linking to them. Write `[ProfileResult]` to link an internal API class, or
-`[DataFrame]` to link Spark's official class reference. Register external types
-in `CUSTOM_URLS` in `autodocs.py`, using a lowercase key and its official URL.
-Inside a container, write `list[[ProfileResult]]` so the type remains readable
-and the class reference stays clickable.
+<br><br>
 
-### Executable examples
 
-Explicit `pycon` fences run during a documentation build through `autorun.py`,
-which follows Backtide's console-transcript convention. Ordinary `python` fences
-only display source. Executed fences have isolated namespaces and fail the build
-on exceptions. A statement ending in `# hide` runs invisibly; `# norun` displays
-without execution.
+## Submission guidelines
 
-Examples must be offline, deterministic, and fast. Do not launch a browser,
-start Spark, call a remote notebook, or save a persistent report during a build.
+### Submitting an issue
 
-Runnable Python examples live in `examples`. Documentation includes their source
-through the existing documentation hook with a directive such as:
+Before you submit an issue, please search the
+[issue tracker](https://github.com/tvdboom/linescope/issues),
+maybe an issue for your problem already exists, and the discussion
+might inform you of workarounds readily available.
 
-```text
-:: example: filename.py
-```
+We want to fix all the issues as soon as possible, but before fixing a
+bug, we need to reproduce and confirm it. In order to reproduce bugs, we
+will systematically ask you to provide a minimal reproduction scenario
+using the custom issue template.
 
-The hook inserts ordinary Python fences, so displayed code stays identical to
-the runnable files without executing them. Add new runnable examples there and
-include them instead of maintaining a shortened copy. Missing source files fail
-the build.
 
-### Rendered notebooks
+### Submitting a pull request
 
-Notebook examples use the same `mkdocs-jupyter` plugin as
-[ATOM](https://github.com/tvdboom/ATOM). The plugin renders Markdown, code
-cells, and saved outputs as documentation pages, with a table of contents and a
-download button. `execute: false` in `mkdocs.yml` prevents notebooks from
-running during a build, including Spark and Databricks cells. The bundled
-notebooks have unexecuted cells so users can run them in their own environment.
+Before you submit a pull request, please work through this checklist to
+make sure that you have done the necessary so we can efficiently review
+and accept your changes.
 
-Keep runnable notebooks in `examples/notebooks` and matching documentation
-copies in `docs_sources/examples/notebooks`. When adding or editing a notebook,
-update both copies and add its documentation path to the **Examples > Rendered
-notebooks** navigation in `mkdocs.yml`. Link to the `.ipynb` path from Markdown
-to open its rendered page. The plugin's `include_source` option copies the
-original notebook beside that page, and `overrides/main.html` uses `page.nb_url`
-for the download button. Markdown guides can set `notebook` metadata to the
-download path, for example
-`examples/notebooks/notebook_example/notebook_example.ipynb`.
+* Update the documentation so all of your changes are reflected there.
+* Update the project unit tests to test your code changes as thoroughly
+  as possible.
+* Run `uv run pre-commit run --all-files` to verify the repository checks.
+* Run the full tox suite: `uv run tox` and make sure all environments pass.
+* Run any optional integration checks relevant to your changes.
+* Build the package with `uv build`.
 
-### Theme
+If your contribution requires a new **Python** library dependency:
 
-`overrides/main.html` retains Backtide's title/version/download controls.
-`overrides/home.html` provides the branded landing page. The shared stylesheet
-applies teal and cyan colors in light and dark modes. Reports have their own
-embedded assets and do not depend on MkDocs.
+* Double-check that the new dependency is easy to install with uv.
+* The library should support Python 3.11, 3.12, 3.13, 3.14 and 3.15, or have
+  explicit version markers when an optional integration is more limited.
+* Make sure the code works with the latest version of the library.
+* Update the dependencies in the documentation.
+* Add the library with the minimum required version to `pyproject.toml` and
+  update `uv.lock`.
 
-Versioned publication uses `mike`; see [releasing](#releasing).
+After submitting your pull request, GitHub will automatically run the tests
+on your changes and make sure that the updated code builds successfully.
+The checks run on all supported Python versions, on Ubuntu, macOS and Windows.
+We also use services that automatically check code quality and test coverage.
 
-<br>
-
-## Releasing
-
-### One-time repository setup
-
-- Enable GitHub Pages for the branch used by `mike` (normally `gh-pages`).
-- Configure the `github-pages` and `pypi` environments with appropriate release
-  protection.
-- Register a PyPI trusted publisher for this repository's `publish.yml`
-  workflow.
-- Optionally add the Codecov token for coverage uploads.
-
-### Release process
-
-Update the version in `pyproject.toml` and the package version, refresh
-`uv.lock`, and run the full test/documentation/build checks. Review release
-notes and build artifacts before creating a matching `vX.Y.Z` tag.
-
-The tag workflow validates the version, checks the package, builds one universal
-Python wheel and source distribution, then uses trusted publishing. It also
-deploys versioned docs with `mike` and updates the `latest` alias. Pure Python
-wheels need no per-platform Rust builds.
-
-No release tag, package publication, or documentation deployment is part of
-ordinary local development. Run `uv build`, then `uvx twine check dist/*`, and
-inspect `dist` to validate an artifact locally.
+[discussions]: https://github.com/tvdboom/linescope/discussions
+[mkdocs-material]: https://squidfunk.github.io/mkdocs-material/
+[tox-uv]: https://github.com/tox-dev/tox-uv

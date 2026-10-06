@@ -2,6 +2,13 @@
   'use strict';
   const pages = Array.from(document.querySelectorAll('.page'));
   const navigation = Array.from(document.querySelectorAll('.nav-link'));
+  const sourceHeaderResize = new ResizeObserver(entries => {
+    entries.forEach(entry => {
+      const height = entry.target.getBoundingClientRect().height;
+      entry.target.closest('.source-scroll').style.setProperty('--source-head-height', height + 'px');
+    });
+  });
+  document.querySelectorAll('.source-table thead').forEach(header => sourceHeaderResize.observe(header));
   function route() {
     const hash = window.location.hash.slice(1) || 'overview';
     const target = document.getElementById(hash);
@@ -19,7 +26,9 @@
       target.classList.add('selected');
       const scroller = target.closest('.source-scroll');
       const headerHeight = scroller.querySelector('thead').getBoundingClientRect().height;
-      const top = scroller.scrollTop + target.getBoundingClientRect().top - scroller.getBoundingClientRect().top - scroller.clientTop - headerHeight;
+      scroller.style.setProperty('--source-head-height', headerHeight + 'px');
+      const cellHeight = target.closest('tbody').querySelector('.source-cell-heading')?.getBoundingClientRect().height || 0;
+      const top = scroller.scrollTop + target.getBoundingClientRect().top - scroller.getBoundingClientRect().top - scroller.clientTop - headerHeight - cellHeight;
       // Allow definitions near the end of a file to sit directly below the header.
       const tableHeight = scroller.querySelector('.source-table').getBoundingClientRect().height;
       const tailSpace = Math.max(0, top + scroller.clientHeight - tableHeight);
@@ -36,7 +45,7 @@
       target.querySelector('summary').focus({ preventScroll: true });
     }
     window.scrollTo(0, 0);
-    const group = selected.id.startsWith('source-') ? 'files' : selected.id.startsWith('spark-') ? 'spark' : selected.id.startsWith('run-') ? 'notebooks' : selected.id;
+    const group = selected.id.startsWith('source-') || selected.id.startsWith('run-') ? 'files' : selected.id.startsWith('spark-') ? 'spark' : selected.id;
     navigation.forEach(item => {
       if (item.getAttribute('href') === '#' + group) item.setAttribute('aria-current', 'page');
       else item.removeAttribute('aria-current');
@@ -73,40 +82,57 @@
   });
   document.querySelectorAll('.source-heat').forEach(button => {
     button.addEventListener('click', () => {
-      const page = button.closest('.source-page');
+      const page = button.closest('.page');
       const metric = button.dataset.heat === 'memory' ? 'heatMemory' : 'heatTime';
-      page.querySelectorAll('.source-row').forEach(row => {
-        row.style.setProperty('--heat', row.dataset[metric]);
+      page.querySelectorAll('.heat-row').forEach(row => {
+        row.style.setProperty('--heat', button.dataset.heat === 'none' ? '0' : row.dataset[metric]);
       });
       page.querySelectorAll('.source-heat').forEach(control => {
         control.setAttribute('aria-pressed', String(control === button));
       });
     });
   });
-  document.querySelectorAll('.source-order').forEach(button => {
-    button.addEventListener('click', () => {
-      const page = button.closest('.source-page');
-      const body = page.querySelector('.source-table tbody');
-      const order = button.dataset.order;
-      const rows = Array.from(body.querySelectorAll('.source-row'));
-      rows.sort((left, right) => {
-        const lineOrder = Number(left.dataset.line) - Number(right.dataset.line);
-        if (order === 'line') return lineOrder;
-        const leftValue = left.dataset[order];
-        const rightValue = right.dataset[order];
-        // Missing measurements sort after every known value, including zero and frees.
-        if (leftValue === '' || rightValue === '') {
-          return (leftValue === '') - (rightValue === '') || lineOrder;
-        }
-        return Number(rightValue) - Number(leftValue) || lineOrder;
+  document.querySelectorAll('.sortable-table').forEach(table => {
+    const bodies = Array.from(table.tBodies);
+    const sortableRows = body => Array.from(body.rows).filter(row => !row.classList.contains('source-cell-heading'));
+    const originalOrder = new Map(bodies.flatMap(sortableRows).map((row, index) => [row, index]));
+    const sorters = Array.from(table.querySelectorAll('.table-sort'));
+    function updateSortState(button, direction) {
+      sorters.forEach(control => {
+        const column = control.closest('th');
+        if (control === button) column.setAttribute('aria-sort', direction);
+        else column.removeAttribute('aria-sort');
+        const nextDirection = control === button ? (direction === 'ascending' ? 'descending' : 'ascending') : control.dataset.sortDirection;
+        control.setAttribute('aria-label', 'Sort by ' + control.dataset.sortLabel + ', ' + nextDirection);
       });
-      rows.forEach(row => body.appendChild(row));
-      page.querySelectorAll('.source-order').forEach(control => {
-        control.setAttribute('aria-pressed', String(control === button));
-      });
-      const scroller = page.querySelector('.source-scroll');
+      const scroller = table.closest('.source-scroll, .table-scroll');
       scroller.style.removeProperty('--source-tail-space');
       scroller.scrollTop = 0;
+    }
+    sorters.forEach(button => {
+      button.addEventListener('click', () => {
+        const header = button.closest('th');
+        const current = header.getAttribute('aria-sort');
+        const direction = current ? (current === 'ascending' ? 'descending' : 'ascending') : button.dataset.sortDirection;
+        const multiplier = direction === 'ascending' ? 1 : -1;
+        // Notebook cells retain their boundaries and capture order when sorting.
+        bodies.forEach(body => {
+          const rows = sortableRows(body);
+          rows.sort((left, right) => {
+            const tie = originalOrder.get(left) - originalOrder.get(right);
+            const leftValue = left.getAttribute('data-' + button.dataset.sort) ?? '';
+            const rightValue = right.getAttribute('data-' + button.dataset.sort) ?? '';
+            // Missing measurements stay last in both directions, even beside zero or frees.
+            if (leftValue === '' || rightValue === '') {
+              return (leftValue === '') - (rightValue === '') || tie;
+            }
+            const comparison = button.dataset.sortType === 'number' ? Number(leftValue) - Number(rightValue) : leftValue.localeCompare(rightValue, undefined, { sensitivity: 'base' });
+            return comparison * multiplier || tie;
+          });
+          rows.forEach(row => body.appendChild(row));
+        });
+        updateSortState(button, direction);
+      });
     });
   });
   document.querySelectorAll('.spark-order').forEach(button => {
@@ -136,31 +162,114 @@
       panel.hidden = panel.dataset.action !== event.target.value;
     });
   });
-  document.querySelectorAll('.memory-cursor').forEach(cursor => {
-    cursor.addEventListener('input', () => {
-      const inspector = cursor.closest('.memory-inspector');
-      const point = inspector.querySelector(`.memory-point[data-index="${cursor.value}"]`);
-      inspector.querySelectorAll('.memory-point.selected').forEach(item => item.classList.remove('selected'));
-      const output = inspector.querySelector('.memory-reading');
-      const guide = inspector.querySelector('.memory-guide');
-      guide.style.display = point ? '' : 'none';
-      if (!point) {
-        output.textContent = 'RAM reading unavailable at this observation';
+  document.querySelectorAll('.memory-chart').forEach(chart => {
+    const inspector = chart.closest('.memory-inspector');
+    const scroller = chart.closest('.memory-chart-scroll');
+    const tooltip = inspector.querySelector('.memory-tooltip');
+    const guide = chart.querySelector('.memory-guide');
+    const observations = Array.from(chart.querySelectorAll('.memory-observation'));
+    const positions = observations.map(item => Number(item.dataset.x));
+    let selectedIndex = Number(chart.dataset.initialIndex);
+    let selectedPoint = null;
+
+    function hideReading() {
+      tooltip.hidden = true;
+      inspector.classList.remove('is-inspecting');
+      selectedPoint?.classList.remove('selected');
+      selectedPoint = null;
+    }
+
+    function placeTooltip() {
+      const observation = observations[selectedIndex];
+      const point = observation.querySelector('.memory-point');
+      const transform = chart.getScreenCTM();
+      if (!transform) return;
+      const position = new DOMPoint(positions[selectedIndex], point ? Number(point.getAttribute('cy')) : 147.5).matrixTransform(transform);
+      const bounds = scroller.getBoundingClientRect();
+      const x = position.x - bounds.left + scroller.scrollLeft;
+      const y = position.y - bounds.top + scroller.scrollTop;
+      const width = tooltip.offsetWidth;
+      const height = tooltip.offsetHeight;
+      const left = Math.max(scroller.scrollLeft + 8, Math.min(x - width / 2, scroller.scrollLeft + scroller.clientWidth - width - 8));
+      const top = y - height - 12 >= 8 ? y - height - 12 : y + 12;
+      tooltip.style.left = left + 'px';
+      tooltip.style.top = Math.max(8, Math.min(top, scroller.clientHeight - height - 8)) + 'px';
+    }
+
+    function showReading(index) {
+      const observation = observations[index];
+      if (selectedIndex !== index || tooltip.hidden) {
+        selectedPoint?.classList.remove('selected');
+        selectedIndex = index;
+        selectedPoint = observation.querySelector('.memory-point');
+        selectedPoint?.classList.add('selected');
+        tooltip.replaceChildren();
+        for (const [label, value] of [['Time', observation.dataset.time], ['RAM', observation.dataset.ram]]) {
+          const row = document.createElement('div');
+          const name = document.createElement('span');
+          const reading = document.createElement('strong');
+          name.textContent = label;
+          reading.textContent = value;
+          row.append(name, reading);
+          tooltip.appendChild(row);
+        }
+        const source = observation.querySelector('a');
+        if (source) {
+          const link = document.createElement('a');
+          link.setAttribute('href', source.getAttribute('href'));
+          link.textContent = source.dataset.sourceLabel;
+          tooltip.appendChild(link);
+        }
+        guide.setAttribute('x1', observation.dataset.x);
+        guide.setAttribute('x2', observation.dataset.x);
+        tooltip.hidden = false;
+        inspector.classList.add('is-inspecting');
+      }
+      placeTooltip();
+    }
+
+    scroller.addEventListener('pointermove', event => {
+      // Keep the source link usable while the pointer is over its tooltip.
+      if (tooltip.contains(event.target)) return;
+      const transform = chart.getScreenCTM();
+      if (!transform) return;
+      const position = new DOMPoint(event.clientX, event.clientY).matrixTransform(transform.inverse());
+      if (position.x < 125 || position.x > 960 || position.y < 35 || position.y > 260) {
+        hideReading();
         return;
       }
-      point.classList.add('selected');
-      guide.setAttribute('x1', point.getAttribute('cx'));
-      guide.setAttribute('x2', point.getAttribute('cx'));
-      output.textContent = point.dataset.label;
-      const source = point.closest('a');
-      if (source) {
-        output.appendChild(document.createTextNode(' · '));
-        const link = document.createElement('a');
-        link.setAttribute('href', source.getAttribute('href'));
-        link.textContent = 'Open source';
-        output.appendChild(link);
+      // Search retained observations rather than inventing interpolated RAM.
+      let low = 0;
+      let high = positions.length - 1;
+      while (low < high) {
+        const middle = Math.floor((low + high) / 2);
+        if (positions[middle] < position.x) low = middle + 1;
+        else high = middle;
       }
+      const index = low > 0 && position.x - positions[low - 1] <= positions[low] - position.x ? low - 1 : low;
+      showReading(index);
     });
+    scroller.addEventListener('pointerleave', hideReading);
+    scroller.addEventListener('focusout', event => {
+      if (!scroller.contains(event.relatedTarget)) hideReading();
+    });
+    scroller.addEventListener('scroll', hideReading);
+    chart.addEventListener('focus', () => showReading(selectedIndex));
+    chart.addEventListener('keydown', event => {
+      if (event.ctrlKey || event.altKey || event.metaKey) return;
+      let index = selectedIndex;
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') index--;
+      else if (event.key === 'ArrowRight' || event.key === 'ArrowUp') index++;
+      else if (event.key === 'Home') index = 0;
+      else if (event.key === 'End') index = observations.length - 1;
+      else if (event.key === 'Escape') hideReading();
+      else if (event.key === 'Enter') observations[index].querySelector('a')?.click();
+      else return;
+      event.preventDefault();
+      if (event.key !== 'Escape' && event.key !== 'Enter') showReading(Math.max(0, Math.min(index, observations.length - 1)));
+    });
+    window.addEventListener('resize', hideReading);
+    window.addEventListener('hashchange', hideReading);
   });
   route();
 })();

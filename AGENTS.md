@@ -158,9 +158,13 @@ Description: Explain the module's responsibility.
 Documentation uses the adapted Backtide `autodocs.py` directive format
 (`:: module:object`) and opt-in executable `pycon` fences through `autorun.py`.
 Ordinary `python` fences are displayed without execution. Keep documentation
-examples deterministic and offline; no browser launch, Spark startup, network
-call, or persistent report generation during a documentation build. Match logo
-and theme colors (`#0f766e` teal and `#22d3ee` cyan). Build docs in strict mode.
+examples deterministic and offline. Portable notebooks execute during builds
+from temporary copies, including local Spark; provide Java and the notebook
+and Spark extras. Preserve saved GPU notebook outputs; refreshing them requires
+CUDA hardware and the `gpu` dependency group. No browser launch, remote
+workspace call, or persistent report generation belongs in a documentation
+build. Match logo and theme colors (`#0f766e` teal and `#22d3ee` cyan). Build
+docs in strict mode.
 
 ## Tests and changes
 

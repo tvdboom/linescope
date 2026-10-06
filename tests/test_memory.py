@@ -340,8 +340,8 @@ def test_memory_columns_show_only_change_and_peak_and_keep_unknowns():
     document = ReportDOM(render_html(result)).root
     table = document.find_all("table", css="source-table")[0]
     assert [header.text() for header in table.find_all("th")] == [
-        "Line",
-        "Python time",
+        "",
+        "Time",
         "Mem Change",
         "Peak Mem",
         "Source",
@@ -357,7 +357,7 @@ def test_memory_columns_show_only_change_and_peak_and_keep_unknowns():
     assert rows[1].attributes["data-allocation"] == ""
 
 
-def test_timeline_has_valid_source_links_gaps_and_inspection_controls():
+def test_timeline_has_valid_source_links_gaps_and_hover_readings():
     """Render escaped, navigable observations without drawing through gaps.
 
     Inspect controlled RAM observations, source intervals, and timeline
@@ -370,7 +370,22 @@ def test_timeline_has_valid_source_links_gaps_and_inspection_controls():
     assert len(page.find_all("svg", css="memory-chart")) == 1
     assert len(page.find_all("polyline")) == 2
     assert len(page.find_all("polygon")) == 2
-    assert page.find_all("input", css="memory-cursor")[0].attributes["max"] == "3"
+    observations = page.find_all("g", css="memory-observation")
+    assert [item.attributes["data-time"] for item in observations] == [
+        "0 s",
+        "0.00000001 s",
+        "0.00000002 s",
+        "0.00000003 s",
+    ]
+    assert [item.attributes["data-ram"] for item in observations] == [
+        "100 B (100 bytes)",
+        "900 B (900 bytes)",
+        "Unavailable",
+        "200 B (200 bytes)",
+    ]
+    assert not observations[2].find_all("circle")
+    assert not page.find_all("circle", css="selected")
+    assert "hidden" in page.find_all("div", css="memory-tooltip")[0].attributes
     assert "work<script>.py" in page.text()
     assert "<script>.py" not in html
     ids = {
@@ -381,20 +396,20 @@ def test_timeline_has_valid_source_links_gaps_and_inspection_controls():
     assert document.find_all("a", css="nav-link", href="#memory")
 
 
-def test_memory_summary_precedes_chart_and_details():
-    """Place source-linked summaries before the chart and remaining details.
+def test_memory_summary_precedes_chart_and_growth():
+    """Place memory summaries before the chart and growth ranking.
 
-    Move the measurement explanation into a collapsed disclosure and omit
-    the single main run's redundant heading.
+    Keep the peak badge to its value, link the largest change to its source,
+    and omit the single main run's redundant heading.
 
     """
     result = memory_result()
-    page = ReportDOM(render_html(result)).root.find_all("section", id="memory")[0]
+    document = ReportDOM(render_html(result)).root
+    page = document.find_all("section", id="memory")[0]
     run = page.find_all("section", css="memory-run")[0]
     assert [child.tag for child in run.children if not isinstance(child, str)] == [
         "dl",
         "div",
-        "details",
         "h3",
         "div",
     ]
@@ -404,14 +419,136 @@ def test_memory_summary_precedes_chart_and_details():
         "Largest line change",
     ]
     assert [value.text() for value in badges.find_all("strong")] == ["900 B", "+100 B"]
-    assert len(badges.find_all("a")) == 2
-    assert badges.find_all("a")[0].attributes["href"] == badges.find_all("a")[1].attributes["href"]
+    peak, change = badges.find_all("dd")
+    assert peak.text() == "900 B"
+    assert not peak.find_all("small")
+    assert not peak.find_all("a")
+    assert len(badges.find_all("a")) == 1
+    link = change.find_all("a")[0]
+    assert link.text() == "work<script>.py:1"
+    assert document.find_all("tr", id=link.attributes["href"][1:])
     assert result.root_run.name not in page.text()
     assert not page.find_all("p", css="semantics")
-    explanation = page.find_all("details", css="memory-explanation")[0]
-    assert "open" not in explanation.attributes
-    assert "RSS is resident RAM for the whole Python process" in explanation.text()
-    assert "open" not in run.find_all("details", css="memory-readings")[0].attributes
+    assert not page.find_all("details", css="memory-explanation")
+    assert "About these measurements" not in page.text()
+    assert not run.find_all("details", css="memory-readings")
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        None,
+        SourceLocation("missing", 1),
+        SourceLocation("ram-source", 0),
+        SourceLocation("ram-source", 3),
+    ],
+)
+def test_memory_peak_omits_details_for_unlinked_observations(location):
+    """Display only the peak value when its observation has no valid source.
+
+    Keep elapsed time available through chart inspection.
+
+    Parameters
+    ----------
+    location : [SourceLocation] | None
+        Absent, unavailable, or out-of-range source location for the peak.
+
+    """
+    result = memory_result()
+    result.root_run.memory_samples.append(MemorySample(42_290_000_000, 1200, location))
+    page = ReportDOM(render_html(result)).root.find_all("section", id="memory")[0]
+    peak = page.find_all("dl", css="memory-stats")[0].find_all("dd")[0]
+    assert peak.text() == "1.2 KB"
+    assert not peak.find_all("small")
+    assert not peak.find_all("a")
+    assert "Baseline / outside project" not in page.text()
+
+    chart = page.find_all("svg", css="memory-chart")[0]
+    observation = chart.find_all("g", css="memory-observation")[-1]
+    assert observation.attributes["data-label"] == ("Time: 42.29 s · RAM: 1.2 KB (1,200 bytes)")
+    assert not observation.find_all("a")
+
+
+def test_memory_chart_uses_concise_labels_without_inspection_clutter():
+    """Keep simple chart labels and move readings into a hidden hover display.
+
+    Remove the legend, slider, caption, and retained-reading disclosure while
+    retaining keyboard inspection and source navigation inside the chart.
+
+    """
+    page = ReportDOM(render_html(memory_result())).root.find_all("section", id="memory")[0]
+    inspector = page.find_all("div", css="memory-inspector")[0]
+    assert inspector.find_all("h2")[0].text() == "Memory Usage"
+    for css in (
+        "memory-legend",
+        "memory-controls",
+        "memory-cursor",
+        "memory-reading",
+        "memory-caption",
+        "memory-readings",
+    ):
+        assert not page.find_all(css=css)
+    assert "after profiling started" not in inspector.text()
+    assert "No linked project line" not in inspector.text()
+    assert not page.find_all("text", css="memory-y-title")
+    assert [title.text() for title in page.find_all("text", css="memory-axis-title")] == [
+        "Elapsed time",
+    ]
+    chart = inspector.find_all("svg", css="memory-chart")[0]
+    assert chart.attributes["tabindex"] == "0"
+    assert "arrow keys" in chart.attributes["aria-label"]
+    assert (
+        chart.attributes["aria-describedby"]
+        == inspector.find_all("div", css="memory-tooltip")[0].attributes["id"]
+    )
+    assert chart.find_all("a")[0].attributes["data-source-label"] == "work<script>.py:1"
+
+
+def test_memory_hover_preserves_exact_values_and_links_across_unavailable_readings():
+    """Expose precise observation values without inferring memory across gaps.
+
+    Preserve nanosecond precision and byte counts beyond rounded axis labels,
+    including measured zero and source metadata on an unavailable reading.
+
+    """
+    result = memory_result()
+    result.root_run.memory_samples = [
+        MemorySample(0, 0),
+        MemorySample(1_234_567_891, 12_345_678, SourceLocation("ram-source", 1)),
+        MemorySample(2_345_678_912, None, SourceLocation("ram-source", 2)),
+    ]
+    page = ReportDOM(render_html(result)).root.find_all("section", id="memory")[0]
+    observations = page.find_all("g", css="memory-observation")
+    assert observations[0].attributes["data-ram"] == "0 B (0 bytes)"
+    assert observations[1].attributes["data-time"] == "1.234567891 s"
+    assert observations[1].attributes["data-ram"] == "12.3 MB (12,345,678 bytes)"
+    assert observations[2].attributes["data-time"] == "2.345678912 s"
+    assert observations[2].attributes["data-ram"] == "Unavailable"
+    assert observations[2].find_all("a")[0].attributes["data-source-label"] == "work<script>.py:2"
+    assert not observations[2].find_all("circle")
+
+
+def test_memory_and_notebook_menu_icons_keep_accessible_view_names():
+    """Use distinct vector icons without including them in view names.
+
+    Keep menu labels available to assistive technology while decorative icons
+    inherit the sidebar color and remain embedded in the offline report.
+
+    """
+    result = memory_result()
+    notebook = SourceUnit("notebook-source", "Notebook", "pass\n", kind="notebook")
+    result.sources[notebook.id] = notebook
+    document = ReportDOM(render_html(result)).root
+    memory = document.find_all("a", css="nav-link", href="#memory")[0]
+    notebook_link = document.find_all("a", css="source-item", title="Notebook")[0]
+    icons = []
+    for link, label in ((memory, "Memory"), (notebook_link, "Notebook")):
+        assert link.text() == label
+        assert link.find_all("span")[0].attributes["aria-hidden"] == "true"
+        icon = link.find_all("svg", css="nav-icon")[0]
+        assert icon.attributes["stroke"] == "currentColor"
+        icons.append(icon.find_all("path")[0].attributes["d"])
+    assert icons[0] != icons[1]
 
 
 @pytest.mark.parametrize(
@@ -443,6 +580,9 @@ def test_memory_badges_preserve_unknown_zero_and_negative_values(rss, delta, exp
     page = ReportDOM(render_html(result)).root.find_all("section", id="memory")[0]
     badges = page.find_all("dl", css="memory-stats")[0]
     assert [value.text() for value in badges.find_all("strong")] == expected
+    peak = badges.find_all("dd")[0]
+    assert peak.text() == expected[0]
+    assert not peak.find_all("small")
     assert bool(page.find_all("svg", css="memory-chart")) is (rss is not None)
 
 
@@ -491,9 +631,9 @@ def test_child_process_ram_is_not_added_to_parent():
     ]
     assert [heading.text() for heading in page.find_all("h2")] == [
         "Main run",
-        "Process RAM over time",
+        "Memory Usage",
         "Child process",
-        "Process RAM over time",
+        "Memory Usage",
     ]
     gradients = page.find_all("lineargradient")
     assert len({gradient.attributes["id"] for gradient in gradients}) == 2
@@ -502,6 +642,85 @@ def test_child_process_ram_is_not_added_to_parent():
     assert row.attributes["data-memory"] == ""
     assert row.attributes["data-heat-memory"] == "0.00000"
     assert result.root_run.lines[0].ram.rss_bytes == 200
+
+
+@pytest.mark.parametrize(
+    ("kind", "path", "label"),
+    [
+        ("python", "/project/work<script>.py", "work<script>.py:2"),
+        (
+            "notebook",
+            "/Workspace/notebook_example.ipynb · cell 2",
+            "notebook_example.ipynb · cell 2:2",
+        ),
+    ],
+)
+def test_growth_ranking_shows_escaped_snapshot_code_and_exact_location(kind, path, label):
+    """Show captured code beside its navigable file or notebook location.
+
+    Parameters
+    ----------
+    kind : str
+        Source category for the file or captured notebook cell.
+
+    path : str
+        Original source path, including the notebook cell label when present.
+
+    label : str
+        Expected filename, optional cell label, and one-based line number.
+
+    """
+    result = memory_result()
+    text = 'buffer = make_buffer("<script>&</script>",  size=4096)'
+    source = SourceUnit("ram-source", path, f"# captured\n    {text}\n", kind=kind)
+    result.sources[source.id] = source
+    result.root_run.lines = [
+        LineStats(SourceLocation(source.id, 2), ram=ProcessMemoryStats(200, 100, 900)),
+        LineStats(SourceLocation(source.id, 1), ram=ProcessMemoryStats(200, -100, 900)),
+    ]
+    document = ReportDOM(render_html(result)).root
+    ranking = document.find_all("table", css="memory-growth")[0]
+    assert [header.text() for header in ranking.find_all("th")] == [
+        "Mem Change",
+        "Peak Mem",
+        "Location",
+        "Source",
+    ]
+    rows = ranking.find_all("tr")[1:]
+    assert cell_values(rows[0]) == ["+100 B", "900 B", label, text]
+    assert cell_values(rows[1])[0] == "-100 B"
+    cells = rows[0].find_all("td")
+    assert cells[3].find_all("code")[0].text() == text
+    assert not ranking.find_all("script")
+    target = cells[2].find_all("a")[0].attributes["href"]
+    source_row = document.find_all("tr", id=target[1:])[0]
+    assert source_row.find_all("td", css="source-code")[0].text().strip() == text
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        SourceLocation("missing", 1),
+        SourceLocation("ram-source", 0),
+        SourceLocation("ram-source", 3),
+    ],
+)
+def test_growth_ranking_keeps_missing_snapshot_code_unavailable(location):
+    """Leave invalid source locations and unknown peaks unavailable.
+
+    Parameters
+    ----------
+    location : [SourceLocation]
+        Missing snapshot or out-of-range source line for a measured change.
+
+    """
+    result = memory_result()
+    result.root_run.lines = [LineStats(location, ram=ProcessMemoryStats(delta_bytes=100))]
+    ranking = ReportDOM(render_html(result)).root.find_all("table", css="memory-growth")[0]
+    row = ranking.find_all("tr")[1]
+    assert cell_values(row) == ["+100 B", "—", "No linked project line", "—"]
+    assert not row.find_all("a")
+    assert not row.find_all("code")
 
 
 def test_growth_ranking_preserves_measured_changes_among_unknowns():
@@ -520,7 +739,7 @@ def test_growth_ranking_preserves_measured_changes_among_unknowns():
     ranking = page.find_all("table")[-1]
     rows = ranking.find_all("tr")[1:]
     assert len(rows) == 1
-    assert cell_values(rows[0]) == ["-100 B", "900 B", "work<script>.py:2"]
+    assert cell_values(rows[0]) == ["-100 B", "900 B", "work<script>.py:2", "second()"]
 
 
 def test_ram_serialization_roundtrip_and_profiles_without_ram():

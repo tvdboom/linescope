@@ -574,10 +574,19 @@ class AutoDocs:
                     content += f"{anchor}<strong>{header}</strong><br>\n\n{text}"
 
             elif match := self.get_block(name):
-                # Headers start with a letter, *, -, or [ after new line
-                header_start = r"^[\[a-zA-Z*-].*?$"
+                # Recognize private fields too so filtering never folds them
+                # into the preceding public field's description.
+                header_start = r"^[\[_a-zA-Z*-].*?$"
 
                 for header in re.findall(header_start, match, re.M):
+                    field_name = header.split(":")[0].strip()
+                    if config.get("include") and field_name not in config["include"]:
+                        continue
+                    if any(
+                        re.fullmatch(pattern, field_name) for pattern in config.get("exclude", [])
+                    ):
+                        continue
+
                     # Check that the default value in docstring matches the real one
                     if default := re.search("(?<=default=).+?$", header):
                         try:
@@ -961,8 +970,11 @@ def custom_autorefs(markdown: str, autodocs: AutoDocs | None = None) -> str:
         Restrict custom API reference detection to prose.
 
         """
-        pattern = r"```.*?```|`[^`\n]*`|!?\[[^\]\n]*\]\([^\n]*?\)"
-        return re.sub(pattern, lambda match: " " * len(match.group()), text, flags=re.S)
+        pattern = (
+            r"```.*?```|`[^`\n]*`|!?\[[^\]\n]*\]\([^\n]*?\)"
+            r"|^[ \t]*:: .*?(?=\n[ \t]*:: |\n\n|\Z)"
+        )
+        return re.sub(pattern, lambda match: " " * len(match.group()), text, flags=re.S | re.M)
 
     # Skip regex check for very long docs
     if len(markdown) < 1e5:

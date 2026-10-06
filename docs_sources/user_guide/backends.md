@@ -43,13 +43,15 @@ Sampling can miss brief operations; Trace's wall intervals include tracing
 overhead. See [performance](#performance) for the tradeoffs.
 
 Trace is the default on every supported Python version (3.11–3.15).
-Scalene is included with LineScope on Python 3.11–3.14. Collectors must be
-supported by the runtime; an unavailable collector fails explicitly instead of
+Scalene is available through `linescope[scalene]` or `linescope[full]` on
+Python 3.11–3.14. Collectors must be supported by the runtime; an unavailable
+collector fails explicitly instead of
 silently changing backends. See [GPU](gpu.md) for device collection support.
 
 ## Scalene
 
 `backend="scalene"` selects the sampling collector on Python 3.11–3.14.
+Install it with `uv pip install "linescope[scalene]"`.
 It collects line time and optional driver memory or GPU metrics. Sampling can
 miss short lines; hits and averages remain unavailable. Native and library work
 stays on the nearest project line. See [memory](#memory) and [GPU](gpu.md) for
@@ -252,5 +254,4 @@ Implement [ProfilerBackend] with `start()`, `stop()` and `result()`, declare
 [BackendCapabilities], and register your factory with [register_backend]. Return
 [RawBackendResult] measurements independently of source discovery and rendering.
 Keep unavailable metrics as `None`, restore resources after failures, and use
-sampling counts only to estimate time. See the
-[custom backend example](../examples/backend.md) for a complete collector.
+sampling counts only to estimate time.

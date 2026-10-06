@@ -13,7 +13,7 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 from linescope import Session
-from linescope.backends.trace import TraceBackend
+from linescope.enums import Backend
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "examples/gpu_example.py"
 
@@ -64,55 +64,22 @@ def test_gpu_demo_profiles_transfers_and_finishes_device_work(
     sessions = []
     previous_trace = sys.gettrace()
 
-    class GPUCollector(TraceBackend):
-        """Return controlled GPU measurements for the example workload.
-
-        Attributes
-        ----------
-        name : str
-            Collector registry name used by this example or test subclass.
-
-        """
-
-        name = "scalene"
-
-        def __init__(self, *, gpu, **options):
-            """Initialize the controlled test state and recorded observations.
-
-            Retain only the state needed to observe arguments, results, and
-            cleanup in the surrounding test.
-
-            """
-            assert gpu is True
-            super().__init__(**options)
-
-        def result(self):
-            """Provide the controlled behavior used by this test.
-
-            Return controlled normalized measurements for collector assertions.
-
-            """
-            result = super().result()
-            result.warnings.append("GPU measurements are unavailable on this test runtime")
-            return result
-
     def collect(**options):
         """Provide the controlled behavior used by this test.
 
         Create a controlled session while checking forwarded profiling options.
 
         """
-        assert options["backend"] == "scalene"
-        assert options["gpu"] is True
+        assert "backend" not in options
+        assert "gpu" not in options
         assert options["memory"] is False
         assert options["spark"] is False
         assert options["display"] == "none"
         assert torch.cuda.init.called
-        session = Session(**options)
+        session = Session(backend="trace", **options)
         sessions.append(session)
         return session
 
-    monkeypatch.setattr("linescope.backends.scalene.ScaleneBackend", GPUCollector)
     demo["main"].__globals__["profile"] = collect
     monkeypatch.chdir(tmp_path)
     demo["main"]()
@@ -124,13 +91,18 @@ def test_gpu_demo_profiles_transfers_and_finishes_device_work(
     assert torch.relu.call_count == torch.cuda.synchronize.call_count == 2
     assert not sessions[0]._backend._running
     assert sys.gettrace() is previous_trace
+    result = sessions[0].result
+    assert result.backend is Backend.TRACE
+    assert result.capabilities.hit_counts
+    assert not result.capabilities.gpu
+    assert all(line.gpu is None for line in result.root_run.lines)
+    assert any(line.hits for line in result.root_run.lines)
     report = (tmp_path / "gpu.html").read_text(encoding="utf-8")
     assert "gpu_example.py" in report
     assert "project_signals" in report
     assert "</html>" in report
     output = capsys.readouterr().out
     assert "Test GPU" in output
-    assert "Collection note: GPU measurements are unavailable" in output
 
 
 def test_gpu_demo_rejects_missing_cuda_before_profiling(gpu_demo, mocker):
@@ -168,8 +140,9 @@ def test_gpu_demo_restores_collection_after_device_error(gpu_demo, monkeypatch, 
         Create a controlled session while checking forwarded profiling options.
 
         """
-        options.update(backend="trace", gpu=False)
-        session = Session(**options)
+        assert "backend" not in options
+        assert "gpu" not in options
+        session = Session(backend="trace", **options)
         sessions.append(session)
         return session
 

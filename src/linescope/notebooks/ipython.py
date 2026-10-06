@@ -9,19 +9,21 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Callable
+from contextlib import ExitStack
 from copy import deepcopy
 import hashlib
 import inspect
 import linecache
+import os
 import re
 import shlex
 from time import perf_counter_ns
 from typing import TYPE_CHECKING, cast
-from uuid import uuid4
 
 from linescope.enums import DisplayMode, RunStatus, SourceKind
 from linescope.model import ProfileRun, SourceLocation, SourceUnit
 from linescope.notebooks.databricks import DatabricksIntegration, resolve_notebook_path
+from linescope.notebooks.identity import _kernel_notebook_path
 from linescope.notebooks.remote import INTERNAL_CELL
 
 if TYPE_CHECKING:
@@ -29,6 +31,39 @@ if TYPE_CHECKING:
     from IPython.core.interactiveshell import ExecutionInfo, ExecutionResult, InteractiveShell
 
     from linescope.api import Session
+
+
+def _local_notebook_path(shell: InteractiveShell | None) -> str | None:
+    """Read a notebook filename exposed by the local execution frontend.
+
+    Prefer VS Code's current document path over Jupyter's kernel-start
+    metadata, then use the kernel's owning server or notebook executor. Ignore
+    console session names and never guess from nearby files.
+
+    Parameters
+    ----------
+    shell : [InteractiveShell] | None
+        Active shell whose namespace may contain frontend notebook metadata.
+
+    Returns
+    -------
+    str | None
+        Reported `.ipynb` path, or None when no notebook name is available.
+
+    """
+    if shell is None:
+        return None
+
+    namespace = getattr(shell, "user_ns", {})
+    for path in (
+        namespace.get("__vsc_ipynb_file__"),
+        namespace.get("__session__"),
+        os.environ.get("JPY_SESSION_NAME"),
+    ):
+        if isinstance(path, str) and path.lower().endswith(".ipynb"):
+            return path
+
+    return _kernel_notebook_path(shell)
 
 
 class NotebookIntegration:
@@ -62,7 +97,8 @@ class NotebookIntegration:
         Owned observer for separate Databricks notebook calls.
 
     path : str
-        Workspace notebook path or the `interactive` fallback label.
+        Frontend notebook filename, workspace path, or the `interactive`
+        fallback label when no notebook identity is exposed.
 
     _snapshots : list[[SourceUnit]]
         Precaptured notebook cells available for runtime alias reuse.
@@ -162,6 +198,7 @@ class NotebookIntegration:
         self.path = (
             getattr(session, "_notebook_path", None)
             or (self.databricks.path if self.databricks else None)
+            or _local_notebook_path(shell)
             or "interactive"
         )
         if self.databricks and getattr(session, "_notebook_path", None):
@@ -220,7 +257,9 @@ class NotebookIntegration:
         ```
 
         """
-        matching = [unit for unit in self._snapshots if unit.source == source.rstrip("\n")]
+        matching = [
+            unit for unit in self._snapshots if unit.source.rstrip("\n") == source.rstrip("\n")
+        ]
         unit = next((unit for unit in matching if unit.id not in self._used_snapshots), None)
 
         if unit is None and matching:
@@ -349,7 +388,12 @@ class NotebookIntegration:
             self.session.result.warnings.append(
                 f"Notebook cell baseline unavailable ({type(error).__name__})."
             )
-        self._cell_execution_count = getattr(self.shell, "execution_count", None)
+        identity = self._current_cell_identity()
+        self._cell_execution_count = (
+            int(identity)
+            if identity is not None and identity.isdecimal()
+            else getattr(self.shell, "execution_count", None)
+        )
         self._cell_started = perf_counter_ns()
 
     def _observe_compiler(self) -> None:
@@ -395,6 +439,10 @@ class NotebookIntegration:
             filename = original(transformed_code, number, raw_code=raw_code)
 
             if self._active:
+                identity = self._current_cell_identity()
+                self._cell_execution_count = (
+                    int(identity) if identity is not None and identity.isdecimal() else number
+                )
                 raw = raw_code if raw_code is not None else transformed_code
                 info = self._cell_info
                 cell_id = (
@@ -456,8 +504,7 @@ class NotebookIntegration:
         finally:
             del frame
 
-    @staticmethod
-    def _cell_identity(filename: str) -> str | None:
+    def _cell_identity(self, filename: str) -> str | None:
         """Extract a stable cell label from a recognized compiler filename.
 
         Return None for filenames outside supported IPython and Databricks
@@ -479,8 +526,43 @@ class NotebookIntegration:
         if ipython:
             return ipython.group(1)
 
+        compiler = getattr(self.shell, "compile", None)
+        formatter = getattr(compiler, "format_code_name", None)
+        formatted = formatter(filename) if formatter is not None else None
+        execution = re.fullmatch(r"In\[(\d+)\]", formatted[1]) if formatted else None
+
+        if execution:
+            return execution.group(1)
+
         databricks = re.search(r"(?:^|[/\\])<?command-([A-Za-z0-9_.-]+)>?$", filename)
         return databricks.group(1) if databricks else None
+
+    def _current_cell_identity(self) -> str | None:
+        """Read the executing cell's label from its compiled stack frame.
+
+        Use compiler metadata rather than the shell's next execution counter.
+        Release inspected frames even when no notebook frame is available.
+
+        Returns
+        -------
+        str | None
+            Active cell label, or None outside a recognized notebook frame.
+
+        """
+        frame = inspect.currentframe()
+
+        try:
+            while frame is not None:
+                identity = self._cell_identity(frame.f_code.co_filename)
+
+                if identity is not None:
+                    return identity
+
+                frame = frame.f_back
+        finally:
+            del frame
+
+        return None
 
     def _capture_existing_definitions(self) -> None:
         # Functions defined before start() retain their compiler filename. Read
@@ -525,7 +607,9 @@ class NotebookIntegration:
 
         Leave ordinary notebook-wide collection to display once at stop. Keep
         compact display failures diagnostic without disrupting cell execution
-        or releasing another integration's hooks.
+        or releasing another integration's hooks. Fall back to raw input when
+        compilation did not capture source, and include it even when no line
+        measurements were collected.
 
         Parameters
         ----------
@@ -552,6 +636,12 @@ class NotebookIntegration:
                 from linescope.render.cell import render_cell_summary
 
                 self.session._refresh()
+                if self._cell_source is None:
+                    raw = getattr(self._cell_info, "raw_cell", None)
+                    if isinstance(raw, str) and not raw.startswith(INTERNAL_CELL):
+                        self._cell_source = self.capture(
+                            raw, cell_id=getattr(self._cell_info, "cell_id", None)
+                        )
                 failed = (
                     getattr(result, "error_before_exec", None) is not None
                     or getattr(result, "error_in_exec", None) is not None
@@ -562,15 +652,13 @@ class NotebookIntegration:
                     elapsed_ns=max(0, finished - started),
                     status=RunStatus.FAILED if failed else RunStatus.SUCCESS,
                 )
-                display(
-                    HTML(
-                        render_cell_summary(
-                            snapshot,
-                            cell=self._cell_source,
-                            execution_count=self._cell_execution_count,
-                        )
-                    )
+                summary = render_cell_summary(
+                    snapshot,
+                    cell=self._cell_source,
+                    execution_count=self._cell_execution_count,
                 )
+                if summary:
+                    display(HTML(summary))
             except Exception as error:  # noqa: BLE001
                 self.session.result.warnings.append(
                     f"Notebook cell summary unavailable ({type(error).__name__})."
@@ -679,7 +767,6 @@ def load_ipython_extension(shell: InteractiveShell) -> None:
         parser.add_argument("--backend")
         parser.add_argument("--memory", action="store_true", default=None)
         parser.add_argument("--gpu", action="store_true", default=None)
-        parser.add_argument("--inline", action="store_true", default=None)
         parser.add_argument("--spark", action="store_true", default=None)
         parser.add_argument("--include", action="append")
         parser.add_argument("--exclude", action="append")
@@ -690,19 +777,18 @@ def load_ipython_extension(shell: InteractiveShell) -> None:
             if value is not None
         }
         session = profile(**options)
+        integration = NotebookIntegration(session, shell)
+        source = integration.capture(cell, cell_id=integration._current_cell_identity())
+        # Nested run_cell compilation must reuse the invoking cell's snapshot.
+        session._notebook_sources.append(source)
 
         # Executing through IPython preserves magics, shell escapes, display,
         # and its ordinary exception behavior.
-        with session:
-            integration = NotebookIntegration(session, shell)
+        with session, ExitStack() as resources:
+            if not session.config.notebooks:
+                resources.callback(integration.stop)
+                integration.start()
 
-            try:
-                transformed = shell.transform_cell(cell)
-                filename = shell.compile.cache(transformed, shell.execution_count, raw_code=cell)
-            except Exception:  # noqa: BLE001
-                filename = f"<linescope-cell-{uuid4().hex}>"
-
-            integration.capture(cell, filename=filename)
             result = shell.run_cell(cell, store_history=False)
 
             if getattr(result, "error_before_exec", None) or getattr(

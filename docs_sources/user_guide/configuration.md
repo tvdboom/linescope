@@ -13,7 +13,6 @@ gpu = false
 spark = true
 notebooks = true
 display = "end"
-inline = false
 output = "linescope.html"
 ```
 
@@ -43,7 +42,6 @@ only the code that belongs to your investigation.
 | `spark` | `True` | Observe Spark lazily; `False` disables integration |
 | `notebooks` | `True` | Capture supported notebook sources |
 | `display` | `"end"` | Also `"cell"`, `"cell-summary"`, or `"none"` |
-| `inline` | `False` | Display in a cell; otherwise open a browser tab |
 | `include` | automatic | Project packages/paths to include |
 | `exclude` | empty | Project packages/paths to exclude |
 | `root` | discovered | Project source boundary |
@@ -51,6 +49,11 @@ only the code that belongs to your investigation.
 
 `output` controls the destination used when displaying in a browser. With
 `display="none"`, save explicitly with `session.save(...)`.
+
+Full reports display inline automatically in notebooks and open a browser
+elsewhere. Choose a destination when showing a report with
+`session.show(inline=True)` or `session.show(inline=False)`; `inline` is not a
+session or project configuration option.
 
 See the [configuration API](../api/configuration/config.md) for the definitive
 signatures.

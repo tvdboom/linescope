@@ -6,12 +6,14 @@ Description: Real IPython execution checks with the deterministic trace backend.
 """
 
 from copy import deepcopy
+import json
+from pathlib import Path
 import sys
 from types import SimpleNamespace
 
 import pytest
 
-from linescope.api import Session
+from linescope.api import ProfileController, Session
 from linescope.notebooks.ipython import (
     NotebookIntegration,
     load_ipython_extension,
@@ -22,15 +24,17 @@ from tests.test_render import ReportDOM
 
 
 @pytest.fixture
-def ipython_shell():
+def ipython_shell(monkeypatch):
     """Provide an isolated IPython shell and restore its global instance.
 
     Execute cells in an isolated IPython shell and inspect captured snapshots,
-    navigation, and restored instrumentation.
+    navigation, and restored instrumentation. Supply the kernel attribute
+    present in real notebook shells so automatic display stays inline.
 
     """
     ipython = pytest.importorskip("IPython.core.interactiveshell")
     shell = ipython.InteractiveShell.instance()
+    monkeypatch.setattr(shell, "kernel", object(), raising=False)
     previous = dict(shell.user_ns)
     yield shell
     running = shell.user_ns.get("session")
@@ -41,16 +45,37 @@ def ipython_shell():
     shell.user_ns.update(previous)
 
 
+@pytest.mark.parametrize("metadata", ["__vsc_ipynb_file__", "__session__", "JPY_SESSION_NAME"])
 def test_multi_cell_session_captures_sources_hits_and_one_final_display(
     ipython_shell,
     monkeypatch,
+    metadata: str,
 ):
     """Verify multi cell session captures sources hits and one final display.
 
     Execute cells in an isolated IPython shell and inspect captured snapshots,
     navigation, and restored instrumentation.
 
+    Parameters
+    ----------
+    ipython_shell : [InteractiveShell]
+        Isolated shell with execution history and reversible notebook hooks.
+
+    monkeypatch : pytest.MonkeyPatch
+        Owned frontend metadata and display replacements.
+
+    metadata : str
+        VS Code namespace key or Jupyter kernel metadata supplying the path.
+
     """
+    path = "/project/example.ipynb"
+    monkeypatch.delenv("JPY_SESSION_NAME", raising=False)
+    for name in ("__vsc_ipynb_file__", "__session__"):
+        monkeypatch.delitem(ipython_shell.user_ns, name, raising=False)
+    if metadata == "JPY_SESSION_NAME":
+        monkeypatch.setenv(metadata, path)
+    else:
+        monkeypatch.setitem(ipython_shell.user_ns, metadata, path)
     shown = []
     monkeypatch.setattr(Session, "show", lambda self: shown.append(self))
     result = ipython_shell.run_cell(
@@ -70,6 +95,18 @@ def test_multi_cell_session_captures_sources_hits_and_one_final_display(
     cells = [unit for unit in session.result.sources.values() if unit.kind == "notebook"]
     assert any("answer = 6 * 7" in unit.source for unit in cells)
     source = next(unit for unit in cells if "answer = 6 * 7" in unit.source)
+    assert all(unit.path.startswith(f"{path} · cell ") for unit in cells)
+    document = ReportDOM(session.html()).root
+    notebook_rows = document.find_all("section", id="files")[0].find_all(
+        "tr", **{"data-kind": "Notebook"}
+    )
+    assert len(notebook_rows) == 1
+    notebook_row = notebook_rows[0]
+    assert notebook_row.find_all("a")[0].text() == "example.ipynb"
+    assert (
+        document.find_all("section", css="source-page")[0].find_all("h1")[0].text()
+        == "example.ipynb"
+    )
     measured = [
         line for line in session.result.root_run.lines if line.location.source_id == source.id
     ]
@@ -81,22 +118,215 @@ def test_multi_cell_session_captures_sources_hits_and_one_final_display(
     )
 
 
-def test_real_cell_magic_profiles_full_source_and_preserves_namespace(ipython_shell, monkeypatch):
+def test_controller_stop_displays_only_html_and_retains_result(ipython_shell, monkeypatch):
+    """Suppress expression output when stopping a notebook-wide session.
+
+    Display the configured report once, retain programmatic result access,
+    and release notebook callbacks before repeated stop calls.
+
+    """
+    from IPython.display import IFrame
+
+    controller = ProfileController()
+    monkeypatch.setattr("linescope.profile", controller)
+    displayed = []
+    monkeypatch.setattr("IPython.display.display", displayed.append)
+    previous_trace = sys.gettrace()
+    started = ipython_shell.run_cell(
+        "from linescope import profile\nsession = profile.start(backend='trace', spark=False)",
+        store_history=True,
+    )
+    assert started.error_in_exec is None
+    ipython_shell.run_cell("stop_answer = 42", store_history=True)
+    stopped = ipython_shell.run_cell("profile.stop()", store_history=True)
+    session = ipython_shell.user_ns["session"]
+    assert stopped.error_in_exec is None
+    assert stopped.result is None
+    assert len(displayed) == 1
+    assert isinstance(displayed[0], IFrame)
+    assert controller.result is session.result
+    assert sys.gettrace() is previous_trace
+    assert not any(
+        isinstance(getattr(callback, "__self__", None), NotebookIntegration)
+        for callback in ipython_shell.events.callbacks["post_run_cell"]
+    )
+    repeated = ipython_shell.run_cell("profile.stop()", store_history=True)
+    assert repeated.error_in_exec is None
+    assert repeated.result is None
+    assert len(displayed) == 1
+
+
+def test_compact_demo_displays_full_report_only_in_final_cell(
+    ipython_shell,
+    monkeypatch,
+    tmp_path,
+):
+    """Execute the demo with compact cell outputs and one final full overview.
+
+    Use the default Trace collector without allocation tracking for
+    deterministic execution. Show source even in the setup cell, expose line
+    sorting on Source only, and ensure the final cell emits no result or HTML
+    string expression.
+
+    """
+    from IPython.display import HTML, IFrame
+
+    path = Path(__file__).resolve().parents[1] / "examples/notebooks/notebook_example.ipynb"
+    notebook = json.loads(path.read_text(encoding="utf-8"))
+    cells = [
+        cell
+        for cell in notebook["cells"]
+        if cell["cell_type"] == "code" and cell["id"].startswith("quickstart-")
+    ]
+    controller = ProfileController()
+    monkeypatch.setattr("linescope.profile", controller)
+    monkeypatch.chdir(tmp_path)
+    displayed = []
+    monkeypatch.setattr("IPython.display.display", displayed.append)
+    original_cache = ipython_shell.compile.cache
+    previous_trace = sys.gettrace()
+
+    for index, cell in enumerate(cells):
+        displayed.clear()
+        code = "".join(cell["source"]).replace("memory=True", "memory=False")
+        executed = ipython_shell.run_cell(code, store_history=True)
+        assert executed.error_before_exec is None
+        assert executed.error_in_exec is None
+        assert executed.result is None
+        assert len(displayed) == 1
+
+        if index < len(cells) - 1:
+            assert isinstance(displayed[0], HTML)
+            assert "linescope-cell-summary" in displayed[0].data
+            summary = ReportDOM(displayed[0].data).root
+            assert not summary.find_all("iframe")
+            headings = summary.find_all("thead")[0].find_all("th")
+            assert headings[0].attributes["aria-label"] == "Line number"
+            assert not headings[0].find_all("button")
+            assert not headings[0].find_all("svg")
+            source = headings[-1]
+            assert source.text() == "Source"
+            assert source.attributes["aria-sort"] == "ascending"
+            control = source.find_all("button")[0]
+            assert control.attributes["data-sort"] == "line"
+            assert control.attributes["data-sort-type"] == "number"
+            assert control.attributes["data-sort-direction"] == "ascending"
+            assert control.find_all("svg", css="table-sort-icon")
+            if index == 0:
+                assert "session = profile.start(" in displayed[0].data
+        else:
+            assert isinstance(displayed[0], IFrame)
+
+    session = ipython_shell.user_ns["session"]
+    assert session.state == "stopped"
+    assert session.result.backend == "trace"
+    assert session.result.capabilities.hit_counts
+    assert ipython_shell.user_ns["result"] is controller.result is session.result
+    assert ipython_shell.user_ns["report_path"] == tmp_path / "notebook.html"
+    saved = ReportDOM((tmp_path / "notebook.html").read_text(encoding="utf-8")).root
+    assert "def tokenize" in saved.text()
+    assert sys.gettrace() is previous_trace
+    assert ipython_shell.compile.cache == original_cache
+
+
+def test_quick_start_end_mode_displays_only_when_collection_stops(
+    ipython_shell,
+    monkeypatch,
+    tmp_path,
+):
+    """Display one complete report after the quick start's end-mode workload.
+
+    Execute the actual notebook cells with Trace and check that intermediate
+    cells emit no profiler display. Restore tracing and notebook hooks after
+    the final cell and retain the collected source in the saved report.
+
+    """
+    from IPython.display import IFrame
+
+    notebook = json.loads(
+        (
+            Path(__file__).resolve().parents[1] / "examples/notebooks/notebook_example.ipynb"
+        ).read_text(encoding="utf-8")
+    )
+    cells = [
+        cell
+        for cell in notebook["cells"]
+        if cell["cell_type"] == "code" and cell["id"].startswith("end-")
+    ]
+    controller = ProfileController()
+    monkeypatch.setattr("linescope.profile", controller)
+    monkeypatch.chdir(tmp_path)
+    displayed = []
+    monkeypatch.setattr("IPython.display.display", displayed.append)
+    original_cache = ipython_shell.compile.cache
+    previous_trace = sys.gettrace()
+
+    for index, cell in enumerate(cells):
+        displayed.clear()
+        code = "".join(cell["source"]).replace("memory=True", "memory=False")
+        executed = ipython_shell.run_cell(code, store_history=True)
+        assert executed.error_before_exec is None
+        assert executed.error_in_exec is None
+        assert executed.result is None
+        if index < len(cells) - 1:
+            assert displayed == []
+        else:
+            assert len(displayed) == 1
+            assert isinstance(displayed[0], IFrame)
+
+    session = ipython_shell.user_ns["end_session"]
+    assert session.state == "stopped"
+    assert ipython_shell.user_ns["end_result"] is controller.result is session.result
+    report = ReportDOM((tmp_path / "notebook-end.html").read_text(encoding="utf-8")).root
+    assert "mean_square = sum(squared) / len(squared)" in report.text()
+    assert sys.gettrace() is previous_trace
+    assert ipython_shell.compile.cache == original_cache
+
+
+@pytest.mark.parametrize("store_history", [False, True])
+@pytest.mark.parametrize("magic", ["profile", "linescope"])
+@pytest.mark.parametrize("kernel_compiler", [False, True])
+def test_real_cell_magic_profiles_full_source_and_preserves_namespace(
+    ipython_shell, monkeypatch, magic, *, store_history, kernel_compiler
+):
     """Verify real cell magic profiles full source and preserves namespace.
 
     Execute cells in an isolated IPython shell and inspect captured snapshots,
     navigation, and restored instrumentation.
 
+    Parameters
+    ----------
+    ipython_shell : [InteractiveShell]
+        Isolated shell with its execution counter and namespace preserved.
+
+    monkeypatch : pytest.MonkeyPatch
+        Owned display and compiler overrides restored after the test.
+
+    magic : str
+        Registered profiling magic used to execute the workload.
+
+    store_history : bool
+        Whether IPython advances its counter and stores this execution.
+
+    kernel_compiler : bool
+        Whether to use Jupyter's filesystem compiler rather than IPython's
+        virtual compiler filenames.
+
     """
     shown = []
     monkeypatch.setattr(Session, "show", lambda self: shown.append(self))
+    if kernel_compiler:
+        compiler = pytest.importorskip("ipykernel.compiler")
+        monkeypatch.setattr(ipython_shell, "compile", compiler.XCachingCompiler())
     load_ipython_extension(ipython_shell)
+    execution_count = ipython_shell.execution_count
+    original_cache = ipython_shell.compile.cache
     result = ipython_shell.run_cell(
         (
-            "%%profile --backend trace\n# complete source\nmagic_answer = sum(range(5))\n"
+            f"%%{magic} --backend trace\n# complete source\nmagic_answer = sum(range(5))\n"
             "magic_answer += 1"
         ),
-        store_history=True,
+        store_history=store_history,
     )
     assert result.error_in_exec is None
     assert ipython_shell.user_ns["magic_answer"] == 11
@@ -108,28 +338,69 @@ def test_real_cell_magic_profiles_full_source_and_preserves_namespace(ipython_sh
         if unit.source.startswith("# complete source")
     ]
     assert len(sources) == 1
+    assert sources[0].path == f"interactive · cell {execution_count}"
+    assert ipython_shell.execution_count == execution_count + store_history
+    assert ipython_shell.compile.cache == original_cache
     assert any(
         line.location.source_id == sources[0].id and line.location.line == 2 and line.hits
         for line in session.result.root_run.lines
     )
 
 
-def test_cell_magic_failed_workload_still_restores_session(ipython_shell, monkeypatch):
+@pytest.mark.parametrize("notebooks", [False, True])
+@pytest.mark.parametrize("notebook_path", [None, "example.ipynb"])
+def test_cell_magic_failed_workload_still_restores_session(
+    ipython_shell, monkeypatch, notebook_path, *, notebooks
+):
     """Verify cell magic failed workload still restores session.
 
     Execute cells in an isolated IPython shell and inspect captured snapshots,
     navigation, and restored instrumentation.
 
+    Parameters
+    ----------
+    ipython_shell : [InteractiveShell]
+        Isolated shell used to raise a controlled workload exception.
+
+    monkeypatch : pytest.MonkeyPatch
+        Owned session-factory and display overrides restored after the test.
+
+    notebook_path : str | None
+        Frontend filename, or None to exercise the interactive fallback.
+
+    notebooks : bool
+        Whether the session installs notebook hooks automatically; the magic
+        still owns source capture when that setting is disabled.
+
     """
+    monkeypatch.delenv("JPY_SESSION_NAME", raising=False)
+    monkeypatch.delitem(ipython_shell.user_ns, "__session__", raising=False)
+    monkeypatch.delitem(ipython_shell.user_ns, "__vsc_ipynb_file__", raising=False)
+    if notebook_path is not None:
+        monkeypatch.setitem(ipython_shell.user_ns, "__vsc_ipynb_file__", notebook_path)
     shown = []
     monkeypatch.setattr(Session, "show", lambda self: shown.append(self))
+    monkeypatch.setattr(
+        "linescope.profile", lambda **options: Session(notebooks=notebooks, **options)
+    )
     load_ipython_extension(ipython_shell)
+    execution_count = ipython_shell.execution_count
+    original_cache = ipython_shell.compile.cache
     ipython_shell.run_cell(
         "%%profile --backend trace\nraise ValueError('intentional')", store_history=True
     )
     assert len(shown) == 1
     assert shown[0].state == "stopped"
     assert shown[0].result.root_run.status == "failed"
+    source = next(
+        source for source in shown[0].result.sources.values() if source.source.startswith("raise")
+    )
+    assert source.path == f"{notebook_path or 'interactive'} · cell {execution_count}"
+    assert any(
+        line.location.source_id == source.id and line.location.line == 1 and line.hits
+        for line in shown[0].result.root_run.lines
+    )
+    assert ipython_shell.compile.cache == original_cache
     # A new session verifies that the previous failed cell released resources.
     with Session(backend="trace", display="none", spark=False):
         pass
@@ -220,7 +491,10 @@ def test_compact_cells_include_called_definitions_without_previous_cell_costs(
 
     """
     fragments, snapshots = compact_outputs
-    definition = "def compact_helper():\n    return 42\n"
+    definition = (
+        'def compact_helper():\n    """Return a captured answer."""\n'
+        "    # Called project context\n    return 42\n"
+    )
     ipython_shell.run_cell(definition, store_history=True)
     started = ipython_shell.run_cell(
         "from linescope import profile\n"
@@ -238,6 +512,20 @@ def test_compact_cells_include_called_definitions_without_previous_cell_costs(
     for _ in range(2):
         result = ipython_shell.run_cell(workload, store_history=True, cell_id="repeated")
         assert result.error_in_exec is None
+        table = ReportDOM(fragments[-1]).root.find_all("table")[0]
+        assert table.attributes["aria-label"].startswith(
+            f"LineScope cell {result.execution_count}:"
+        )
+        shown_source = [element.text() for element in table.find_all("code")]
+        assert "def compact_helper():" in shown_source
+        assert '    """Return a captured answer."""' not in shown_source
+        assert "    # Called project context" not in shown_source
+        return_row = next(
+            row
+            for row in table.find_all("tbody")[0].find_all("tr")
+            if row.find_all("code")[0].text() == "    return 42"
+        )
+        assert return_row.find_all("td")[0].text() == "4"
         line = next(
             line for line in snapshots[-1].root_run.lines if line.location.source_id == helper.id
         )
@@ -250,11 +538,13 @@ def test_compact_cells_include_called_definitions_without_previous_cell_costs(
     count = len(fragments)
     stopped = ipython_shell.run_cell("profile.stop()", store_history=True)
     assert stopped.error_in_exec is None
+    assert stopped.result is None
     assert len(fragments) == count
     cumulative = next(
         line for line in session.result.root_run.lines if line.location.source_id == helper.id
     )
     assert cumulative.hits == 6
+    assert session.result.sources[helper.id].source == definition
     assert session.save(tmp_path / "full.html").is_file()
 
 
@@ -281,7 +571,11 @@ def test_failed_compact_cell_allows_debugging_to_continue_and_restores_hooks(
     result = ipython_shell.run_cell(cell, store_history=True)
     assert result.error_in_exec or result.error_before_exec
     assert snapshots[-1].root_run.status == "failed"
-    assert "Failed" in ReportDOM(fragments[-1]).root.text()
+    if result.error_before_exec:
+        assert not snapshots[-1].root_run.lines
+    document = ReportDOM(fragments[-1]).root
+    assert document.find_all("section")[0].attributes["data-status"] == "failed"
+    assert document.find_all("code")[0].text() == cell
     result = ipython_shell.run_cell("recovered_answer = 42", store_history=True)
     assert result.error_in_exec is None
     assert snapshots[-1].root_run.status == "success"
@@ -347,14 +641,19 @@ def test_cell_magic_can_request_one_compact_summary(ipython_shell, compact_outpu
     """
     fragments, snapshots = compact_outputs
     load_ipython_extension(ipython_shell)
+    execution_count = ipython_shell.execution_count
     result = ipython_shell.run_cell(
-        "%%profile --backend trace --display cell-summary\ncompact_magic_answer = 42",
+        "%%profile --display cell-summary\ncompact_magic_answer = 42",
         store_history=True,
     )
     assert result.error_in_exec is None
     assert len(fragments) == len(snapshots) == 1
+    assert snapshots[0].backend == "trace"
+    assert snapshots[0].capabilities.hit_counts
     assert ipython_shell.user_ns["compact_magic_answer"] == 42
     assert "compact_magic_answer = 42" in ReportDOM(fragments[0]).root.text()
+    table = ReportDOM(fragments[0]).root.find_all("table")[0]
+    assert table.attributes["aria-label"].startswith(f"LineScope cell {execution_count}:")
     with Session(backend="trace", display="none", spark=False):
         pass
 
@@ -381,6 +680,10 @@ def test_compact_elapsed_uses_cell_boundaries_and_skips_internal_cells(
     adapter._pre_run_cell(SimpleNamespace(raw_cell=INTERNAL_CELL + "\npass"))
     adapter._post_run_cell(SimpleNamespace())
     assert len(fragments) == 2
+    assert [ReportDOM(fragment).root.find_all("code")[0].text() for fragment in fragments] == [
+        "answer = 1",
+        "answer = 2",
+    ]
 
 
 def test_compact_baseline_failure_skips_cumulative_output_and_recovers(

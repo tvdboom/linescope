@@ -11,6 +11,7 @@ from __future__ import annotations
 import sys
 import threading
 from types import SimpleNamespace
+import warnings
 
 import pytest
 
@@ -138,6 +139,7 @@ class TestConfiguration:
             ({"display": "always"}, ValueError),
             ({"output": ""}, ValueError),
             ({"extra": 1}, TypeError),
+            ({"inline": True}, TypeError),
         ],
     )
     def test_invalid_values(self, options, error):
@@ -159,6 +161,21 @@ class TestConfiguration:
         """
         with pytest.raises(AttributeError):
             Config().memory = True
+
+    def test_inline_is_only_a_show_option(self):
+        """Reject display destinations in collection configuration.
+
+        Keep failed session starts and global updates free of side effects.
+
+        """
+        controller = ProfileController()
+        with pytest.raises(TypeError, match="inline"):
+            controller.start(backend="trace", inline=True)
+        assert controller._session is None
+        configure(display="none")
+        with pytest.raises(TypeError, match="inline"):
+            configure(inline=True)
+        assert resolve_config().display == "none"
 
     def test_prevalidated_config(self, tmp_path):
         """Verify prevalidated config.
@@ -208,7 +225,7 @@ class TestSession:
         assert functions["double"].calls == 1
         assert functions["never"].calls == 0
         assert functions["never"].total_time_ns is None
-        assert 'class="source-row"' in session.html()
+        assert ReportDOM(session.html()).root.find_all("tr", css="source-row")
 
     def test_function_line_counts_include_full_snapshotted_spans(self, tmp_path):
         """Count complete function definitions independently of execution.
@@ -256,7 +273,7 @@ class TestSession:
         document = ReportDOM(session.html()).root
         table = document.find_all("section", id="functions")[0].find_all("table")[0]
         assert {
-            row.find_all("td")[0].text(): row.find_all("td")[1].text()
+            row.find_all("td")[3].text(): row.find_all("td")[4].text()
             for row in table.find_all("tr")[1:]
         } == {"compact()": "1", "outer()": "8", "outer.inner()": "2", "Worker.task()": "2"}
 
@@ -345,10 +362,20 @@ class TestSession:
         )
         with pytest.raises(RuntimeError, match="already running"):
             controller.start()
-        assert controller.stop() is session.result
-        assert controller.stop() is session.result
+        assert controller.result is session.result
+        assert controller.stop() is None
+        assert controller.stop() is None
+        assert controller.result is session.result
+        assert controller.result.root_run.elapsed_ns is not None
         saved = controller.save(tmp_path / "result.html")
         assert saved.is_file()
+
+        next_session = controller.start(
+            backend="trace", root=str(tmp_path), display="none", notebooks=False, spark=False
+        )
+        assert controller.result is next_session.result
+        assert controller.result is not session.result
+        assert controller.stop() is None
 
     def test_overlapping_sessions_rejected(self, tmp_path):
         """Verify overlapping sessions rejected.
@@ -405,6 +432,8 @@ class TestSession:
         """
         with pytest.raises(RuntimeError, match=r"profile.start"):
             ProfileController().stop()
+        with pytest.raises(RuntimeError, match=r"profile.start"):
+            _ = ProfileController().result
 
     def test_memory_disabled_stays_unavailable(self, tmp_path):
         """Verify memory disabled stays unavailable.
@@ -605,12 +634,94 @@ class TestSession:
         session.show()
         assert opened == [(tmp_path / "shown.html").as_uri()]
         displayed = []
-        monkeypatch.setattr("IPython.get_ipython", lambda: SimpleNamespace())
+        monkeypatch.setattr("IPython.get_ipython", lambda: SimpleNamespace(kernel=object()))
         monkeypatch.setattr("IPython.display.display", displayed.append)
         session.show(inline=True)
         assert len(displayed) == 1
-        assert "srcdoc=" in displayed[0].data
+        assert "srcdoc=" in displayed[0]._repr_html_()
         assert len(opened) == 1
+
+    @pytest.mark.parametrize("inline", [None, False, True])
+    @pytest.mark.parametrize("environment", ["script", "terminal", "notebook"])
+    def test_show_detects_environment_and_honors_override(
+        self, tmp_path, monkeypatch, environment: str, *, inline: bool | None
+    ) -> None:
+        """Choose inline output only for an active notebook kernel.
+
+        Honor each explicit display choice without persisting it as a session
+        setting. Invalid inline requests must not open or write a report.
+
+        Parameters
+        ----------
+        tmp_path : Path
+            Isolated source and optional browser report directory.
+
+        monkeypatch : pytest.MonkeyPatch
+            Owned shell, browser, and notebook display overrides.
+
+        environment : str
+            Script, terminal IPython, or notebook kernel being simulated.
+
+        inline : bool | None
+            Per-report destination override or automatic detection.
+
+        """
+        destination = tmp_path / "shown.html"
+        session, _ = execute(tmp_path, "x = 1\n", output=str(destination))
+        shell = (
+            SimpleNamespace(kernel=object())
+            if environment == "notebook"
+            else SimpleNamespace()
+            if environment == "terminal"
+            else None
+        )
+        opened, displayed = [], []
+        monkeypatch.setattr("IPython.get_ipython", lambda: shell)
+        monkeypatch.setattr("webbrowser.open", lambda url, **_kwargs: opened.append(url))
+        monkeypatch.setattr("IPython.display.display", displayed.append)
+        if inline is True and environment != "notebook":
+            with pytest.raises(RuntimeError, match="active IPython notebook"):
+                session.show(inline=inline)
+            assert not destination.exists()
+            assert not opened
+            assert not displayed
+        else:
+            session.show(inline=inline)
+            display_inline = environment == "notebook" if inline is None else inline
+            assert len(displayed) == int(display_inline)
+            assert opened == ([] if display_inline else [destination.as_uri()])
+            assert destination.exists() is not display_inline
+
+    def test_show_without_optional_ipython(self, tmp_path, monkeypatch):
+        """Display browser reports without requiring optional notebook imports.
+
+        Reject an explicit inline request when IPython is unavailable.
+
+        """
+        destination = tmp_path / "shown.html"
+        session, _ = execute(tmp_path, "x = 1\n", output=str(destination))
+        opened = []
+        monkeypatch.setitem(sys.modules, "IPython", None)
+        monkeypatch.setattr("webbrowser.open", lambda url, **_kwargs: opened.append(url))
+        session.show()
+        assert opened == [destination.as_uri()]
+        with pytest.raises(RuntimeError, match="active IPython notebook"):
+            session.show(inline=True)
+        assert opened == [destination.as_uri()]
+
+    @pytest.mark.parametrize("inline", ["yes", 1])
+    def test_show_rejects_invalid_destination(self, tmp_path, monkeypatch, inline):
+        """Validate display flags before rendering or opening a report.
+
+        Keep truthy strings and integers from choosing a destination silently.
+
+        """
+        session, _ = execute(tmp_path, "x = 1\n")
+        opened = []
+        monkeypatch.setattr("webbrowser.open", lambda url, **_kwargs: opened.append(url))
+        with pytest.raises(TypeError, match="inline must be a boolean or None"):
+            session.show(inline=inline)
+        assert not opened
 
     @pytest.mark.parametrize("inline", [None, True])
     def test_inline_links_use_report_base(self, tmp_path, monkeypatch, inline):
@@ -621,13 +732,19 @@ class TestSession:
 
         """
         source = 'value = \'</iframe><base href="https://example.invalid/"> & "quoted"\'\n'
-        session, _ = execute(tmp_path, source, inline=True)
+        session, _ = execute(tmp_path, source)
         displayed = []
-        monkeypatch.setattr("IPython.get_ipython", lambda: SimpleNamespace())
+        monkeypatch.setattr("IPython.get_ipython", lambda: SimpleNamespace(kernel=object()))
         monkeypatch.setattr("IPython.display.display", displayed.append)
 
-        html = session.show(inline=inline)
-        wrapper = ReportDOM(displayed[0].data).root
+        from IPython.display import IFrame
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            html = session.show(inline=inline)
+
+        assert isinstance(displayed[0], IFrame)
+        wrapper = ReportDOM(displayed[0]._repr_html_()).root
         assert len(wrapper.find_all()) == 1
         iframe = wrapper.find_all("iframe")[0]
         assert iframe.attributes["sandbox"] == "allow-scripts allow-same-origin"

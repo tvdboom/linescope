@@ -1,7 +1,7 @@
 """LineScope.
 
 Author: Mavs
-Description: Profile CUDA signal projections with sampled GPU time and memory.
+Description: Profile the Python driver of CUDA signal projections with Trace.
 
 """
 
@@ -27,11 +27,11 @@ def load_signals() -> tuple[torch.Tensor, torch.Tensor]:
 
 
 def project_signals(signals: torch.Tensor, weights: torch.Tensor) -> tuple[torch.Tensor, int]:
-    """Project signals long enough for GPU sampling to observe repeated work.
+    """Project signals repeatedly to expose Python driver work and waiting.
 
     Synchronize each iteration to finish queued device work inside the
-    profiling session. Driver waiting and sampled GPU time remain separate
-    measurements, and the iteration count depends on the device.
+    profiling session. Trace measures driver waiting; GPU time and device
+    memory stay unavailable. The iteration count depends on the device.
 
     """
     deadline = perf_counter() + 3
@@ -48,21 +48,19 @@ def main() -> None:
     """Run the CUDA workload and save its source profile.
 
     Require a CUDA-enabled PyTorch build and an available NVIDIA GPU before
-    starting collection. Device memory collection does not require enabling
-    Python-driver allocation sampling.
+    starting collection. Use the default Trace backend for driver timing
+    without collecting Python allocations or GPU metrics.
 
     """
     if not torch.cuda.is_available():
         raise SystemExit(
             "The GPU example requires an NVIDIA GPU, a compatible driver, and CUDA-enabled "
-            "PyTorch. See docs_sources/examples/gpu.md for setup."
+            "PyTorch. See docs_sources/examples/notebooks/gpu_example.ipynb for setup."
         )
 
     # Initialize CUDA before profiling so one-time device startup is excluded.
     torch.cuda.init()
     with profile(
-        backend="scalene",
-        gpu=True,
         memory=False,
         root=str(Path(__file__).parent),
         spark=False,

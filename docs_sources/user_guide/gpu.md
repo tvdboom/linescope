@@ -5,8 +5,8 @@ GPU work is a separate measurement domain from Python-driver time and memory. A
 Python line that launches device work can return before that work finishes, so
 driver line timings alone do not describe GPU execution.
 
-Run the [GPU example](../examples/gpu.md) for a complete CUDA workload and a
-`just demo-gpu` recipe.
+Run the [GPU notebook](../examples/notebooks/gpu_example.ipynb) to see a
+complete CUDA workload and its output.
 
 ## Collection support
 
@@ -15,8 +15,8 @@ The Python API accepts `gpu=True`, and the CLI and notebook cell magic accept
 declares `BackendCapabilities.gpu=True`.
 
 Scalene collects GPU utilization and device memory alongside Python line time on
-supported devices. It is included with LineScope on Python 3.11–3.14. Enable
-collection explicitly:
+supported devices. Install `linescope[scalene]` or `linescope[full]` on Python
+3.11–3.14, then enable collection explicitly:
 
 ```python
 from linescope import profile
@@ -42,7 +42,8 @@ profiled process.
 
 ## Measurement model
 
-[GPUStats](../api/model/gpustats.md) represents estimated GPU time and sampled
+[GPUStats](../api/model/memorystats.md#gpustats) represents estimated GPU time
+and sampled
 peak device memory for a source line. GPU time can overlap CPU work and must
 stay separate from driver wall time. Device memory also stays separate from
 [Python-driver memory](backends.md#memory) and

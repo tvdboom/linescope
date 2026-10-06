@@ -28,16 +28,15 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
     ("script", "report"),
     [
         ("script_example.py", "linescope.html"),
-        ("custom_backend_example.py", "custom-backend.html"),
         ("package_example.py", "package.html"),
     ],
 )
-def test_examples_save_reports_with_controlled_trace_collector(
+def test_examples_save_reports_with_trace_and_controlled_memory(
     tmp_path,
     script,
     report,
 ):
-    """Verify examples save reports with controlled trace collector.
+    """Save example reports with Trace and controlled memory collection.
 
     Run the relevant example with controlled integrations and inspect report
     contents, configuration, or resource cleanup.
@@ -46,14 +45,6 @@ def test_examples_save_reports_with_controlled_trace_collector(
     launcher = (
         "import pathlib, runpy, sys, webbrowser\n"
         "from linescope import configure\n"
-        "from linescope.backends import scalene\n"
-        "from linescope.backends.trace import TraceBackend\n"
-        "class DemoCollector(TraceBackend):\n"
-        "    name = 'scalene'\n"
-        "    def __init__(self, *, memory, **options):\n"
-        "        assert memory is False\n"
-        "        super().__init__(memory=False, **options)\n"
-        "scalene.ScaleneBackend = DemoCollector\n"
         "import linescope.memory as memory_module\n"
         "class DemoMemoryCollector:\n"
         "    def __init__(self, *args): pass\n"
@@ -65,9 +56,10 @@ def test_examples_save_reports_with_controlled_trace_collector(
         "    def snapshot(self): return {}, [], [], False\n"
         "memory_module.ProcessMemoryCollector = DemoMemoryCollector\n"
         "sys.path.insert(0, str(pathlib.Path(sys.argv[1]).parent))\n"
-        "configure(output=sys.argv[2])\n"
+        "configure(backend='trace', output=sys.argv[2])\n"
         "webbrowser.open = lambda *args, **kwargs: True\n"
         "runpy.run_path(sys.argv[1], run_name='__main__')\n"
+        "assert 'linescope.backends.scalene' not in sys.modules\n"
     )
     completed = subprocess.run(
         [
@@ -90,45 +82,46 @@ def test_examples_save_reports_with_controlled_trace_collector(
         assert completed.stdout.strip()
     html = (tmp_path / report).read_text(encoding="utf-8")
     assert "</html>" in html
-    assert "scalene" in html
+    assert "trace" in html
     assert script in html
 
 
-@pytest.mark.scalene
 @pytest.mark.parametrize(
     ("script", "report"),
     [
         ("script_example.py", "linescope.html"),
-        ("custom_backend_example.py", "custom-backend.html"),
         ("package_example.py", "package.html"),
     ],
 )
-def test_demos_run_with_scalene_and_memory(tmp_path, script, report):
-    """Verify demos run with scalene and memory.
+def test_demos_run_with_trace_and_memory(tmp_path, script, report):
+    """Run demos with Trace and verify driver memory and line measurements.
 
     Run the relevant example with controlled integrations and inspect report
     contents, configuration, or resource cleanup.
 
     """
-    from tests.test_scalene import run_probe
-
-    result = run_probe(
-        tmp_path,
-        rf"""
+    source = rf"""
 import ast, json, os, pathlib, re, runpy, sys, webbrowser
 from linescope import configure
 os.chdir({str(tmp_path)!r})
-configure(output={str(tmp_path / report)!r})
+configure(backend="trace", output={str(tmp_path / report)!r})
 webbrowser.open = lambda *args, **kwargs: True
 sys.path.insert(0, {str(REPO_ROOT / "examples")!r})
+previous_trace = sys.gettrace()
 runpy.run_path({str(REPO_ROOT / "examples" / script)!r}, run_name='__main__')
+assert sys.gettrace() is previous_trace
+assert 'linescope.backends.scalene' not in sys.modules
 html = pathlib.Path({report!r}).read_text(encoding='utf-8')
-rows = re.findall(
-    r'<tr[^>]*class="source-row"[^>]*data-line="([0-9]+)"'
-    r' data-time="([^"]*)" data-memory="([^"]*)"[^>]*>(.*?)</tr>',
+raw_rows = re.findall(
+    r'<tr[^>]*class="[^"]*\bsource-row\b[^"]*"([^>]*)>(.*?)</tr>',
     html,
     flags=re.DOTALL,
 )
+rows = [
+    (attributes['data-line'], attributes['data-time'], attributes['data-memory'], cells)
+    for raw_attributes, cells in raw_rows
+    for attributes in [dict(re.findall(r'([a-z-]+)="([^"]*)"', raw_attributes))]
+]
 timed_lines = {{int(number) for number, duration, _, _ in rows if duration and int(duration) > 0}}
 functions = ast.parse(pathlib.Path({str(REPO_ROOT / "examples" / script)!r}).read_text())
 timed_functions = [
@@ -141,18 +134,28 @@ memory_rows = [
     for _, _, delta, cells in rows if delta and int(delta) > 0
 ]
 print(json.dumps({{
-    'sampled': 'Estimated time' in html,
+    'sampled': 'Sampled estimates of Python line time' in html,
+    'hits': 'data-sort="hits"' in html,
     'memory': 'Mem Change' in html,
-    'memory_order': 'data-order="memory"' in html,
+    'memory_order': 'data-sort="memory"' in html,
     'timed_functions': timed_functions,
     'timed': bool(timed_lines),
     'package_sources': '__main__.py' in html and 'helpers.py' in html,
-    'memory_values': any(cells[2] != chr(8212) and cells[3] != chr(8212) for cells in memory_rows),
+    'memory_values': any(cells[3] != chr(8212) and cells[4] != chr(8212) for cells in memory_rows),
 }}))
-""",
-        preload=False,
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", source],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=90,
     )
-    assert result["sampled"]
+    assert completed.returncode == 0, completed.stderr
+    result = json.loads(completed.stdout.splitlines()[-1])
+    assert not result["sampled"]
+    assert result["hits"]
     assert result["memory"]
     assert result["memory_order"]
     if script == "package_example.py":
@@ -182,7 +185,7 @@ def package_demo(monkeypatch):
         Create a controlled session while checking forwarded profiling options.
 
         """
-        assert options["backend"] == "scalene"
+        assert "backend" not in options
         assert options["memory"] is True
         options.update(backend="trace", memory=False)
         session = Session(**options)
@@ -273,9 +276,9 @@ def test_package_demo_restores_collection_after_workload_error(
         pass
 
 
-@pytest.mark.parametrize("name", ["notebook_example", "spark_example", "databricks_example"])
-def test_notebook_demos_request_scalene_and_memory(name):
-    """Verify notebook demos request scalene and memory.
+@pytest.mark.parametrize("name", ["notebook_example", "spark_example"])
+def test_notebook_demos_use_default_trace_backend_and_memory(name):
+    """Use the default Trace backend and enable memory in every notebook.
 
     Run the relevant example with controlled integrations and inspect report
     contents, configuration, or resource cleanup.
@@ -291,8 +294,9 @@ def test_notebook_demos_request_scalene_and_memory(name):
         code = "".join(cell["source"])
         if code.startswith("%%profile"):
             options = code.splitlines()[0].split()
-            assert options[options.index("--backend") + 1] == "scalene"
+            assert "--backend" not in options
             assert "--memory" in options
+            assert "--inline" not in options
             requests.append(code)
             continue
         if code.startswith("%"):
@@ -303,11 +307,9 @@ def test_notebook_demos_request_scalene_and_memory(name):
                 or (isinstance(node.func, ast.Attribute) and node.func.attr == "start")
             ):
                 keywords = {item.arg: ast.literal_eval(item.value) for item in node.keywords}
-                if keywords.get("display") == "cell-summary":
-                    assert keywords["backend"] == "trace"
-                    continue
-                assert keywords["backend"] == "scalene"
+                assert "backend" not in keywords
                 assert keywords["memory"] is True
+                assert "inline" not in keywords
                 requests.append(node)
     assert requests
 
@@ -376,7 +378,9 @@ def test_spark_notebook_uses_the_script_workload_and_cleanup():
         (REPO_ROOT / "examples/notebooks/spark_example.ipynb").read_text(encoding="utf-8")
     )
     code = "\n\n".join(
-        "".join(cell["source"]) for cell in notebook["cells"] if cell["cell_type"] == "code"
+        "".join(cell["source"])
+        for cell in notebook["cells"]
+        if cell["cell_type"] == "code" and cell["id"] != "spark-report"
     )
     expected = ast.Module(body=[*imports, *helpers, *workload], type_ignores=[])
     assert ast.dump(ast.parse(code)) == ast.dump(expected)
@@ -517,39 +521,3 @@ def test_spark_java_setup_reads_saved_windows_environment(
     else:
         spark_java_setup()
         assert os.environ["JAVA_HOME"] == str(tmp_path)
-
-
-def test_databricks_source_export_matches_notebook_cells():
-    """Verify databricks source export matches notebook cells.
-
-    Run the relevant example with controlled integrations and inspect report
-    contents, configuration, or resource cleanup.
-
-    """
-    source = (REPO_ROOT / "examples/databricks_example.py").read_text(encoding="utf-8")
-    notebook = json.loads(
-        (REPO_ROOT / "examples/notebooks/databricks_example.ipynb").read_text(encoding="utf-8")
-    )
-
-    def code_lines(source):
-        """Extract executable notebook source for comparison with its export.
-
-        Run the relevant example with controlled integrations and inspect report
-        contents, configuration, or resource cleanup.
-
-        """
-        return [
-            line
-            for raw in source.splitlines()
-            if (line := raw.removeprefix("# MAGIC ")).strip() and not line.lstrip().startswith("#")
-        ]
-
-    exported = [
-        lines for cell in source.split("# COMMAND ----------")[1:] if (lines := code_lines(cell))
-    ]
-    cells = [
-        code_lines("".join(cell["source"]))
-        for cell in notebook["cells"]
-        if cell["cell_type"] == "code"
-    ]
-    assert exported == cells

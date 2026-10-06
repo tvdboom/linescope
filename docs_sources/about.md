@@ -74,35 +74,3 @@ src="../img/support/jetbrains.png" alt="JetBrains"></a> <a
 href="https://www.jetbrains.com/pycharm/"><img src="../img/support/pycharm.png"
 alt="PyCharm"></a>
 </div>
-<br>
-## Backends
-<br>
-<div class="row backend-logos">
-<div class="column"><div class="logo"><a href="../user_guide/backends/#scalene"
-draggable="false"><img src="../img/backends/scalene.png" alt="Scalene"
-draggable="false">
-<figcaption>
-<strong>Scalene</strong>
-</figcaption>
-</a>
-</div>
-</div>
-<div class="column"><div class="logo"><a href="../user_guide/backends/#trace"
-draggable="false"><img src="../img/backends/trace.svg" alt="Trace"
-draggable="false">
-<figcaption>
-<strong>Trace</strong>
-</figcaption>
-</a>
-</div>
-</div>
-<div class="column"><div class="logo"><a href="../user_guide/backends/#tachyon"
-draggable="false"><img src="../img/backends/tachyon.svg" alt="Tachyon"
-draggable="false">
-<figcaption>
-<strong>Tachyon</strong>
-</figcaption>
-</a>
-</div>
-</div>
-</div>
