@@ -1048,6 +1048,109 @@ def _spark_operator_rows(
     return rows
 
 
+def _spark_action_cost(execution: SparkExecution) -> _SparkCost:
+    """Select each action's largest reported operator or pipeline cost.
+
+    Keep metric domains independent and preserve missing values rather than
+    substituting executor totals or adding overlapping counters.
+
+    Parameters
+    ----------
+    execution : [SparkExecution]
+        Captured action with its measured physical operators.
+
+    Returns
+    -------
+    _SparkCost
+        Independent timing, peak-memory, and disk-spill maxima.
+
+    """
+    steps, pipelines = _spark_steps(execution.operators)
+    costs = [step.cost for step in steps] + [pipeline.cost for pipeline in pipelines]
+    timing = max(
+        (cost for cost in costs if cost.time_ns is not None),
+        key=lambda cost: cost.time_ns or 0,
+        default=_SparkCost(),
+    )
+    return _SparkCost(
+        timing.time_ns,
+        max(
+            (cost.peak_memory_bytes for cost in costs if cost.peak_memory_bytes is not None),
+            default=None,
+        ),
+        max((cost.spill_bytes for cost in costs if cost.spill_bytes is not None), default=None),
+        timing.time_label,
+    )
+
+
+def _spark_summary(executions: list[SparkExecution]) -> str:
+    """Summarize captured job records and the largest measured Spark costs.
+
+    Match the action table's operator scope and include child notebook actions.
+    Count job records associated with captured actions rather than assuming
+    numeric job identifiers are unique across separate Spark runtimes.
+
+    Parameters
+    ----------
+    executions : list[[SparkExecution]]
+        Captured actions from the main run and child notebooks.
+
+    Returns
+    -------
+    str
+        Summary cards with unknown cost measurements displayed as dashes.
+
+    """
+    costs = [_spark_action_cost(execution) for execution in executions]
+    cards = (
+        (
+            "Max wall time",
+            _time(
+                max(
+                    (
+                        execution.stats.wall_time_ns
+                        for execution in executions
+                        if execution.stats.wall_time_ns is not None
+                    ),
+                    default=None,
+                )
+            ),
+        ),
+        (
+            "Max operator time",
+            _time(max((cost.time_ns for cost in costs if cost.time_ns is not None), default=None)),
+        ),
+        (
+            "Peak memory",
+            _bytes(
+                max(
+                    (
+                        cost.peak_memory_bytes
+                        for cost in costs
+                        if cost.peak_memory_bytes is not None
+                    ),
+                    default=None,
+                )
+            ),
+        ),
+        (
+            "Max disk spill",
+            _bytes(
+                max(
+                    (cost.spill_bytes for cost in costs if cost.spill_bytes is not None),
+                    default=None,
+                )
+            ),
+        ),
+        ("Captured Spark jobs", _count(sum(len(execution.jobs) for execution in executions))),
+    )
+    return (
+        '<div class="stats overview-stats spark-summary">'
+        + "".join(_stat_card(label, value) for label, value in cards)
+        + "</div>"
+    )
+
+
 def _spark_action_table(executions: list[SparkExecution], sources: dict[str, SourceUnit]) -> str:
     """Summarize each action's wall time and largest reported plan costs.
 
@@ -1071,24 +1174,7 @@ def _spark_action_table(executions: list[SparkExecution], sources: dict[str, Sou
     """
     rows = []
     for execution in executions:
-        steps, pipelines = _spark_steps(execution.operators)
-        costs = [step.cost for step in steps] + [pipeline.cost for pipeline in pipelines]
-        timing = max(
-            (cost for cost in costs if cost.time_ns is not None),
-            key=lambda cost: cost.time_ns or 0,
-            default=_SparkCost(),
-        )
-        cost = _SparkCost(
-            timing.time_ns,
-            max(
-                (cost.peak_memory_bytes for cost in costs if cost.peak_memory_bytes is not None),
-                default=None,
-            ),
-            max(
-                (cost.spill_bytes for cost in costs if cost.spill_bytes is not None), default=None
-            ),
-            timing.time_label,
-        )
+        cost = _spark_action_cost(execution)
         status = (
             f'<small class="spark-secondary">{escape(execution.status)}</small>'
             if execution.status != "success"
@@ -1123,13 +1209,14 @@ def _spark_action_table(executions: list[SparkExecution], sources: dict[str, Sou
             "Action",
             "Source",
             "Wall time",
-            "Largest operator time",
-            "Largest operator peak memory",
-            "Largest operator disk spill",
+            "Operator time",
+            "Peak memory",
+            "Disk spill",
         ],
         rows,
         numeric_columns=(2, 3, 4, 5),
         css="spark-action-summary",
+        show_title=False,
     )
 
 
@@ -1213,21 +1300,21 @@ def _spark_findings(steps: list[_SparkStep], pipelines: list[_SparkPipeline]) ->
     Returns
     -------
     str
-        Compact investigation cues above the main-step table.
+        Metric cards to include in the unified action overview.
 
     """
     costs = [(f"Step {step.number} · {_spark_step_label(step)[0]}", step.cost) for step in steps]
     costs.extend((_spark_group_label(pipeline), pipeline.cost) for pipeline in pipelines)
     cards = []
     for title, attribute, formatter, missing in (
-        ("Largest operator time", "time_ns", _time, "Separate step timings unavailable."),
+        ("Operator time", "time_ns", _time, "Separate step timings unavailable."),
         (
-            "Largest operator peak memory",
+            "Peak memory",
             "peak_memory_bytes",
             _bytes,
             "Peak-memory counters unavailable.",
         ),
-        ("Largest operator disk spill", "spill_bytes", _bytes, "Disk-spill counters unavailable."),
+        ("Disk spill", "spill_bytes", _bytes, "Disk-spill counters unavailable."),
     ):
         known = [(label, getattr(cost, attribute)) for label, cost in costs]
         known = [(label, value) for label, value in known if value is not None]
@@ -1257,15 +1344,11 @@ def _spark_findings(steps: list[_SparkStep], pipelines: list[_SparkPipeline]) ->
             )
         )
 
-    return (
-        '<div class="spark-findings">'
-        + "".join(
-            f'<div class="spark-finding"><span>{escape(title)}</span>'
-            f"<strong>{escape(value)}</strong>"
-            f"<small>{escape(label)}</small></div>"
-            for title, value, label in cards
-        )
-        + "</div>"
+    return "".join(
+        f'<div class="stat spark-finding"><span>{escape(title)}</span>'
+        f"<strong>{escape(value)}</strong>"
+        f"<small>{escape(label)}</small></div>"
+        for title, value, label in cards
     )
 
 
@@ -1358,7 +1441,8 @@ def _spark_plan_overview(execution: SparkExecution) -> str:
             for pipeline in pipelines
         ]
         shared = (
-            '<div class="spark-shared-costs"><h3>Operations measured together</h3>'
+            '<div class="spark-shared-costs"><div class="section-heading">'
+            "<h2>Operations measured together</h2></div>"
             + _table(
                 ["Shared steps", "Reported time", "Peak memory", "Spill"],
                 shared_rows,
@@ -1404,9 +1488,8 @@ def _spark_plan_overview(execution: SparkExecution) -> str:
         css="spark-steps",
     )
     return (
-        '<div class="spark-plan-overview"><div class="section-heading"><h2>Main plan steps</h2>'
-        f'<span class="muted">{len(steps)} steps · inputs → result</span></div>{provenance}'
-        f"{_spark_findings(steps, pipelines)}"
+        f'<div class="spark-plan-overview">{provenance}'
+        '<div class="section-heading"><h2>Main plan steps</h2></div>'
         f"{step_table}"
         f"{shared}"
         "</div>"
@@ -2307,8 +2390,8 @@ def _memory_page(runs: list[ProfileRun], sources: dict[str, SourceUnit]) -> str:
         )
     return (
         '<section id="memory" class="page" hidden><h1>Memory</h1>'
-        + "".join(sections)
-        + "</section>"
+        '<p class="intro">Track process memory over time and find the lines with the'
+        " largest growth.</p>" + "".join(sections) + "</section>"
     )
 
 
@@ -2809,63 +2892,21 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
         )
 
     if executions:
-        spark_rows = []
-        for execution in executions:
-            cost = _SparkCost(
-                execution.stats.wall_time_ns,
-                execution.stats.peak_memory_bytes,
-                execution.stats.spill_bytes,
-                "Action wall time",
-            )
-            status = (
-                f'<small class="spark-secondary">{escape(execution.status)}</small>'
-                if execution.status != "success"
-                else ""
-            )
-            spark_rows.append(
-                (
-                    [
-                        (
-                            f'<a href="#{_key("spark", execution.id)}">{escape(execution.name)} '
-                            f"<small>#{escape(execution.id[:8])}</small></a>{status}"
-                        ),
-                        _spark_trigger(execution.location, display_sources),
-                        _spark_cost_cells(cost)[0],
-                        _time(execution.stats.executor_time_ns),
-                        *_spark_cost_cells(cost)[1:],
-                    ],
-                    [
-                        execution.name,
-                        _source_sort_values(execution.location, display_sources)[0],
-                        cost.time_ns,
-                        execution.stats.executor_time_ns,
-                        cost.peak_memory_bytes,
-                        cost.spill_bytes,
-                    ],
-                )
-            )
-
-        spark_table = _spark_cost_table(
-            "Most expensive actions",
-            ["Action", "Source", "Wall time", "Executor time", "Peak memory", "Spill"],
-            spark_rows,
-            numeric_columns=(2, 3, 4, 5),
-            css="spark-actions",
-        )
         operator_table = _spark_cost_table(
             "Most expensive operators",
-            ["Operation", "Action / source", "Operator time", "Peak memory", "Spill"],
+            ["Operation", "Action / source", "Operator time", "Peak memory", "Disk spill"],
             _spark_operator_rows(executions, display_sources, context=True),
             numeric_columns=(2, 3, 4),
             css="spark-operators",
+            show_title=False,
         )
         pages.append(
             f'<section id="spark" class="page" hidden><h1>Spark</h1>'
             '<p class="intro">Compare captured actions and their largest reported operator costs.'
-            " Select an action to explore its plan and main steps.</p>"
+            "</p>"
+            f"{_spark_summary(executions)}"
             f"{_spark_action_table(executions, display_sources)}"
-            f'<details class="execution-details"><summary>Compare all actions</summary>'
-            f'{spark_table}</details><details class="execution-details">'
+            f'<details class="execution-details">'
             f"<summary>All operator costs</summary>"
             f"{operator_table}</details></section>"
         )
@@ -2952,19 +2993,19 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
             if collection or notes
             else ""
         )
+        steps, pipelines = _spark_steps(execution.operators)
         cost_cards = "".join(
-            f'<div class="stat"><span>{label}</span><strong>{value}</strong></div>'
+            _stat_card(label, value)
             for label, value in (
                 ("Wall time", _time(stats.wall_time_ns)),
                 ("Cumulative executor time", _time(stats.executor_time_ns)),
                 ("Executor peak memory", _bytes(stats.peak_memory_bytes)),
-                ("Jobs", _count(len(execution.jobs))),
-                ("Status", escape(execution.status)),
             )
         )
+        cost_cards += _spark_findings(steps, pipelines)
         operator_table = _spark_cost_table(
             "Most expensive operators",
-            ["Operation", "Operator time", "Peak memory", "Spill"],
+            ["Operation", "Operator time", "Peak memory", "Disk spill"],
             _spark_operator_rows([execution], display_sources),
             numeric_columns=(1, 2, 3),
             css="spark-operators",
@@ -2973,7 +3014,7 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
         pages.append(
             f'<section id="{_key("spark", execution.id)}" class="page" hidden>'
             f"<h1>{escape(execution.name)}</h1>"
-            f'<p class="spark-trigger">{trigger}</p><div class="stats spark-stats">'
+            f'<p class="spark-trigger">{trigger}</p><div class="stats overview-stats spark-stats">'
             f"{cost_cards}</div>"
             f"{_spark_plan_overview(execution)}"
             f'<details class="execution-details spark-plans"><summary>Query plans</summary>'

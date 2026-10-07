@@ -407,6 +407,13 @@ def test_memory_summary_precedes_chart_and_growth():
     document = ReportDOM(render_html(result)).root
     page = document.find_all("section", id="memory")[0]
     run = page.find_all("section", css="memory-run")[0]
+    children = [child for child in page.children if not isinstance(child, str)]
+    assert [child.tag for child in children] == ["h1", "p", "section"]
+    assert children[1].attributes["class"] == "intro"
+    assert children[1].text() == (
+        "Track process memory over time and find the lines with the largest growth."
+    )
+    assert children[2] is run
     assert [child.tag for child in run.children if not isinstance(child, str)] == [
         "dl",
         "div",

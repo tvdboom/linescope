@@ -1422,14 +1422,14 @@ class TestReportNavigation:
         result.root_run.spark_executions = [execution]
         document = parse(result)
         spark = document.find_all("section", id="spark")[0]
-        action_table = spark.find_all("table", css="spark-actions")[0]
+        action_table = spark.find_all("table", css="spark-action-summary")[0]
         assert [header.text() for header in action_table.find_all("th")] == [
             "Action",
             "Source",
             "Wall time",
-            "Executor time",
+            "Operator time",
             "Peak memory",
-            "Spill",
+            "Disk spill",
         ]
         cells = action_table.find_all("td")
         assert cell_values(action_table.find_all("tbody")[0].find_all("tr")[0]) == [
@@ -1479,7 +1479,11 @@ class TestReportNavigation:
         )
         document = parse(result)
         spark = document.find_all("section", id="spark")[0]
-        rows = spark.find_all("table", css="spark-actions")[0].find_all("tbody")[0].find_all("tr")
+        rows = (
+            spark.find_all("table", css="spark-action-summary")[0]
+            .find_all("tbody")[0]
+            .find_all("tr")
+        )
         links = [row.find_all("td")[1].find_all("a")[0] for row in rows]
         assert [link.text() for link in links] == ["job.py:2", "job.py:1"]
         targets = [document.find_all("tr", id=link.attributes["href"][1:])[0] for link in links]
@@ -1511,7 +1515,7 @@ class TestReportNavigation:
         result.root_run.lines[0].spark_executions = ["action"]
         document = parse(result)
         spark = document.find_all("section", id="spark")[0]
-        cells = spark.find_all("table", css="spark-actions")[0].find_all("td")
+        cells = spark.find_all("table", css="spark-action-summary")[0].find_all("td")
         assert cells[1].text() == "Trigger source unavailable"
         assert not cells[1].find_all("a")
         detail = document.find_all("section", id=cells[0].find_all("a")[0].attributes["href"][1:])[
@@ -1543,12 +1547,12 @@ class TestSparkMetricPresentation:
     """
 
     @pytest.mark.parametrize("status", ["success", "failed"])
-    def test_action_header_shows_jobs_and_status_without_empty_metrics(
+    def test_action_header_omits_jobs_and_status_without_empty_metrics(
         self,
         result: ProfileResult,
         status: str,
     ):
-        """Show action context without an empty metrics disclosure.
+        """Keep job counts on the main Spark page and omit status cards.
 
         Parameters
         ----------
@@ -1556,7 +1560,7 @@ class TestSparkMetricPresentation:
             Report fixture receiving an action with unavailable cost metrics.
 
         status : str
-            Recorded action outcome to display beside its job count.
+            Recorded action outcome that must not become a detail card.
 
         """
         result.root_run.spark_executions = [
@@ -1564,13 +1568,26 @@ class TestSparkMetricPresentation:
         ]
         document = parse(result)
         header = document.find_all("div", css="spark-stats")[0]
-        assert [card.text() for card in header.find_all("div", css="stat")] == [
-            "Wall time—",
-            "Cumulative executor time—",
-            "Executor peak memory—",
-            "Jobs6",
-            f"Status{status}",
+        assert "overview-stats" in header.attributes["class"].split()
+        assert [
+            (card.find_all("span")[0].text(), card.find_all("strong")[0].text())
+            for card in header.find_all("div", css="stat")
+        ] == [
+            ("Wall time", "—"),
+            ("Cumulative executor time", "—"),
+            ("Executor peak memory", "—"),
+            ("Operator time", "—"),
+            ("Peak memory", "—"),
+            ("Disk spill", "—"),
         ]
+        assert "Separate step timings unavailable." in header.text()
+        assert "Peak-memory counters unavailable." in header.text()
+        assert "Disk-spill counters unavailable." in header.text()
+        assert not document.find_all("div", css="spark-findings")
+        summary = document.find_all("section", id="spark")[0].find_all("div", css="spark-summary")[
+            0
+        ]
+        assert summary.find_all("div", css="stat")[-1].text() == "Captured Spark jobs6"
         assert "Action metrics" not in document.text()
 
     @pytest.mark.parametrize("value", [0, 1024])
@@ -1618,10 +1635,17 @@ class TestSparkMetricPresentation:
             ["Spill", byte_value],
         ]
 
-    def test_main_steps_show_flow_rows_and_shared_timing_above_original_details(self, result):
+    def test_main_steps_show_flow_rows_and_shared_timing_above_original_details(
+        self, result: ProfileResult
+    ):
         """Explain the main flow and preserve shared timing ownership.
 
         Keep direct row measurements separate from row-preserving propagation.
+
+        Parameters
+        ----------
+        result : [ProfileResult]
+            Report fixture receiving main steps in a measured fused pipeline.
 
         """
         scan = SparkOperator("scan", "Scan parquet", metrics={"numOutputRows": 1000})
@@ -1645,8 +1669,26 @@ class TestSparkMetricPresentation:
             SparkExecution("action", operators=[pipeline], executed_plan="DETAILED PLAN")
         ]
         document = parse(result)
+        header = document.find_all("div", css="spark-stats")[0]
+        assert [
+            card.find_all("strong")[0].text()
+            for card in header.find_all("div", css="spark-finding")
+        ] == [
+            "2.00 s",
+            "2.0 KB",
+            "1.0 KB",
+        ]
         for overview in document.find_all("div", css="spark-plan-overview"):
             table = overview.find_all("table", css="spark-steps")[0]
+            children = [child for child in overview.children if isinstance(child, Element)]
+            assert children[0].find_all("h2")[0].text() == "Main plan steps"
+            assert children[1].find_all("table", css="spark-steps") == [table]
+            assert "inputs → result" not in overview.text()
+            assert not overview.find_all("div", css="stat")
+            page = next(
+                page for page in document.find_all("section") if overview in page.find_all()
+            )
+            assert page.find_all("div", css="stats") == [header]
             rows = table.find_all("tbody")[0].find_all("tr")
             assert [row.find_all("td")[1].text() for row in rows] == ["Source", "1", "2"]
             assert [row.find_all("td")[2].text() for row in rows] == ["Shared timing"] * 3
@@ -1659,6 +1701,9 @@ class TestSparkMetricPresentation:
             assert "10.0% of input row count" in table.text()
             assert "1.0 KB spilled to disk" in table.text()
             shared = overview.find_all("div", css="spark-shared-costs")[0]
+            assert shared.find_all("div", css="section-heading")[0].find_all("h2")[0].text() == (
+                "Operations measured together"
+            )
             assert "Steps 1, 2, 3 together" in shared.text()
             assert "2.00 s" in shared.text()
             assert not shared.find_all("p")
@@ -1705,9 +1750,9 @@ class TestSparkMetricPresentation:
         assert "Wall time2.00 s" in header
         assert "Cumulative executor time8.00 s" in header
         overview = document.find_all("div", css="spark-plan-overview")[0]
-        findings = overview.find_all("div", css="spark-findings")[0].text()
-        assert "Largest operator time3.00 sStep 3 · Combine tables" in findings
-        assert "Rows multiplied at a join5.0xStep 3 · versus its largest input" in findings
+        assert "Operator time3.00 sStep 3 · Combine tables" in header
+        assert "Rows multiplied at a join5.0xStep 3 · versus its largest input" in header
+        assert "Rows multiplied at a join" not in overview.text()
         rows = overview.find_all("table", css="spark-steps")[0].find_all("tbody")[0].find_all("tr")
         assert rows[-1].find_all("td")[1].text() == "1 + 2"
         assert rows[-1].find_all("td")[-1].text() == "500Measured output"
@@ -1718,7 +1763,8 @@ class TestSparkMetricPresentation:
     ):
         """List every captured action with the longest measured wait first.
 
-        Keep plan details on their action pages and comparisons below the table.
+        Keep plan details on their action pages and the operator ranking below
+        the table without duplicate headings or an action comparison.
 
         Parameters
         ----------
@@ -1736,14 +1782,32 @@ class TestSparkMetricPresentation:
         ]
         document = parse(result)
         spark = document.find_all("section", id="spark")[0]
+        intro = spark.find_all("p", css="intro")[0]
+        assert (
+            intro.text() == "Compare captured actions and their largest reported operator costs."
+        )
+        children = [child for child in spark.children if isinstance(child, Element)]
+        summary = spark.find_all("div", css="spark-summary")[0]
+        assert children[1] is intro
+        assert children[2] is summary
+        assert children[3].find_all("table", css="spark-action-summary")
+        assert [
+            card.find_all("strong")[0].text() for card in summary.find_all("div", css="stat")
+        ] == [
+            "1.0 µs",
+            "—",
+            "—",
+            "—",
+            "0",
+        ]
         table = spark.find_all("table", css="spark-action-summary")[0]
         assert [header.text() for header in table.find_all("th")] == [
             "Action",
             "Source",
             "Wall time",
-            "Largest operator time",
-            "Largest operator peak memory",
-            "Largest operator disk spill",
+            "Operator time",
+            "Peak memory",
+            "Disk spill",
         ]
         rows = table.find_all("tbody")[0].find_all("tr")
         assert [row.find_all("td")[0].text() for row in rows] == [
@@ -1762,19 +1826,92 @@ class TestSparkMetricPresentation:
         ]
         assert not spark.find_all("select")
         assert not spark.find_all("div", css="spark-plan-overview")
+        assert not spark.find_all("h2")
+        assert not spark.find_all("table", css="spark-actions")
+        assert "Compare all actions" not in spark.text()
+        assert "Most expensive actions" not in spark.text()
         comparisons = spark.find_all("details")
         assert [details.find_all("summary")[0].text() for details in comparisons] == [
-            "Compare all actions",
             "All operator costs",
         ]
         assert all("open" not in details.attributes for details in comparisons)
-        assert spark.text().index("Largest operator time") < spark.text().index(
-            "Compare all actions"
-        )
+        assert spark.text().index("Operator time") < spark.text().index("All operator costs")
         for row in rows:
             link = row.find_all("a", css="spark-action-link")[0]
             detail = document.find_all("section", id=link.attributes["href"][1:])[0]
             assert "Main plan steps unavailable" in detail.text()
+
+    def test_spark_summary_selects_independent_maxima_across_actions_and_child_runs(
+        self, result: ProfileResult
+    ):
+        """Summarize measured Spark costs and captured job records across runs.
+
+        Select each maximum independently without adding costs or substituting
+        executor totals. Retain job records from child runtimes whose numeric
+        identifiers can repeat the main run's identifiers.
+
+        Parameters
+        ----------
+        result : [ProfileResult]
+            Report fixture receiving main and child actions with distinct costs.
+
+        """
+        result.root_run.spark_executions = [
+            SparkExecution(
+                "main-action",
+                stats=SparkExecutionStats(
+                    wall_time_ns=5_000_000_000,
+                    executor_time_ns=99_000_000_000,
+                    peak_memory_bytes=99_999,
+                    spill_bytes=99_999,
+                ),
+                operators=[
+                    SparkOperator(
+                        "sort",
+                        "Sort",
+                        metrics={
+                            "time_ns": 2_000_000_000,
+                            "peak_memory_bytes": 5000,
+                            "spill_bytes": 1024,
+                        },
+                    )
+                ],
+                jobs=[0, 1, 2],
+            ),
+            SparkExecution("unknown"),
+        ]
+        result.root_run.children = [
+            ProfileRun(
+                spark_executions=[
+                    SparkExecution(
+                        "child-action",
+                        stats=SparkExecutionStats(wall_time_ns=3_000_000_000),
+                        operators=[
+                            SparkOperator(
+                                "sort",
+                                "Sort",
+                                metrics={
+                                    "time_ns": 4_000_000_000,
+                                    "peak_memory_bytes": 2000,
+                                    "spill_bytes": 5000,
+                                },
+                            )
+                        ],
+                        jobs=[0, 1],
+                    )
+                ]
+            )
+        ]
+        spark = parse(result).find_all("section", id="spark")[0]
+        summary = spark.find_all("div", css="spark-summary")[0]
+        assert "overview-stats" in summary.attributes["class"].split()
+        assert [card.text() for card in summary.find_all("div", css="stat")] == [
+            "Max wall time5.00 s",
+            "Max operator time4.00 s",
+            "Peak memory5.0 KB",
+            "Max disk spill5.0 KB",
+            "Captured Spark jobs5",
+        ]
 
     def test_action_overview_selects_independent_maxima_from_steps_and_shared_costs(
         self, result: ProfileResult
@@ -1843,8 +1980,10 @@ class TestSparkMetricPresentation:
         assert cells[1].find_all("a")[0].attributes["href"].endswith("-L3")
         link = cells[0].find_all("a")[0]
         detail = document.find_all("section", id=link.attributes["href"][1:])[0]
-        findings = detail.find_all("div", css="spark-findings")[0]
-        assert [card.find_all("strong")[0].text() for card in findings.find_all("div")] == [
+        findings = detail.find_all("div", css="spark-stats")[0].find_all(
+            "div", css="spark-finding"
+        )
+        assert [card.find_all("strong")[0].text() for card in findings] == [
             "4.00 s",
             "5.0 KB",
             "4.0 KB",
@@ -1890,6 +2029,16 @@ class TestSparkMetricPresentation:
         rows = table.find_all("tbody")[0].find_all("tr")
         assert cell_values(rows[0])[2:] == ["0 µs", "0 µs", "0 B", "0 B"]
         assert cell_values(rows[1])[2:] == ["—", "—", "—", "—"]
+        summary = document.find_all("div", css="spark-summary")[0]
+        assert [
+            card.find_all("strong")[0].text() for card in summary.find_all("div", css="stat")
+        ] == [
+            "0 µs",
+            "0 µs",
+            "0 B",
+            "0 B",
+            "0",
+        ]
         for column in (2, 3, 4, 5):
             assert rows[0].attributes[f"data-column-{column}"] == "0"
             assert rows[1].attributes[f"data-column-{column}"] == ""
@@ -1937,10 +2086,18 @@ class TestSparkMetricPresentation:
         assert "Input DataFrame plan only. This may differ" in text
         assert "The final adaptive plan was unavailable." in text
 
-    def test_actions_rank_by_wall_time_with_memory_spill_and_source_visible(self, result):
-        """Check the expected behavior in this regression case.
+    def test_actions_rank_by_wall_time_with_operator_costs_and_source_visible(
+        self, result: ProfileResult
+    ):
+        """Rank actions by wall time while displaying their reported plan costs.
 
-        Verify actions rank by wall time with memory spill and source visible.
+        Keep executor totals on the detail page and distinguish unknown action
+        durations from measured zero values.
+
+        Parameters
+        ----------
+        result : [ProfileResult]
+            Profile fixture receiving distinct executor and operator costs.
 
         """
         source = next(iter(result.sources.values()))
@@ -1957,6 +2114,17 @@ class TestSparkMetricPresentation:
                     peak_memory_bytes=2**30,
                     spill_bytes=2**20,
                 ),
+                operators=[
+                    SparkOperator(
+                        "sort",
+                        "Sort",
+                        metrics={
+                            "time_ns": 500_000_000,
+                            "peak_memory_bytes": 2**20,
+                            "spill_bytes": 1024,
+                        },
+                    )
+                ],
             ),
         ]
         result.root_run.children = [
@@ -1967,7 +2135,7 @@ class TestSparkMetricPresentation:
             )
         ]
         document = parse(result)
-        table = document.find_all("table", css="spark-actions")[0]
+        table = document.find_all("table", css="spark-action-summary")[0]
         rows = table.find_all("tbody")[0].find_all("tr")
         assert [row.find_all("td")[0].text() for row in rows] == [
             "collect #slow",
@@ -1979,15 +2147,21 @@ class TestSparkMetricPresentation:
             "collect #slow",
             "main.py:3result = foo(bar(3))",
             "2.00 s",
-            "8.00 s",
-            "1.1 GB",
+            "500.00 ms",
             "1.0 MB",
+            "1.0 KB",
         ]
-        assert rows[0].attributes["data-column-3"] == "8000000000"
-        assert rows[0].attributes["data-column-4"] == str(2**30)
-        assert rows[0].attributes["data-column-5"] == str(2**20)
+        assert rows[0].attributes["data-column-3"] == "500000000"
+        assert rows[0].attributes["data-column-4"] == str(2**20)
+        assert rows[0].attributes["data-column-5"] == "1024"
         assert rows[-2].attributes["data-column-2"] == "0"
         assert rows[-1].attributes["data-column-2"] == ""
+        detail = document.find_all("section", id=rows[0].find_all("a")[0].attributes["href"][1:])[
+            0
+        ]
+        cards = [card.text() for card in detail.find_all("div", css="stat")]
+        assert "Cumulative executor time8.00 s" in cards
+        assert "Executor peak memory1.1 GB" in cards
 
     def test_operator_ranking_normalizes_units_without_summing_overlapping_timings(self, result):
         """Check the expected behavior in this regression case.
@@ -2054,7 +2228,8 @@ class TestSparkMetricPresentation:
         )
         assert "pipelineTime" in document.find_all("ul", css="operator-tree")[0].text()
         # Operator timing never fills the unavailable execution total.
-        assert document.find_all("table", css="spark-actions")[0].find_all("td")[3].text() == "—"
+        cards = document.find_all("div", css="spark-stats")[0].find_all("div", css="stat")
+        assert "Cumulative executor time—" in [card.text() for card in cards]
 
     def test_operator_memory_never_uses_shuffle_data_spill_or_untyped_sizes(self, result):
         """Check the expected behavior in this regression case.
@@ -2155,7 +2330,7 @@ class TestSparkMetricPresentation:
         ]
         document = parse(result)
         sections = document.find_all("div", css="spark-cost-section")
-        assert len(sections) == 4
+        assert len(sections) == 3
         for section in sections:
             assert not section.find_all("button", css="spark-order")
             assert "Highest first" not in section.text()
@@ -2167,10 +2342,7 @@ class TestSparkMetricPresentation:
             assert len(active) == 1
             assert active[0].text() in {"Wall time", "Operator time"}
             assert active[0].attributes["aria-sort"] == "descending"
-            assert [button.text() for button in controls][-2:] in (
-                ["Peak memory", "Spill"],
-                ["Largest operator peak memory", "Largest operator disk spill"],
-            )
+            assert [button.text() for button in controls][-2:] == ["Peak memory", "Disk spill"]
             assert all(button.find_all("svg", css="table-sort-icon") for button in controls)
             assert len(section.find_all("table")) == 1
             assert not section.find_all("details")
@@ -2181,10 +2353,10 @@ class TestSparkMetricPresentation:
         result: ProfileResult,
         operators: list[SparkOperator],
     ):
-        """Name the action ranking once in its disclosure title.
+        """Name each operator ranking once in its disclosure title.
 
-        Preserve the overview heading and show either the operator table or
-        its unavailable state below the action's disclosure title.
+        Show either the operator table or its unavailable state below each
+        disclosure title in the overview and action details.
 
         Parameters
         ----------
@@ -2198,20 +2370,29 @@ class TestSparkMetricPresentation:
         result.root_run.spark_executions = [SparkExecution("action", operators=operators)]
         document = parse(result)
         overview = document.find_all("section", id="spark")[0]
-        assert "Most expensive operators" in overview.text()
-        ranking = next(
+        assert not overview.find_all("h2")
+        assert "Most expensive operators" not in overview.text()
+        rankings = [
             panel
             for panel in document.find_all("details", css="execution-details")
-            if panel.find_all("summary")[0].text() == "Operator cost ranking"
-        )
-        assert not ranking.find_all("h2")
-        assert "Most expensive operators" not in ranking.text()
-        if operators:
-            assert len(ranking.find_all("table", css="spark-operators")) == 1
-            assert "Sort" in ranking.text()
-        else:
-            assert not ranking.find_all("table")
-            assert "Operator details unavailable." in ranking.text()
+            if panel.find_all("summary")[0].text()
+            in {"All operator costs", "Operator cost ranking"}
+        ]
+        assert len(rankings) == 2
+        overview_headers = overview.find_all("table", css="spark-action-summary")[0].find_all("th")
+        for ranking in rankings:
+            assert not ranking.find_all("h2")
+            assert "Most expensive operators" not in ranking.text()
+            if operators:
+                tables = ranking.find_all("table", css="spark-operators")
+                assert len(tables) == 1
+                assert "Sort" in ranking.text()
+                assert [header.text() for header in tables[0].find_all("th")][-3:] == [
+                    header.text() for header in overview_headers[-3:]
+                ]
+            else:
+                assert not ranking.find_all("table")
+                assert "Operator details unavailable." in ranking.text()
 
     def test_fallback_plan_is_selected_and_collection_limits_stay_accessible(self, result):
         """Check the expected behavior in this regression case.

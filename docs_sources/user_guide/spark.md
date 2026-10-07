@@ -55,18 +55,23 @@ workers were idle; they mean the runtime did not expose sufficient information.
 
 ## Plans and metrics
 
-The Spark view starts with a sortable action overview. Each row shows action
-wall time and the largest reported operator or shared pipeline time, peak
-memory, and disk spill. The longest measured action appears first, and actions
-from child notebook runs are included. Select a row or its action link to open
-the action's detail page and main-step plan overview. Source links open the
+The Spark view starts with summary cards for maximum action wall time,
+maximum operator time, peak operator memory, maximum disk spill, and captured
+Spark jobs. The job count totals the job records associated with captured
+actions, including child notebook runs. An action can have several job records.
+The sortable action table follows these summaries. Each row shows action wall
+time and the largest reported operator or shared pipeline time, peak memory,
+and disk spill. The longest measured action appears first, and actions from
+child notebook runs are included. Select a row or its action link to open the
+action's detail page and main-step plan overview. Source links open the
 captured trigger line instead.
-Action wall time, cumulative executor time, peak memory, and spill are visible
-together under **Compare all actions** below the overview. Select a column
-heading to order by wall time, executor time, peak memory, or spill. Operator
-rankings and plan-step tables use the same header arrows. Select the heading
-again to reverse the direction. Unknown measurements sort after measured
-values, including zero, in both directions.
+The overview uses **Operator time**, **Peak memory**, and **Disk spill** for
+the reported plan costs. The **All operator costs** table below it uses the
+same column names. Cumulative executor time and executor peak memory remain
+available on each action's detail page. Select a column heading to order the
+table. Operator rankings and plan-step tables use the same header arrows.
+Select the heading again to reverse the direction. Unknown measurements sort
+after measured values, including zero, in both directions.
 
 **Main plan steps** follows the data from inputs to the result. Plain-language
 labels describe reading, filtering, joining, summarizing, sorting, and moving
@@ -76,13 +81,15 @@ this operation consumes both inputs, not that those inputs ran sequentially.
 Separate inputs can run in parallel.
 Reported time, peak memory, and total **Rows after** appear beside each step.
 
-The detail page's investigation cards identify the largest reported operator
-or shared pipeline time, peak memory, and disk spill, and row multiplication at
-joins when both input counts are known. These counters have a different scope
-from action wall time and cumulative executor time in the action's top cards.
-They point to measured work to investigate; partial counters cannot establish
-the complete cause of a slow action. Time bars compare measured individual
-steps rather than percentages of the action's elapsed time.
+The detail page combines action and operator metrics in one overview above
+the **Main plan steps** table. **Operator time**, **Peak memory**, and **Disk
+spill** identify the largest reported operator or shared pipeline costs, with
+the responsible step shown below each value. Row multiplication at joins
+appears when both input counts are known. Operator counters have a different
+scope from action wall time, cumulative executor time, and executor peak
+memory. They point to measured work to investigate; partial counters cannot
+establish the complete cause of a slow action. Time bars compare measured
+individual steps rather than percentages of the action's elapsed time.
 
 Rows use Spark's output-row counters. Sorts and data exchanges can carry a
 known input count forward because they preserve rows; those values are labeled
@@ -97,8 +104,8 @@ actions link to their captured cell and line. When the trigger or its source
 snapshot is unavailable, the report shows `Trigger source unavailable`.
 
 The captured action line appears beside the link so repeated `collect` or
-`count` calls are easy to distinguish. Select an action to see its cost summary,
-job count, outcome, and main-step overview. Additional action metrics appear
+`count` calls are easy to distinguish. Select an action to see its cost summary
+and main-step overview. Additional action metrics appear
 only when row, read, shuffle, or spill measurements are available.
 Select a step to open its action's physical operator
 tree, expand and highlight that exact step, and show its
