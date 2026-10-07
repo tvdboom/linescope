@@ -64,9 +64,9 @@ demo-notebook: (_demo-notebook "notebook_example")
 demo-gpu: (_demo-notebook "gpu_example" "--group gpu")
 
 # Execute the Spark notebook and open its outputs; requires Java on PATH.
-demo-spark-notebook: (_demo-notebook "spark_example" "--extra spark")
+demo-spark-notebook: (_demo-notebook "spark_example" "--group spark")
 
-# Run the documented local[2] Spark example and open its report; requires Java on PATH.
+# Run the documented local Spark example and open its report; requires Java on PATH.
 demo-spark:
-    uv run --extra spark python examples/spark_example.py
+    uv run --group spark python examples/spark_example.py
     uv run python -c "from pathlib import Path; import webbrowser; webbrowser.open(Path('spark.html').resolve().as_uri())"

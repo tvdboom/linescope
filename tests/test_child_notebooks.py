@@ -12,6 +12,7 @@ import ast
 import json
 import re
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -287,6 +288,47 @@ def test_workspace_store_uses_sdk_auth_and_nonrecursive_owned_operations(monkeyp
     assert calls[2][2]["body"]["overwrite"] is False
     assert calls[3][2]["body"]["format"] == "AUTO"
     assert calls[4][2]["body"] == {"path": "/temporary", "recursive": False}
+
+
+@pytest.mark.parametrize("missing_module", ["databricks", "databricks.sdk"])
+def test_workspace_store_requires_the_existing_databricks_sdk(monkeypatch, missing_module):
+    """Explain missing runtime SDK access before making workspace requests.
+
+    Preserve the missing import as the cause so callers can diagnose the
+    environment without installing replacement runtime libraries.
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        Owned SDK-import override restored after the test.
+
+    missing_module : str
+        Missing runtime package or SDK module reported by Python.
+
+    """
+    error = ModuleNotFoundError(name=missing_module)
+    monkeypatch.setattr("linescope.notebooks.remote.import_module", Mock(side_effect=error))
+    with pytest.raises(ImportError, match="Databricks SDK in the existing runtime") as caught:
+        WorkspaceStore()
+    assert caught.value.__cause__ is error
+
+
+def test_workspace_store_preserves_transitive_import_errors(monkeypatch):
+    """Keep SDK dependency failures distinct from a missing runtime SDK.
+
+    Preserve the original error to identify the actual unavailable library.
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        Owned SDK-import override restored after the test.
+
+    """
+    error = ModuleNotFoundError(name="requests")
+    monkeypatch.setattr("linescope.notebooks.remote.import_module", Mock(side_effect=error))
+    with pytest.raises(ModuleNotFoundError) as caught:
+        WorkspaceStore()
+    assert caught.value is error
 
 
 @pytest.mark.parametrize("failed", [False, True])

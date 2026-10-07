@@ -335,6 +335,25 @@ body {
     --jp-cell-outprompt-font-color: var(--linescope-muted);
 }
 
+/* Use the full article width for notebook code and its outputs. */
+.md-typeset .jupyter-wrapper .jp-Notebook {
+    box-sizing: border-box;
+    width: 100%;
+    padding-inline: 0;
+}
+
+.md-typeset .jupyter-wrapper .jp-Cell {
+    padding-inline: 0;
+}
+
+.md-typeset .jupyter-wrapper :is(
+    .jp-Cell-outputArea,
+    .jp-OutputArea-child,
+    .jp-OutputArea-output
+) {
+    min-width: 0;
+}
+
 .md-typeset .jupyter-wrapper .highlight-ipynb,
 .md-typeset .jupyter-wrapper .jp-RenderedText pre {
     color: var(--linescope-code-text);

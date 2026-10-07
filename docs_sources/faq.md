@@ -70,6 +70,8 @@ you have any other questions, don't hesitate to create a new
 ??? faq "Can I collect GPU metrics?"
     Yes. Enable `gpu=True` or `--gpu` with Scalene on a supported device.
     See [GPU](user_guide/gpu.md). Trace and Tachyon do not provide GPU metrics.
+    Trace warns and continues Python profiling if GPU collection is requested;
+    Tachyon rejects the request.
 
 ??? faq "Does LineScope trigger extra Spark actions?"
     No. It observes the actions your workload already performs and never

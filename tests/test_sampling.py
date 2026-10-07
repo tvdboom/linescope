@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from click.testing import CliRunner
 import pytest
 
-from linescope import Config, Session, cli, configure
+from linescope import Config, Session, cli, profile
 from linescope.backends import tachyon
 from linescope.backends.base import RawBackendResult, RawLine
 from linescope.backends.scalene import ScaleneBackend, normalize_scalene
@@ -32,17 +32,6 @@ from linescope.notebooks.serialization import dumps_result, loads_result
 from linescope.render import render_html
 from tests.test_render import ReportDOM, cell_values
 from tests.test_tachyon import FakeProcess
-
-
-@pytest.fixture(autouse=True)
-def isolated_configuration(monkeypatch):
-    """Reset process configuration overrides for sampling tests.
-
-    Use controlled collector samples and worker messages to inspect sampling
-    rates, observation counts, and unknown measurements.
-
-    """
-    monkeypatch.setattr("linescope.config._overrides", {})
 
 
 @pytest.mark.parametrize("value", [True, False, 1.5, "250", float("inf")])
@@ -73,23 +62,26 @@ def test_non_positive_sampling_rate_rejected(value):
             factory(sample_rate=value, **options)
 
 
-def test_sampling_rate_precedence_and_atomic_configuration(tmp_path):
-    """Verify sampling rate precedence and atomic configuration.
+def test_sampling_rate_project_and_profile_precedence(tmp_path):
+    """Keep sampling overrides local to each profile and reread project TOML.
 
-    Use controlled collector samples and worker messages to inspect sampling
-    rates, observation counts, and unknown measurements.
+    Preserve existing session options when later sessions read edited defaults.
 
     """
-    (tmp_path / "pyproject.toml").write_text("[tool.linescope]\nsample_rate = 200\n")
+    project = tmp_path / "pyproject.toml"
+    project.write_text("[tool.linescope]\nsample_rate = 200\n")
     assert Config().sample_rate is None
     assert resolve_config(root=tmp_path).sample_rate == 200
-    configure(root=tmp_path, sample_rate=300)
-    assert resolve_config().sample_rate == 300
-    assert resolve_config(sample_rate=400).sample_rate == 400
+    session = profile(root=tmp_path, sample_rate=300)
+    assert session.config.sample_rate == 300
+    assert profile(root=tmp_path).config.sample_rate == 200
     with pytest.raises(ValueError, match="sample_rate"):
-        configure(sample_rate=0)
-    assert resolve_config().sample_rate == 300
-    assert resolve_config(sample_rate=None).sample_rate is None
+        profile(root=tmp_path, sample_rate=0)
+    assert profile(root=tmp_path).config.sample_rate == 200
+    assert profile(root=tmp_path, sample_rate=None).config.sample_rate is None
+    project.write_text("[tool.linescope]\nsample_rate = 400\n")
+    assert profile(root=tmp_path).config.sample_rate == 400
+    assert session.config.sample_rate == 300
 
 
 @pytest.mark.parametrize("value", ["0", "-5", "1.5", "invalid"])
@@ -103,6 +95,20 @@ def test_cli_rejects_invalid_sampling_rate(value):
     result = CliRunner().invoke(cli.main, ["--sample-rate", value, "worker.py"])
     assert result.exit_code == 2
     assert "--sample-rate" in result.stderr
+
+
+@pytest.mark.parametrize("backend", [Backend.SCALENE, Backend.TACHYON])
+def test_sampling_backends_default_to_1000_samples_per_second(backend):
+    """Use the same default sampling frequency for both sampling collectors.
+
+    Inspect construction without starting optional profiler runtimes.
+
+    """
+    collector_type = ScaleneBackend if backend == Backend.SCALENE else TachyonBackend
+    collector = collector_type(accepts=lambda _: True, on_source=lambda _: None)
+    assert collector.sample_rate == 1000
+    if isinstance(collector, ScaleneBackend):
+        assert collector._interval == pytest.approx(0.001)
 
 
 @pytest.mark.parametrize("backend", [Backend.SCALENE, Backend.TACHYON])
@@ -497,6 +503,7 @@ def test_sampling_counts_in_all_report_views_and_serialization(known):
         functions=[
             FunctionStats(unit.id, "work", 1, 10_000_000, samples=line.samples, line_count=2)
         ],
+        elapsed_ns=2_000_000_000,
         metadata={"sample_rate": 250},
     )
     result = ProfileResult(
@@ -540,7 +547,8 @@ def test_sampling_counts_in_all_report_views_and_serialization(known):
     if known:
         assert cell_values(rows[1])[2] == expected
         assert cell_values(rows[2])[2] == "0"
-    assert "Target samples / sec250" in document.text()
+    assert "Target samples / sec" not in document.text()
+    assert f"Measured samples / sec{'617.0' if known else '—'}" in document.text()
 
 
 def test_merged_sampling_counts_add_without_mutating_originals():
@@ -604,19 +612,79 @@ def test_empty_main_run_preserves_child_sample_count_availability(known):
     assert card.find_all("strong")[0].text() == ("0" if known else "—")
 
 
-def test_sampling_rate_metadata_is_escaped_in_summary_cards():
-    """Keep untrusted rate metadata as literal report text.
+@pytest.mark.parametrize(
+    ("samples", "counts_known", "elapsed_ns", "expected"),
+    [
+        ([205], True, 3_590_000_000, "57.1"),
+        ([1234], True, 1_000_000_000, "1,234.0"),
+        ([0], True, 1_000_000_000, "0.0"),
+        ([], True, 1_000_000_000, "0.0"),
+        ([], False, 1_000_000_000, "—"),
+        ([None], True, 1_000_000_000, "—"),
+        ([4, None], True, 1_000_000_000, "—"),
+        ([4], True, 0, "—"),
+    ],
+)
+def test_measured_sampling_rate_preserves_zero_and_unknown_counts(
+    samples, counts_known, elapsed_ns, expected
+):
+    """Calculate observed frequency without needing target-rate metadata.
 
-    Preserve the self-contained report without executing metadata markup.
+    Leave missing counts, incomplete counts, and zero elapsed time unavailable.
+    An empty run has zero observations only when its collector reports counts.
 
     """
-    value = '<img src="x" onerror="alert(1)">'
+    source = SourceUnit("source", "worker.py", "work()\nother()\n")
     result = ProfileResult(
-        ProfileRun(metadata={"sample_rate": value}),
-        {},
+        ProfileRun(
+            lines=[
+                LineStats(SourceLocation(source.id, index), wall_time_ns=1000, samples=count)
+                for index, count in enumerate(samples, start=1)
+            ],
+            elapsed_ns=elapsed_ns,
+        ),
+        {source.id: source},
         "scalene",
-        BackendCapabilities(sampled=True, sample_counts=True),
+        BackendCapabilities(sampled=True, sample_counts=counts_known),
     )
-    html = render_html(result)
-    assert value not in html
-    assert "&lt;img src=&quot;x&quot; onerror=&quot;alert(1)&quot;&gt;" in html
+    overview = ReportDOM(render_html(result)).root.find_all("section", id="overview")[0]
+    cards = {
+        card.find_all("span")[0].text(): card.find_all("strong")[0].text()
+        for card in overview.find_all("div", css="stat")
+    }
+    assert cards["Measured samples / sec"] == expected
+
+
+@pytest.mark.parametrize("target", [250, 1000, '<img src="x" onerror="alert(1)">'])
+def test_measured_sampling_rate_uses_main_run_observations_only(target):
+    """Keep overlapping child observations and target settings out of the rate.
+
+    Use the main run's own counts and wall time, even when a child shares
+    source locations or the configured target contains untrusted markup.
+
+    """
+    source = SourceUnit("source", "worker.py", "work()\n# unobserved\n")
+    capabilities = BackendCapabilities(sampled=True, sample_counts=True)
+    child = ProfileRun(
+        lines=[LineStats(SourceLocation(source.id, 1), samples=9000)],
+        metadata={"child_capabilities": asdict(capabilities)},
+    )
+    result = ProfileResult(
+        ProfileRun(
+            lines=[
+                LineStats(SourceLocation(source.id, 1), samples=10),
+                LineStats(SourceLocation(source.id, 2)),
+            ],
+            children=[child],
+            elapsed_ns=2_000_000_000,
+            metadata={"sample_rate": target},
+        ),
+        {source.id: source},
+        "scalene",
+        capabilities,
+    )
+    overview = ReportDOM(render_html(result)).root.find_all("section", id="overview")[0]
+    assert "Samples9,010" in overview.text()
+    assert "Measured samples / sec5.0" in overview.text()
+    assert "Target samples / sec" not in overview.text()
+    assert not overview.find_all("img")

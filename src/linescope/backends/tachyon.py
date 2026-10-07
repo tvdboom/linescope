@@ -60,11 +60,8 @@ class TachyonBackend:
     External library work is charged to its nearest accepted project caller.
     Samples estimate wall time and never become line execution counts.
 
-    Raise `RuntimeError` if Python is older than 3.15, attachment is denied,
-    or collection cannot initialize. Process-memory access must be allowed by
-    the OS.
-
-    Raise `ValueError` if memory or GPU collection is requested.
+    Collection requires Python 3.15 and OS permission for process-memory
+    access.
 
     Parameters
     ----------
@@ -85,7 +82,8 @@ class TachyonBackend:
 
     sample_rate : int, default=1000
         Target samples per second. Actual collection may be slower due to
-        stack capture overhead and scheduler delays.
+        stack capture overhead, operating-system timer resolution, and
+        scheduling settings.
 
     Attributes
     ----------
@@ -143,6 +141,7 @@ class TachyonBackend:
 
     ```pycon
     from linescope.backends.tachyon import TachyonBackend
+
     backend = TachyonBackend(
         accepts=lambda filename: True, on_source=lambda filename: None
     )
@@ -163,7 +162,7 @@ class TachyonBackend:
         root: str | None = None,
         gpu: bool = False,
         sample_rate: int = 1000,
-    ) -> None:
+    ):
         """Initialize external sampling and reader synchronization.
 
         Reject unsupported memory and GPU requests before starting a child
@@ -188,6 +187,8 @@ class TachyonBackend:
 
         sample_rate : int, default=1000
             Requested sampling frequency in samples per second.
+            The achieved rate depends on operating-system timer resolution
+            and scheduling settings, workload, and collection overhead.
 
         """
         del root
@@ -241,7 +242,7 @@ class TachyonBackend:
 
         return accepted
 
-    def _collect(self, frames: Sequence[Sequence[Any]], duration_ns: int = 1_000_000) -> None:
+    def _collect(self, frames: Sequence[Sequence[Any]], duration_ns: int = 1_000_000):
         # Tachyon returns stacks leaf first. Observe every project source, but
         # charge each sample exactly once to the nearest relevant project line.
         """Charge a sample interval to its nearest project line.
@@ -269,7 +270,7 @@ class TachyonBackend:
             line.wall_time_ns = (line.wall_time_ns or 0) + duration_ns
             line.samples = (line.samples or 0) + 1
 
-    def _read(self) -> None:
+    def _read(self):
         """Drain sampler messages into measurements and diagnostics.
 
         Signal readiness on either successful initialization or a reported
@@ -303,7 +304,7 @@ class TachyonBackend:
                 self._error = self._error or "Tachyon sampler exited before attachment completed"
                 self._ready.set()
 
-    def start(self) -> None:
+    def start(self):
         """Attach a collector process without replacing Python trace hooks.
 
         Wait for the sampler to signal readiness before accepting
@@ -372,7 +373,7 @@ class TachyonBackend:
             self._close()
             raise
 
-    def _close(self) -> None:
+    def _close(self):
         """Stop the owned sampler and release pipes and reader state.
 
         Record forced cleanup as a diagnostic instead of inventing successful
@@ -418,7 +419,7 @@ class TachyonBackend:
             self._reader = None
             self._running = False
 
-    def stop(self) -> None:
+    def stop(self):
         """Stop the sampler, drain collected stacks, and release its pipes.
 
         Retain collected measurements for reporting after releasing the
@@ -440,7 +441,7 @@ class TachyonBackend:
             return result
 
 
-def _send(message: dict[str, object]) -> None:
+def _send(message: dict[str, object]):
     """Write one JSON protocol record to the parent process.
 
     Flush immediately so readiness and sample messages are observable without
@@ -456,7 +457,7 @@ def _send(message: dict[str, object]) -> None:
     sys.stdout.flush()
 
 
-def _run(pid: int, thread_id: int, sample_rate: int = 1000) -> None:
+def _run(pid: int, thread_id: int, sample_rate: int = 1000):
     """Sample the requested process and thread from an external interpreter.
 
     Report initialization errors through the protocol and stop when the control
@@ -484,7 +485,7 @@ def _run(pid: int, thread_id: int, sample_rate: int = 1000) -> None:
     _send({"type": SamplerMessage.READY})
     stopped = threading.Event()
 
-    def control() -> None:
+    def control():
         """Read parent control messages until sampling is asked to stop.
 
         Set the shared event when the parent pipe closes or a stop record

@@ -266,7 +266,7 @@ def test_local_notebook_identity_uses_only_frontend_paths(
     namespace: dict[str, object],
     environment: str | None,
     expected: str | None,
-) -> None:
+):
     """Resolve frontend filenames while rejecting non-notebook session labels.
 
     Parameters
@@ -294,7 +294,7 @@ def test_local_notebook_identity_uses_only_frontend_paths(
 @pytest.mark.parametrize("child_path", [None, "/Workspace/original-child"])
 def test_workspace_notebook_identity_takes_priority(
     monkeypatch: pytest.MonkeyPatch, child_path: str | None
-) -> None:
+):
     """Retain workspace and original child paths ahead of local metadata.
 
     Parameters

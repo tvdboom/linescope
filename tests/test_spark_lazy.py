@@ -1,7 +1,7 @@
 """LineScope.
 
 Author: Mavs
-Description: Verify default Spark observation activates lazily and restores
+Description: Verify enabled Spark observation activates lazily and restores
 import hooks, methods, and listeners without requiring PySpark or Java.
 
 """
@@ -85,7 +85,13 @@ def session(root, **options):
     observation leaves transformations lazy.
 
     """
-    return Session(backend="trace", root=str(root), notebooks=False, display="none", **options)
+    return Session(
+        backend="trace",
+        root=str(root),
+        notebooks=False,
+        display="none",
+        **{"spark": True, **options},
+    )
 
 
 def attach_jvm(sql):
@@ -111,8 +117,8 @@ def attach_jvm(sql):
     return events
 
 
-def test_default_profile_does_not_import_installed_but_unused_spark(fake_spark):
-    """Verify default profile does not import installed but unused spark.
+def test_enabled_profile_does_not_import_installed_but_unused_spark(fake_spark):
+    """Verify enabled profiling leaves installed but unused Spark unloaded.
 
     Control module loading, listener startup, and method patches to verify that
     observation leaves transformations lazy.
@@ -231,6 +237,49 @@ def test_disabled_spark_does_not_watch_imports_or_wrap_methods(fake_spark):
         assert sql.DataFrame().count() == 7
         assert events == ["count"]
     assert not profile.result.root_run.spark_executions
+
+
+@pytest.mark.parametrize("project_setting", [False, True])
+def test_missing_spark_fails_before_instrumentation_and_releases_session(
+    tmp_path, monkeypatch, *, project_setting
+):
+    """Reject requested Spark profiling without disturbing session hooks.
+
+    Cover explicit and project configuration, preserve existing trace and
+    import hooks, and allow a subsequent session with Spark disabled.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Isolated project directory supplied by pytest.
+
+    monkeypatch : pytest.MonkeyPatch
+        Owned dependency-discovery override restored after the test.
+
+    project_setting : bool
+        Whether Spark is enabled through TOML rather than an explicit option.
+
+    """
+    monkeypatch.setattr("linescope.api.find_spec", lambda _name: None)
+    if project_setting:
+        (tmp_path / "pyproject.toml").write_text(
+            "[tool.linescope]\nspark = true\n", encoding="utf-8"
+        )
+    options = {} if project_setting else {"spark": True}
+    profile = Session(root=str(tmp_path), display="none", **options)
+    trace = sys.gettrace()
+    profiler = sys.getprofile()
+    finders = sys.meta_path[:]
+    with pytest.raises(ImportError, match="PySpark in the existing environment"):
+        profile.start()
+    assert sys.gettrace() is trace
+    assert sys.getprofile() is profiler
+    assert sys.meta_path == finders
+    assert profile._backend is None
+    assert not listener._ACTIVE
+    assert not listener._PATCHES
+    with Session(root=str(tmp_path), spark=False, notebooks=False, display="none"):
+        assert sum(range(10)) == 45
 
 
 def test_first_action_failure_records_error_and_restores_lazy_observation(fake_spark):
@@ -360,21 +409,18 @@ def test_partial_observer_startup_restores_methods_and_watcher(fake_spark, monke
     assert not listener._PATCHES
 
 
-def test_auto_spark_configuration_is_rejected_in_project_and_global_settings(
-    fake_spark, monkeypatch
-):
-    """Check the expected behavior in this regression case.
+def test_auto_spark_configuration_is_rejected_in_project_and_profile_settings(fake_spark):
+    """Reject unsupported Spark modes from TOML and explicit profile options.
 
-    Verify auto spark configuration is rejected in project and global settings.
+    Require boolean integration settings before collector startup.
 
     """
-    monkeypatch.setattr("linescope.config._overrides", {})
-    from linescope import configure
+    from linescope import profile
     from linescope.config import resolve_config
 
     with pytest.raises(ValueError, match="spark must be True or False"):
-        configure(spark="auto")
-    assert Config().spark is True
+        profile(spark="auto")
+    assert Config().spark is False
     (fake_spark / "pyproject.toml").write_text(
         '[tool.linescope]\nspark = "auto"\n', encoding="utf-8"
     )

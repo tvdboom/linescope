@@ -30,13 +30,12 @@ def runner():
 
 
 @pytest.fixture(autouse=True)
-def isolated_configuration(monkeypatch):
-    """Provide isolated configuration.
+def suppress_browser_launch(monkeypatch):
+    """Keep automatic report display inside the CLI test process.
 
-    Remove persistent API overrides from each CLI test.
+    Exercise report generation without opening a real browser.
 
     """
-    monkeypatch.setattr("linescope.config._overrides", {})
     monkeypatch.setattr("webbrowser.open", lambda _url, **_kwargs: True)
 
 
@@ -56,6 +55,25 @@ def cli_options(report):
         "-o",
         str(report),
     ]
+
+
+def test_trace_gpu_option_warns_and_saves_python_report(runner, tmp_path):
+    """Warn about unavailable GPU metrics while profiling the script.
+
+    Exercise the CLI boundary and emit the diagnostic without advertising
+    device columns or skipping the user's workload.
+
+    """
+    script = tmp_path / "workload.py"
+    script.write_text('print("workload completed")\n', encoding="utf-8")
+    report = tmp_path / "gpu.html"
+    with pytest.warns(RuntimeWarning, match="trace.*GPU"):
+        result = runner.invoke(cli.main, [*cli_options(report), "--gpu", str(script)])
+    assert result.exit_code == 0, result.output
+    assert "workload completed" in result.stdout
+    html = report.read_text(encoding="utf-8")
+    assert "GPU time" not in html
+    assert "GPU peak memory" not in html
 
 
 class TestCommandParsing:

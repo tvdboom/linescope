@@ -8,9 +8,12 @@ downloads.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 import json
 from pathlib import Path
 import shutil
+import sys
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
@@ -30,7 +33,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 NOTEBOOKS = [
     (
         "notebook_example",
-        "Notebook Quick Start",
+        "Quick Start",
         'display="cell-summary"',
     ),
     (
@@ -126,6 +129,7 @@ def test_notebooks_render_in_navigation_with_source_downloads(
     assert content is not None
     assert content.h1.get_text().rstrip("¶") == heading
     assert source in content.get_text()
+    assert content.select(".jp-InputPrompt, .jp-OutputPrompt, .jp-OutputArea-prompt") == []
     assert page.select_one(".md-nav a[href$='.ipynb']") is None
     active_link = page.select_one(".md-nav a.md-nav__link--active")
     assert active_link is not None
@@ -174,23 +178,6 @@ def test_documentation_notebooks_match_runnable_examples(name):
     )
 
 
-def test_getting_started_displays_complete_script_source(notebook_site):
-    """Verify documentation displays complete runnable source.
-
-    Build the documentation without executing notebook cells and inspect
-    preserved source, output, and navigation.
-
-    """
-    _, site_dir = notebook_site
-    rendered = bs4.BeautifulSoup(
-        (site_dir / "getting_started/index.html").read_text(encoding="utf-8"), "html.parser"
-    )
-    for line_number in rendered.select(".highlight .linenos"):
-        line_number.decompose()
-    source = (REPO_ROOT / "examples/script_example.py").read_text(encoding="utf-8").strip()
-    assert source in [code.get_text().strip() for code in rendered.select(".highlight code")]
-
-
 def test_examples_navigation_contains_only_three_notebooks(notebook_site):
     """Expose only the three output-bearing notebooks in example navigation.
 
@@ -201,7 +188,7 @@ def test_examples_navigation_contains_only_three_notebooks(notebook_site):
     config = mkdocs_config.load_config(config_file=str(REPO_ROOT / "mkdocs.yml"))
     examples = next(section["Examples"] for section in config.nav if "Examples" in section)
     assert examples == [
-        {"Notebook Quick Start": "examples/notebooks/notebook_example.ipynb"},
+        {"Quick Start": "examples/notebooks/notebook_example.ipynb"},
         {"Local Spark": "examples/notebooks/spark_example.ipynb"},
         {"GPU workload": "examples/notebooks/gpu_example.ipynb"},
     ]
@@ -237,9 +224,39 @@ def test_gpu_notebook_preserves_real_outputs_without_build_hardware(notebook_sit
     report = page.select_one(".jp-OutputArea iframe[srcdoc]")
     assert report is not None
     assert "project_signals" in report["srcdoc"]
+    profile = bs4.BeautifulSoup(report["srcdoc"], "html.parser")
+    assert "Backend scalene" in profile.select_one(".header-details").get_text(" ", strip=True)
+    assert "GPU time" in profile.get_text()
+    assert "GPU peak memory" in profile.get_text()
+    overview = profile.select_one("#overview")
+    assert "Attributed GPU time" not in overview.get_text()
+    assert "GPU peak memory" not in overview.get_text()
+    assert "Target samples / sec" not in overview.get_text()
+    assert "Measured samples / sec" in overview.get_text()
+    assert overview.select_one('a[href="#gpu"]') is not None
+    gpu_page = profile.select_one("#gpu")
+    assert gpu_page is not None
+    assert "Driver time" in gpu_page.get_text()
+    assert "GPU measurements by source line" in gpu_page.get_text()
+    assert "Attributed GPU time sums available source-line estimates" not in gpu_page.get_text()
+    assert "Sampled GPU memory is unavailable" not in gpu_page.get_text()
+    assert "Attributed GPU time" in gpu_page.get_text()
+    memory_card = next(
+        card
+        for card in gpu_page.select(".stat")
+        if card.select_one("span").get_text() == "GPU peak memory"
+    )
+    if memory_card.select_one("strong").get_text() == "—":
+        reason = memory_card.select_one(".metric-unavailable").get_text()
+        assert reason
+        assert "Unavailable because" not in reason
+        assert "GPU time sampling continues" not in reason
+    assert "Attributed GPU time:" in output
+    assert 'backend="scalene"' in page.get_text()
+    assert "gpu=True" in page.get_text()
 
 
-def _execution_config(tmp_path: Path, source: str) -> MkDocsConfig:
+def _execution_config(tmp_path: Path, source: str, *, name: str = "execution") -> MkDocsConfig:
     """Configure a real build for one portable notebook execution probe.
 
     Keep Spark and workspace calls outside this regression test while using
@@ -252,6 +269,9 @@ def _execution_config(tmp_path: Path, source: str) -> MkDocsConfig:
 
     source : str
         Trusted notebook cell to execute during the documentation build.
+
+    name : str, default="execution"
+        Notebook filename stem used to exercise page-specific build behavior.
 
     Returns
     -------
@@ -270,21 +290,24 @@ def _execution_config(tmp_path: Path, source: str) -> MkDocsConfig:
             "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"}
         },
     )
-    nbformat.write(notebook, docs_dir / "examples/notebooks/execution.ipynb")
+    notebook_uri = f"examples/notebooks/{name}.ipynb"
+    nbformat.write(notebook, docs_dir / notebook_uri)
     config = mkdocs_config.load_config(
         config_file=str(REPO_ROOT / "mkdocs.yml"),
         docs_dir=str(docs_dir),
         site_dir=str(tmp_path / "site"),
-        exclude_docs="**/*.md\n**/*.ipynb\n!examples/notebooks/execution.ipynb",
+        exclude_docs=(
+            f"**/*.md\n**/*.ipynb\n!{notebook_uri}\n!examples/notebooks/execution.ipynb"
+        ),
         strict=True,
     )
-    config.nav = [{"Executed notebook": "examples/notebooks/execution.ipynb"}]
+    config.nav = [{"Executed notebook": notebook_uri}]
     return config
 
 
 def test_notebook_build_executes_cells_and_cleans_reports(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+):
     """Render real text and HTML outputs without changing source notebooks.
 
     Check that the executed notebook writes its report in an owned temporary
@@ -328,9 +351,230 @@ def test_notebook_build_executes_cells_and_cleans_reports(
     assert notebooks._workspace is None
 
 
+def test_spark_docs_without_java_render_saved_content_and_execute_other_notebooks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Build without Java and resume Spark execution on the next build.
+
+    Keep downloads and saved content unchanged and execute independent
+    notebooks. Verify that newly available Java restores Spark execution and
+    that real cell errors still fail the build with resource cleanup.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Isolated documentation source and output directory.
+
+    monkeypatch : pytest.MonkeyPatch
+        Fixture used to control Java discovery without a Java installation.
+
+    """
+    monkeypatch.syspath_prepend(str(REPO_ROOT))
+    from docs_sources.scripts import notebooks
+
+    config = _execution_config(
+        tmp_path,
+        "from pathlib import Path\n"
+        "Path('spark-report.html').write_text('Generated report')\n"
+        "raise RuntimeError('Spark execution failed')\n",
+        name="spark_example",
+    )
+    source_dir = Path(config.docs_dir) / "examples/notebooks"
+    original = source_dir / "spark_example.ipynb"
+    notebook = nbformat.read(original, as_version=4)
+    notebook.cells[1].outputs = [
+        nbformat.v4.new_output("stream", name="stdout", text="Saved Spark output\n")
+    ]
+    nbformat.write(notebook, original)
+    original_bytes = original.read_bytes()
+    nbformat.write(
+        nbformat.v4.new_notebook(
+            cells=[nbformat.v4.new_code_cell("print('Independent notebook executed')")],
+            metadata=notebook.metadata,
+        ),
+        source_dir / "execution.ipynb",
+    )
+    config.nav.append({"Independent notebook": "examples/notebooks/execution.ipynb"})
+    ignored = config.plugins["mkdocs-jupyter"].config["execute_ignore"]
+    monkeypatch.setattr(notebooks, "_java_available", lambda: False)
+    mkdocs_build.build(config)
+
+    site_dir = Path(config.site_dir)
+    page = bs4.BeautifulSoup(
+        (site_dir / "examples/notebooks/spark_example/index.html").read_text(encoding="utf-8"),
+        "html.parser",
+    )
+    assert page.select_one(".admonition") is None
+    assert "Saved Spark output" in page.select_one(".jp-OutputArea").get_text()
+    assert (site_dir / "examples/notebooks/spark_example/spark_example.ipynb").read_bytes() == (
+        original_bytes
+    )
+    independent_page = bs4.BeautifulSoup(
+        (site_dir / "examples/notebooks/execution/index.html").read_text(encoding="utf-8"),
+        "html.parser",
+    )
+    assert (
+        "Independent notebook executed" in independent_page.select_one(".jp-OutputArea").get_text()
+    )
+    assert independent_page.select_one(".admonition") is None
+    assert config.plugins["mkdocs-jupyter"].config["execute_ignore"] is ignored
+    assert original.read_bytes() == original_bytes
+    assert not (source_dir / "spark-report.html").exists()
+    assert notebooks._workspace is None
+    assert notebooks._spark_execution is None
+
+    monkeypatch.setattr(notebooks, "_java_available", lambda: True)
+    from nbclient.exceptions import CellExecutionError
+
+    with pytest.raises(CellExecutionError, match="Spark execution failed"):
+        mkdocs_build.build(config)
+
+    assert config.plugins["mkdocs-jupyter"].config["execute_ignore"] is ignored
+    assert original.read_bytes() == original_bytes
+    assert not (source_dir / "spark-report.html").exists()
+    assert notebooks._workspace is None
+    assert notebooks._spark_execution is None
+
+
+def test_spark_docs_staging_failure_restores_execution_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Restore temporary Spark exclusions after notebook staging fails.
+
+    Reject a failed source copy before any kernel starts and release the
+    temporary directory and build-owned execution settings.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Isolated documentation source and output directory.
+
+    monkeypatch : pytest.MonkeyPatch
+        Fixture used to simulate missing Java and a source-copy error.
+
+    """
+    monkeypatch.syspath_prepend(str(REPO_ROOT))
+    from docs_sources.scripts import notebooks
+
+    config = _execution_config(tmp_path, "pass", name="spark_example")
+    ignored = config.plugins["mkdocs-jupyter"].config["execute_ignore"]
+    monkeypatch.setattr(notebooks, "_java_available", lambda: False)
+
+    def reject_copy(*_args: object, **_kwargs: object):
+        """Simulate an unreadable documentation notebook during staging.
+
+        Parameters
+        ----------
+        *_args : object
+            Source and destination paths passed to the copy operation.
+
+        **_kwargs : object
+            Additional copy operation options.
+
+        """
+        raise OSError("Notebook staging failed")
+
+    monkeypatch.setattr(notebooks.shutil, "copyfile", reject_copy)
+    with pytest.raises(OSError, match="Notebook staging failed"):
+        mkdocs_build.build(config)
+
+    assert config.plugins["mkdocs-jupyter"].config["execute_ignore"] is ignored
+    assert notebooks._workspace is None
+    assert notebooks._spark_execution is None
+
+
+@pytest.mark.parametrize(
+    ("home", "on_path", "expected"),
+    [("valid", False, True), ("invalid", True, False), (None, True, True), (None, False, False)],
+)
+def test_docs_java_discovery_honors_java_home_before_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    home: str | None,
+    *,
+    on_path: bool,
+    expected: bool,
+):
+    """Skip Spark for absent Java while honoring explicit environment settings.
+
+    Detect executable paths without launching Java or requiring a system JDK.
+    An invalid explicit home must not be rescued by an unrelated PATH entry.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Directory containing a fake Java installation.
+
+    monkeypatch : pytest.MonkeyPatch
+        Fixture used to control platform and environment discovery.
+
+    home : str | None
+        Valid or invalid installation name, or no explicit Java home.
+
+    on_path : bool
+        Whether Java is discoverable through the process PATH.
+
+    expected : bool
+        Expected availability for notebook execution.
+
+    """
+    from docs_sources.scripts import notebooks
+
+    executable = tmp_path / "valid/bin/java"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    monkeypatch.setattr(notebooks.sys, "platform", "linux")
+    monkeypatch.setattr(
+        notebooks.shutil, "which", lambda _name: str(executable) if on_path else None
+    )
+    monkeypatch.delenv("JAVA_HOME", raising=False)
+    if home is not None:
+        monkeypatch.setenv("JAVA_HOME", str(tmp_path / home))
+    assert notebooks._java_available() is expected
+
+
+def test_docs_java_discovery_uses_saved_windows_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Find a saved Windows Java installation without mutating the environment.
+
+    Match the Spark notebook's behavior for terminals that have not inherited
+    recently configured Java settings.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Directory containing a fake Windows Java installation.
+
+    monkeypatch : pytest.MonkeyPatch
+        Fixture used to provide Windows registry settings on any platform.
+
+    """
+    from docs_sources.scripts import notebooks
+
+    executable = tmp_path / "bin/java.exe"
+    executable.parent.mkdir()
+    executable.touch()
+    monkeypatch.delenv("JAVA_HOME", raising=False)
+    monkeypatch.setattr(notebooks.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(notebooks.sys, "platform", "win32")
+    monkeypatch.setitem(
+        sys.modules,
+        "winreg",
+        SimpleNamespace(
+            HKEY_CURRENT_USER=1,
+            HKEY_LOCAL_MACHINE=2,
+            OpenKey=lambda *_args: nullcontext(),
+            QueryValueEx=lambda *_args: (str(tmp_path), 1),
+        ),
+    )
+    assert notebooks._java_available() is True
+    assert "JAVA_HOME" not in notebooks.os.environ
+
+
 def test_notebook_execution_failure_aborts_build_and_cleans_reports(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+):
     """Reject failed notebook cells and release their temporary reports.
 
     Exercise the production build-error hook after a notebook creates an

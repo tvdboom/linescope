@@ -159,7 +159,7 @@ def test_sampled_cell_preserves_unknown_counts_and_memory_baselines():
 
 
 @pytest.mark.parametrize("metric", ["wall_time_ns", "hits", "samples"])
-def test_cell_delta_preserves_first_zero_observations(metric: str) -> None:
+def test_cell_delta_preserves_first_zero_observations(metric: str):
     """Retain known zero observations without reusing previous cell costs.
 
     Keep a new zero-valued line available to the renderer while omitting
@@ -271,7 +271,7 @@ def test_compact_renderer_shows_all_rows_and_escapes_source_origins():
 )
 def test_compact_sorters_use_raw_values_and_restore_source_order(
     capabilities: BackendCapabilities,
-) -> None:
+):
     """Expose a matching sort arrow and raw value for every cell column.
 
     Preserve negative changes, known zeroes, unknown measurements, and escaped
@@ -370,7 +370,7 @@ def test_compact_sorters_use_raw_values_and_restore_source_order(
 )
 def test_unmeasured_cell_shows_source_and_unknown_metrics(
     status: RunStatus, backend: str, capabilities: BackendCapabilities
-) -> None:
+):
     """Display captured source when a cell has no line measurements.
 
     Short sampled cells and syntax failures can have no line observations.
@@ -455,7 +455,7 @@ def test_compact_source_preserves_long_lines_and_indentation():
 
 
 @pytest.mark.parametrize("metric", ["wall_time_ns", "samples", "hits"])
-def test_compact_all_lines_follow_source_line_order(metric: str) -> None:
+def test_compact_all_lines_follow_source_line_order(metric: str):
     """Display every source line in ascending line-number order.
 
     Include unmeasured lines and keep observed source text and metrics together
@@ -548,7 +548,7 @@ def test_compact_keeps_zero_samples_and_called_source_context():
 
 
 @pytest.mark.parametrize("blank_count", [1, 2, 30])
-def test_compact_collapses_source_gaps_without_adding_table_rows(blank_count: int) -> None:
+def test_compact_collapses_source_gaps_without_adding_table_rows(blank_count: int):
     """Mark each internal source gap with one compact row border.
 
     Collapse whitespace runs of any length and mark omitted comments too.
@@ -654,7 +654,7 @@ def test_compact_collapses_source_gaps_without_adding_table_rows(blank_count: in
         ('%time answer = 42\n"""Module docs."""\n# comment\nanswer += 1\n', [1, 4]),
     ],
 )
-def test_compact_hides_blank_comment_and_docstring_rows(text: str, visible: list[int]) -> None:
+def test_compact_hides_blank_comment_and_docstring_rows(text: str, visible: list[int]):
     """Filter documentation without dropping code, data, or original numbers.
 
     Keep observed hidden lines out of fallback rows and retain the complete
@@ -700,7 +700,7 @@ def test_compact_hides_blank_comment_and_docstring_rows(text: str, visible: list
 
 
 @pytest.mark.parametrize("text", ["", "\n \t\n", "# comment\n\n", '"""Only documentation."""'])
-def test_compact_empty_or_documentation_only_cell_has_no_table(text: str) -> None:
+def test_compact_empty_or_documentation_only_cell_has_no_table(text: str):
     """Suppress a compact table when every row is blank or documentation.
 
     Preserve even observed documentation lines in the normalized result.

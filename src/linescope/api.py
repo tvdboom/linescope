@@ -12,6 +12,7 @@ import ast
 from contextlib import ExitStack
 from copy import deepcopy
 from dataclasses import replace
+from importlib.util import find_spec
 from pathlib import Path
 import re
 from tempfile import NamedTemporaryFile
@@ -53,7 +54,7 @@ class Session:
         Prevalidated configuration. Mutually exclusive with keyword options.
 
     **options
-        Explicit [Config] fields overriding global and project settings.
+        Explicit [Config] fields overriding project settings.
 
     Attributes
     ----------
@@ -64,7 +65,8 @@ class Session:
         Project discovery, frozen source snapshots, and notebook aliases.
 
     result : [ProfileResult]
-        Captured source, run tree, and the latest normalized measurements.
+        Complete normalized result containing captured source, the run tree,
+        measurements, capabilities, and diagnostics. Finalized by `stop()`.
 
     state : [SessionState]
         Lifecycle state; a session starts once and remains stopped.
@@ -94,20 +96,21 @@ class Session:
     _notebook_sources : list[[SourceUnit]]
         Precaptured child cells reused by notebook source capture.
 
-    launch_root : Path
+    launch_root : [Path]
         Working directory at construction, used for report navigation.
 
     See Also
     --------
-    - linescope:configure
+    - linescope:Config
     - linescope:profile
     - linescope.model:ProfileResult
 
     Examples
     --------
     ```pycon
-    >>> from linescope import profile
-    >>> with profile(
+    >>> from linescope import Session
+
+    >>> with Session(
     ...     backend="trace", display="none", notebooks=False, spark=False
     ... ) as session:
     ...     value = sum(range(10))
@@ -119,7 +122,7 @@ class Session:
 
     """
 
-    def __init__(self, config: Config | None = None, **options: Any) -> None:
+    def __init__(self, config: Config | None = None, **options: Any):
         """Initialize validated options, source ownership, and session state.
 
         Instrumentation is installed only when the session starts.
@@ -191,10 +194,7 @@ class Session:
         return False
 
     def start(self) -> Session:
-        """Begin collection and install available notebook and Spark observers.
-
-        Raise `RuntimeError` if another session is running or this session
-        has already started.
+        """Begin collection and install configured notebook and Spark observers.
 
         Returns
         -------
@@ -215,6 +215,12 @@ class Session:
         self._owner = threading.get_ident()
 
         try:
+            if self.config.spark and find_spec("pyspark") is None:
+                raise ImportError(
+                    "Spark profiling requires PySpark in the existing environment. "
+                    "Run LineScope in your Spark environment or set spark=False."
+                )
+
             self._backend = create_backend(
                 self.config.backend,
                 accepts=self.registry.accepts,
@@ -231,9 +237,11 @@ class Session:
                 ),
             )
 
+            # Trace warns about unsupported GPU requests; Scalene detects
+            # available devices during startup. Other collectors must support it.
             if (
                 self.config.gpu
-                and self._backend.name != Backend.SCALENE
+                and self._backend.name not in {Backend.SCALENE, Backend.TRACE}
                 and not self._backend.capabilities.gpu
             ):
                 raise ValueError(f"The {self._backend.name} backend cannot collect GPU metrics")
@@ -282,7 +290,7 @@ class Session:
 
         return self
 
-    def _refresh(self) -> None:
+    def _refresh(self):
         """Rebuild normalized measurements from the latest collector snapshot.
 
         Preserve notebook and Spark references without accumulating measured
@@ -536,20 +544,18 @@ class Session:
 
         return sources
 
-    def stop(self) -> ProfileResult:
+    def stop(self):
         """Finalize measurements and restore instrumentation.
 
-        Display the completed report when configured.
+        Display the completed report when configured and retain the complete
+        result on `session.result`. Return None so notebook cells add no
+        result representation. Repeated calls do nothing without redisplay.
 
-        Returns
-        -------
-        [ProfileResult]
-            Completed run. Repeated calls return the same result without
-            redisplay.
+        The completed result remains accessible if report display fails.
 
         """
         if self.state == SessionState.STOPPED:
-            return self.result
+            return
 
         if self.state != SessionState.RUNNING:
             raise RuntimeError("Start the session before stopping it")
@@ -570,13 +576,11 @@ class Session:
         if self.config.display in (DisplayMode.END, DisplayMode.CELL):
             self.show()
 
-        return self.result
-
     def add_spark_execution(
         self,
         execution: SparkExecution,
         locations: list[SourceLocation],
-    ) -> None:
+    ):
         """Associate a Spark execution with its project source lines.
 
         Parameters
@@ -597,7 +601,7 @@ class Session:
             if execution.id not in line.spark_executions:
                 line.spark_executions.append(execution.id)
 
-    def add_child_run(self, run: ProfileRun, location: SourceLocation | None) -> None:
+    def add_child_run(self, run: ProfileRun, location: SourceLocation | None):
         """Attach a separate notebook invocation.
 
         Keep unavailable child measurements unknown.
@@ -646,12 +650,12 @@ class Session:
 
         Parameters
         ----------
-        path : str | Path
+        path : str | [Path]
             Destination filename. Missing parent directories are created.
 
         Returns
         -------
-        Path
+        [Path]
             Absolute path to the saved report.
 
         """
@@ -660,13 +664,14 @@ class Session:
         destination.write_text(self.html(), encoding="utf-8")
         return destination
 
-    def show(self, *, inline: bool | None = None) -> str:
+    def show(self, *, inline: bool | None = None):
         """Open a browser report or display it inside a notebook cell.
 
+        Return None so notebook cells display only the report. Use `html()`
+        to retrieve the self-contained HTML without displaying it.
+
         Detect notebook kernels for automatic inline display. Scripts and
-        terminal IPython open a browser. Raise `RuntimeError` when an explicit
-        inline request has no active notebook kernel, and `TypeError` when
-        `inline` is neither a boolean nor None.
+        terminal IPython open a browser.
 
         Parameters
         ----------
@@ -674,11 +679,6 @@ class Session:
             Choose the display destination for this report. None detects the
             environment; False opens a browser tab, and True displays an
             isolated iframe in the current notebook cell.
-
-        Returns
-        -------
-        str
-            The self-contained HTML used for display.
 
         """
         if inline is not None and not isinstance(inline, bool):
@@ -735,11 +735,13 @@ class Session:
 
             webbrowser.open(destination.as_uri(), new=2)
 
-        return html
-
 
 class ProfileController:
     """Offer callable contexts and explicit notebook-wide start/stop ergonomics.
+
+    The package exports one shared instance as [profile] and [profiler].
+    These names refer to the same object and retain the same explicit session.
+    Construct this class directly when an independent controller is needed.
 
     Attributes
     ----------
@@ -747,19 +749,34 @@ class ProfileController:
         Most recent explicit session, or None before `start` is called.
 
     result : [ProfileResult]
-        Latest normalized measurements of the most recent explicit session.
-        Read-only access to the same object as `session.result`; finalized
-        after `stop` completes.
+        Complete normalized result of the most recent explicit session,
+        including source snapshots, measurements, the run tree, capabilities,
+        and diagnostics. Read-only access to the same object as
+        `session.result`; finalized after `stop` completes.
 
     See Also
     --------
-    - linescope:configure
+    - linescope:Config
     - linescope.model:ProfileResult
     - linescope:Session
 
+    Examples
+    --------
+    ```pycon
+    from linescope import ProfileController
+
+    controller = ProfileController()
+    with controller(
+        backend="trace", display="none", notebooks=False, spark=False
+    ) as session:
+        total = sum(range(10))
+
+    (total, str(session.state), str(session.result.backend))
+    ```
+
     """
 
-    def __init__(self) -> None:
+    def __init__(self):
         """Initialize a controller without an explicit profiling session.
 
         Retain a session only after an explicit `start` succeeds.
@@ -770,14 +787,14 @@ class ProfileController:
     def __call__(self, **options: Any) -> Session:
         """Create a context-managed session using explicit [Config] options.
 
-        Raise `TypeError` if an option name or value type is invalid.
-
-        Raise `ValueError` if an option value is outside its supported range.
+        Calling the controller creates a fresh [Session] without replacing
+        the session retained by `start()`. The package's [profile] and
+        [profiler] names refer to the same callable controller instance.
 
         Parameters
         ----------
         **options
-            Configuration fields overriding process and project defaults.
+            Configuration fields overriding project defaults for this session.
             Collection begins when entering the context or calling `start`.
 
         Returns
@@ -788,9 +805,15 @@ class ProfileController:
         Examples
         --------
         ```pycon
-        from linescope import profile
-        session = profile(backend="trace", display="none")
-        session.state
+        from linescope import profile, profiler
+
+        profiler is profile
+        with profile(
+            backend="trace", display="none", notebooks=False, spark=False
+        ) as session:
+            total = sum(range(10))
+
+        (total, str(session.state), str(session.result.backend))
         ```
 
         """
@@ -798,17 +821,6 @@ class ProfileController:
 
     def start(self, **options: Any) -> Session:
         """Start a new session using explicit [Config] options.
-
-        Raise `RuntimeError` if a session is already running or the collector
-        cannot start.
-
-        Raise `ImportError` if the selected collector's optional dependency
-        is missing.
-
-        Raise `TypeError` if an option name or value type is invalid.
-
-        Raise `ValueError` if an option value or requested capability is
-        unsupported.
 
         Parameters
         ----------
@@ -825,6 +837,7 @@ class ProfileController:
         --------
         ```pycon
         from linescope import ProfileController
+
         controller = ProfileController()
         session = controller.start(
             backend="trace", display="none", notebooks=False, spark=False
@@ -847,8 +860,6 @@ class ProfileController:
     def _current(self) -> Session:
         """Return the most recent explicit session.
 
-        Raise `RuntimeError` when no explicit session has been started.
-
         Returns
         -------
         [Session]
@@ -866,26 +877,22 @@ class ProfileController:
 
         Return the same object as `session.result` without refreshing or
         displaying measurements. Stop collection first to finalize the run.
-        Raise `RuntimeError` if no explicit session has started.
 
         Returns
         -------
         [ProfileResult]
-            Captured source snapshots, latest measurements, and run tree.
+            Complete normalized result with source snapshots, measurements,
+            the run tree, capabilities, and diagnostics.
 
         """
         return self._current().result
 
-    def stop(self) -> None:
+    def stop(self):
         """Stop the current explicit session without returning its result.
 
         Instrumentation is restored before any configured report display.
         Retrieve the completed result through `profile.result` or
         `session.result`. Repeated calls do nothing without displaying again.
-
-        Raise `RuntimeError` if no explicit session has started, or a running
-        session is stopped from a different thread than the one that started
-        it.
 
         """
         self._current().stop()
@@ -893,38 +900,28 @@ class ProfileController:
     def save(self, path: str | Path) -> Path:
         """Save the current session without displaying it.
 
-        Raise `RuntimeError` if no explicit session exists or the collector
-        cannot return measurements while it is still running.
-
-        Raise `OSError` if the destination cannot be created or written.
-
         Parameters
         ----------
-        path : str | Path
+        path : str | [Path]
             Destination HTML filename. Missing parent directories are
             created. Stop collection first when saving a finalized sampling
             result.
 
         Returns
         -------
-        Path
+        [Path]
             Absolute path of the self-contained report.
 
         """
         return self._current().save(path)
 
-    def show(self, *, inline: bool | None = None) -> str:
+    def show(self, *, inline: bool | None = None):
         """Display the current session.
 
         Reports display inside notebook cells automatically and open a browser
         elsewhere. Use `inline` to choose the destination for this report.
+        Return None; retrieve the HTML string through `session.html()`.
         Stop collection first when displaying a finalized sampling result.
-
-        Raise `RuntimeError` if no explicit session exists or the collector
-        cannot return measurements while it is still running.
-
-        Raise `OSError` if the output file cannot be written outside a
-        notebook.
 
         Parameters
         ----------
@@ -932,13 +929,8 @@ class ProfileController:
             Choose the destination for this report. None detects the
             environment; True requires a notebook, and False opens a browser.
 
-        Returns
-        -------
-        str
-            The complete HTML used for display.
-
         """
-        return self._current().show(inline=inline)
+        self._current().show(inline=inline)
 
 
 profile = ProfileController()

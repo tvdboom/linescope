@@ -170,8 +170,9 @@ Portable notebooks are executed from top to bottom in real Python kernels with
 uv run tox -e notebooks
 ```
 
-This environment installs the notebook and Spark extras, registers its own
-kernel, and runs copies from `examples/notebooks` in a temporary directory.
+This environment installs the notebook extra and development `spark` dependency
+group, registers its own kernel, and runs copies from `examples/notebooks` in a
+temporary directory.
 Local Spark cells require a compatible [Java] runtime. Cell errors fail the
 check; generated reports stay out of the source examples. The GPU notebook
 retains saved CUDA outputs and requires GPU hardware to execute again.
@@ -260,12 +261,27 @@ The docs are built with [MkDocs Material][mkdocs-material] and live in
 `docs_sources/`. Build-time hooks in `docs_sources/scripts/` handle
 auto-generated API reference pages.
 
-Portable notebooks execute during the build and include their outputs. Install
-the notebook and Spark extras and provide compatible [Java] for the local
-Spark example. Execution uses temporary copies, so generated reports do not
-change source notebooks. Cell errors fail the build. The GPU notebook retains
-outputs captured on a CUDA device so documentation builders do not need a GPU.
-Run it again with the `gpu` dependency group to refresh its saved outputs.
+Portable notebooks execute during the build and include their outputs.
+Execution uses temporary copies, so generated reports do not change source
+notebooks. Install the documentation and local Spark dependency groups and the
+notebook extra:
+
+```console
+uv sync --locked --group docs --group spark --extra notebook
+uv run python -m ipykernel install --sys-prefix --name python3
+```
+
+The local Spark notebook executes when [Java] is available through `JAVA_HOME`
+or `PATH`. On Windows, saved `JAVA_HOME` settings are also checked. When Java is
+unavailable, its page displays saved notebook content while the other portable
+notebooks still execute. Install Java and rebuild to generate
+current Spark outputs. An invalid `JAVA_HOME` also skips Spark execution; fix
+it to point to a Java installation containing `bin/java` (`bin/java.exe` on
+Windows). Once Java is available, Spark startup and cell errors fail the build.
+
+The GPU notebook retains outputs captured on a CUDA device so documentation
+builders do not need a GPU. Run it again with the `gpu` dependency group and
+the `scalene` extra to refresh its saved outputs and device measurements.
 
 ```console
 # Live preview with hot-reload

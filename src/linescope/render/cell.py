@@ -273,7 +273,7 @@ def render_cell_summary(
     if result.capabilities.memory:
         columns.extend((("Mem Change", "memory"), ("Python retained", "allocation")))
     if result.capabilities.gpu:
-        columns.append(("Estimated GPU time", "gpu-time"))
+        columns.append(("GPU time", "gpu-time"))
     columns.append(("Source", "line"))
 
     descriptions = {

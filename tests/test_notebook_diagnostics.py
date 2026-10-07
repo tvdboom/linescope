@@ -60,7 +60,7 @@ def test_cell_summary_excludes_prior_measurements_and_displays_once(monkeypatch,
 @pytest.mark.parametrize("error_field", [None, "error_before_exec", "error_in_exec"])
 def test_unmeasured_cell_shows_source_and_next_cell_collects_metrics(
     monkeypatch: pytest.MonkeyPatch, error_field: str | None
-) -> None:
+):
     """Show unmeasured source and collect the next cell's own measurements.
 
     Earlier cumulative observations must not appear as costs for an unmeasured

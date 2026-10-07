@@ -49,6 +49,7 @@ class ChildContext:
     --------
     ```pycon
     >>> from linescope.notebooks import ChildContext
+
     >>> context = ChildContext.create("parent-run")
     >>> context.as_parameters()["linescope_parent_id"]
     'parent-run'
@@ -95,9 +96,6 @@ class ChildContext:
 def merge_child(parent: ProfileResult, child: ProfileResult, correlation_id: str) -> ProfileResult:
     """Merge a child profile into a recorded notebook invocation.
 
-    Raise `ValueError` if the invocation is unknown, ownership does not
-    match, or source IDs collide with different source content.
-
     Parameters
     ----------
     parent : [ProfileResult]
@@ -126,6 +124,7 @@ def merge_child(parent: ProfileResult, child: ProfileResult, correlation_id: str
     >>> from linescope import Session
     >>> from linescope.model import ProfileRun
     >>> from linescope.notebooks import merge_child
+
     >>> parent = Session(backend="trace").result
     >>> invocation = ProfileRun(id="child-call", elapsed_ns=12)
     >>> parent.root_run.children.append(invocation)

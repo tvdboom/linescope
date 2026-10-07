@@ -29,7 +29,7 @@ def _connection_file(shell: InteractiveShell) -> Path | None:
 
     Returns
     -------
-    Path | None
+    [Path] | None
         Active connection file, or None for non-kernel shells.
 
     """
@@ -53,7 +53,7 @@ def _server_notebook_path(connection: Path) -> str | None:
 
     Parameters
     ----------
-    connection : Path
+    connection : [Path]
         Connection file whose `kernel-` stem identifies the running kernel.
 
     Returns

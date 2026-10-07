@@ -22,7 +22,7 @@ Use `uv`, not pip, for repository dependency management. The optional `justfile`
 wraps these commands. Do not add Rust, Node, or frontend build requirements to
 this pure Python package. Use the explicit trace backend for deterministic unit
 tests. Scalene tests run separately on supported platforms. Local Spark tests
-need Java and the `spark` extra; mock Databricks APIs.
+need Java and the development `spark` dependency group; mock Databricks APIs.
 
 ## Architecture and invariants
 
@@ -52,8 +52,10 @@ need Java and the `spark` extra; mock Databricks APIs.
 Treat `pyproject.toml` as the source of truth for Ruff and ty configuration.
 Use Python 3.11-compatible syntax and built-in generic types such as `list[str]`
 and `dict[str, int]`. Write unions as `Type | None`; avoid legacy `typing.List`
-and `typing.Optional`. Give public interfaces parameter and return annotations.
-Use `from __future__ import annotations` when forward references need it.
+and `typing.Optional`. Give public interfaces parameter annotations and
+annotate return values other than None. Omit the return annotation when a
+function or method returns only None. Use `from __future__ import annotations`
+when forward references need it.
 
 Use four-space indentation, double-quoted Python strings, and Ruff formatting
 with a 99-column code limit. Wrap docstrings and documentation at 80 columns,
@@ -126,12 +128,12 @@ Use Python type syntax such as `dict[str, list[[SourceUnit]]]` in documentation.
 In unions, put built-in types before custom types, including inside containers:
 `str | [DisplayMode]` and `list[str | [SourceUnit]]`. Keep `None` last.
 Use the same order in annotations that supply generated documentation types.
-Use square-bracket references for package and third-party classes that have a
-documentation target. Keep unlinked internal implementation types literal so
+Use square-bracket references for package, standard-library, and third-party
+classes that have a documentation target. Keep unlinked internal types literal so
 strict documentation builds do not create unresolved references. Use single
-backticks for inline code. Put operational notes and failure conditions in the
-description; do not add `Notes` or `Raises` sections. State relevant errors in
-prose, including cleanup and unknown-metric behavior.
+backticks for inline code. Put operational notes in the description; do not add
+`Notes` or `Raises` sections or describe raised exceptions. Describe cleanup
+and unknown-metric behavior where relevant.
 
 Use multiline triple-double-quoted docstrings, including short summaries.
 Leave a blank line before the closing triple quotes. Start function and method
@@ -159,10 +161,11 @@ Documentation uses the adapted Backtide `autodocs.py` directive format
 (`:: module:object`) and opt-in executable `pycon` fences through `autorun.py`.
 Ordinary `python` fences are displayed without execution. Keep documentation
 examples deterministic and offline. Portable notebooks execute during builds
-from temporary copies, including local Spark; provide Java and the notebook
-and Spark extras. Preserve saved GPU notebook outputs; refreshing them requires
-CUDA hardware and the `gpu` dependency group. No browser launch, remote
-workspace call, or persistent report generation belongs in a documentation
+from temporary copies, including local Spark; provide Java, the notebook extra,
+and the development `spark` dependency group. Preserve saved GPU notebook
+outputs; refreshing them requires CUDA hardware and the `gpu` dependency group.
+No browser launch, remote workspace call, or persistent report generation
+belongs in a documentation
 build. Match logo and theme colors (`#0f766e` teal and `#22d3ee` cyan). Build
 docs in strict mode.
 

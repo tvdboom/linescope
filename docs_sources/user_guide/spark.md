@@ -1,6 +1,9 @@
 # Spark
 
-Spark integration is enabled by default with `spark=True`. Observation is lazy:
+Enable Spark integration with `spark=True` or `--spark`; it defaults to `False`.
+LineScope uses the environment's existing PySpark and does not install Spark.
+Requesting integration without PySpark raises an error at startup.
+Observation is lazy:
 LineScope does not import PySpark or inspect an active Spark session at profile
 startup. It watches Spark modules loaded by the workload and wraps supported
 methods, including those already loaded before profiling. Lineage is captured
@@ -15,7 +18,7 @@ transformation, and it never creates a Spark session.
 ```python
 from linescope import profile
 
-with profile(backend="trace", display="none") as session:
+with profile(backend="trace", spark=True, display="none") as session:
     values = spark.range(1000).filter("id > 100")
     total = values.groupBy().sum("id").collect()
 
@@ -52,23 +55,31 @@ workers were idle; they mean the runtime did not expose sufficient information.
 
 ## Plans and metrics
 
-The Spark view starts with a main-step plan overview. Choose an action in
-**Plan overview for**; the longest measured action is selected first. Actions
-from child notebook runs are included.
+The Spark view starts with a sortable action overview. Each row shows action
+wall time and the largest reported operator or shared pipeline time, peak
+memory, and disk spill. The longest measured action appears first, and actions
+from child notebook runs are included. Select a row or its action link to open
+the action's detail page and main-step plan overview. Source links open the
+captured trigger line instead.
 Action wall time, cumulative executor time, peak memory, and spill are visible
-together under **Compare all actions** below the overview. Use Memory or Spill
-above that table to order by bytes instead. Unknown measurements sort after
-measured values, including zero.
+together under **Compare all actions** below the overview. Select a column
+heading to order by wall time, executor time, peak memory, or spill. Operator
+rankings and plan-step tables use the same header arrows. Select the heading
+again to reverse the direction. Unknown measurements sort after measured
+values, including zero, in both directions.
 
 **Main plan steps** follows the data from inputs to the result. Plain-language
 labels describe reading, filtering, joining, summarizing, sorting, and moving
 data between workers. Unmeasured projections and internal wrappers are omitted.
 The **From step** column keeps separate branches explicit: `2 + 5` means that
 this operation consumes both inputs, not that those inputs ran sequentially.
+Separate inputs can run in parallel.
 Reported time, peak memory, and total **Rows after** appear beside each step.
 
-The investigation cards identify the largest reported time, memory, and disk
-spill, and row multiplication at joins when both input counts are known.
+The detail page's investigation cards identify the largest reported operator
+or shared pipeline time, peak memory, and disk spill, and row multiplication at
+joins when both input counts are known. These counters have a different scope
+from action wall time and cumulative executor time in the action's top cards.
 They point to measured work to investigate; partial counters cannot establish
 the complete cause of a slow action. Time bars compare measured individual
 steps rather than percentages of the action's elapsed time.
@@ -86,8 +97,10 @@ actions link to their captured cell and line. When the trigger or its source
 snapshot is unavailable, the report shows `Trigger source unavailable`.
 
 The captured action line appears beside the link so repeated `collect` or
-`count` calls are easy to distinguish. Select an action to see its cost summary
-and main-step overview. Select a step to open its action's physical operator
+`count` calls are easy to distinguish. Select an action to see its cost summary,
+job count, outcome, and main-step overview. Additional action metrics appear
+only when row, read, shuffle, or spill measurements are available.
+Select a step to open its action's physical operator
 tree, expand and highlight that exact step, and show its
 description and metrics. Query plans, extra action metrics, stage details, and
 the full operator cost ranking are collapsed below the overview. Runtime
@@ -104,15 +117,16 @@ Operator metrics are supplied by Spark. Operator time shows the largest
 available Spark timing on each node, converted to seconds. The selected metric's
 name appears below the main step's time and in its tooltip. Timings can measure
 cumulative worker work, preparation, or waiting for upstream input; they are not
-exclusive durations for individual steps. Fused pipeline timings can overlap
-their children, so the ranking never sums them into an
-action total or assigns a fused pipeline's time to its children. Measured fused
-pipelines appear under **Operations measured together**, with the main step
-numbers they cover. A step with no separate timing shows **Shared timing** when
-its pipeline has a measurement. Input adapters end pipeline membership, so
-upstream work is not assigned to a downstream fused group. Peak memory uses an
-explicit peak-memory counter; shuffle data size and spill do not stand in for
-memory usage.
+exclusive durations for individual steps and do not add up to action wall time.
+Fused pipeline timings can overlap their children, so the ranking never sums
+them into an action total or assigns a fused pipeline's time to its children.
+Measured fused pipelines appear under **Operations measured together**, with
+the main step numbers they cover. A step with no separate timing shows
+**Shared timing** when its pipeline has a measurement. Input adapters end
+pipeline membership, so upstream work is not assigned to a downstream fused
+group. Peak memory uses an explicit peak-memory counter; shuffle data size and
+spill do not stand in for memory usage. Peak memory does not represent the
+total data size processed by the step.
 
 | Metric | Meaning |
 | --- | --- |

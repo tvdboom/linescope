@@ -18,6 +18,7 @@ from time import perf_counter_ns
 import tracemalloc
 from types import FrameType
 from typing import Any
+import warnings
 
 from linescope.backends.base import RawBackendResult, RawLine
 from linescope.enums import Backend
@@ -80,7 +81,8 @@ class TraceBackend:
         the process, including allocations from other Python threads.
 
     gpu : bool, default=False
-        Must be false; GPU collection requires Scalene.
+        Warn when true and continue Python profiling without GPU measurements.
+        GPU collection requires Scalene.
 
     root : str | None, default=None
         Accepted for consistency with collector factories.
@@ -109,7 +111,7 @@ class TraceBackend:
     capabilities : [BackendCapabilities]
         Exact tracing support and any requested Python allocation tracking.
 
-    _package_root : Path
+    _package_root : [Path]
         Profiler package directory excluded from memory attribution.
 
     _owns_tracemalloc : bool
@@ -123,6 +125,9 @@ class TraceBackend:
 
     _memory_warnings : list[str]
         Diagnostics about unavailable Python allocation measurements.
+
+    _gpu_warning : str | None
+        Diagnostic retained when GPU collection was requested but unavailable.
 
     _running : bool
         Whether this collector currently owns active tracing.
@@ -173,10 +178,11 @@ class TraceBackend:
         root: str | None = None,
         gpu: bool = False,
         on_interval: Callable[[str, int], None] | None = None,
-    ) -> None:
+    ):
         """Initialize trace accounting and optional allocation tracking.
 
-        Reject GPU requests because tracing cannot supply those measurements.
+        Warn about GPU requests and retain the diagnostic in report snapshots.
+        Python profiling continues without device measurements.
 
         Parameters
         ----------
@@ -193,7 +199,7 @@ class TraceBackend:
             Project root used for source ownership or collector setup.
 
         gpu : bool, default=False
-            Whether supported GPU collection is requested.
+            Warn when true because tracing cannot collect GPU measurements.
 
         on_interval : Callable[[str, int], None] | None, default=None
             Observe completed project line intervals for optional
@@ -201,10 +207,13 @@ class TraceBackend:
 
         """
         del root
+        self._gpu_warning: str | None = None
         if gpu:
-            raise ValueError(
-                "The trace backend cannot measure GPU metrics; use backend='scalene'."
+            self._gpu_warning = (
+                "The trace backend does not support GPU profiling; GPU metrics are unavailable. "
+                "Python profiling will continue. Use backend='scalene' with gpu=True."
             )
+            warnings.warn(self._gpu_warning, RuntimeWarning, stacklevel=2)
 
         self.accepts = accepts
         self.on_source = on_source
@@ -295,7 +304,7 @@ class TraceBackend:
             for key in totals.keys() | self._memory_baseline.keys()
         }
 
-    def _settle(self, state: _Frame, now: int) -> None:
+    def _settle(self, state: _Frame, now: int):
         """Charge the active line since its last timing boundary.
 
         Reset the boundary even when the frame is paused or has no visible line.
@@ -419,7 +428,7 @@ class TraceBackend:
 
         return self._trace
 
-    def start(self) -> None:
+    def start(self):
         """Install tracing and enroll already active project frames.
 
         Preserve existing trace callbacks so they can be restored at stop.
@@ -456,7 +465,7 @@ class TraceBackend:
             self.stop()
             raise
 
-    def stop(self) -> None:
+    def stop(self):
         """Release trace hooks while retaining finalized measurements.
 
         Restore existing frame callbacks as well as the interpreter trace
@@ -474,7 +483,7 @@ class TraceBackend:
         finally:
             self._finish_memory()
 
-    def _release_trace(self) -> None:
+    def _release_trace(self):
         """Restore trace hooks and release frame references before snapshots.
 
         Allow the shared collector to finalize memory after other collectors
@@ -505,7 +514,7 @@ class TraceBackend:
             self._traced_frames.clear()
             self._previous_locals.clear()
 
-    def _finish_memory(self) -> None:
+    def _finish_memory(self):
         """Finalize allocations after trace cleanup and release owned tracing.
 
         Preserve an existing allocation tracer, including on snapshot failure.
@@ -534,6 +543,8 @@ class TraceBackend:
         warnings = [
             ("Trace instrumentation measures the calling thread; it increases execution overhead.")
         ]
+        if self._gpu_warning is not None:
+            warnings.append(self._gpu_warning)
 
         if self.memory:
             deltas = self._memory_changes() if self._running else self._memory_deltas

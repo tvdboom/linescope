@@ -165,7 +165,7 @@ class TestScaleneSetup:
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
+    ):
         """Release session ownership when optional Scalene cannot start.
 
         Preserve interpreter hooks and allow a default Trace session after
@@ -181,7 +181,6 @@ class TestScaleneSetup:
 
         """
         monkeypatch.setattr(scalene.sys, "version_info", (3, 14))
-        monkeypatch.setattr("linescope.config._overrides", {})
 
         def missing(_name: str) -> str:
             """Reject metadata lookup for an uninstalled optional engine.

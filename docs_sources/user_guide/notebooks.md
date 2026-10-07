@@ -41,10 +41,11 @@ profile.stop()
 result = profile.result
 ```
 
-`profile.stop()` returns None; use `profile.result` or `session.result` to
-inspect measurements programmatically. The default generates one full report
-at stop. `display="cell"` requests live updates of the full cumulative report;
-`display="none"` keeps the session headless for later
+`profile.stop()` and `session.stop()` return None, so neither call needs an
+`_ =` assignment to suppress notebook output. Use `profile.result` or
+`session.result` to inspect the complete result programmatically. The default
+generates one full report at stop. `display="cell"` requests live updates of the
+full cumulative report; `display="none"` keeps the session headless for later
 `session.save("notebook.html")`.
 
 Full reports display inside the notebook automatically. Choose a browser with
@@ -63,9 +64,11 @@ throughout Files, Functions, Memory, and source views. The full captured path
 still identifies each notebook and its source links. If frontend metadata is
 unavailable, LineScope checks local Jupyter sessions for the active kernel or
 the input notebook of its owning nbconvert process. Unavailable or ambiguous
-notebook identities keep the `interactive` label. Source tables place code in
-the final column; select **Source** after sorting by a metric to restore line
-order within each cell.
+notebook identities keep the `interactive` label. Reports number captured cells
+from **Cell 1** in capture order within each notebook, independently of kernel
+execution counts or frontend IDs. Revised snapshots retain the same cell
+number. Source tables place code in the final column; select **Source** after
+sorting by a metric to restore line order within each cell.
 
 ### Debug cell by cell
 
@@ -120,28 +123,29 @@ Compact mode does not automatically display a full report at stop. Open or save
 the complete cumulative report explicitly:
 
 ```python
-_ = session.show(inline=True)  # Display the full overview in this cell.
+session.show(inline=True)  # Display the full overview in this cell.
 report_path = session.save("notebook.html")
 ```
 
-Assign the return value of `show()` to suppress its HTML string in the cell's
-text output. Use `session.show(inline=False)` to open a browser tab instead.
+`show()` returns None, so the cell displays only the report. Use
+`session.html()` to retrieve the HTML string, or `session.show(inline=False)`
+to open a browser tab.
 
 For a single cell, use `%%profile --backend trace --display cell-summary`.
 Live summaries take collector snapshots before and after each cell, so they add
 overhead, especially with allocation tracking enabled.
 
-Download [Notebook Quick Start](../examples/notebooks/notebook_example.ipynb)
+Download [Quick Start](../examples/notebooks/notebook_example.ipynb)
 for a complete local walkthrough with cell summaries and a report shown at
 the end.
 
 ## Databricks
 
-Install `linescope[databricks]` as a cluster library so it is available in child
-notebooks too, then load the
-IPython extension and use the cell magic or explicit start/stop API. Keep the
-Databricks-provided PySpark version; the LineScope `spark` extra is intended for
-environments that need their own local installation.
+Install `linescope` as a cluster library so it is available in child notebooks
+too, then load the IPython extension and use the cell magic or explicit
+start/stop API. LineScope uses the runtime's existing PySpark and Databricks SDK
+without installing either library. Enable Spark observation with `spark=True`
+or the cell magic's `--spark` flag.
 
 [Databricks Runtime 16.4 LTS][databricks-16-4-lts] includes Apache Spark 3.5.2,
 which meets LineScope's PySpark 3.5 minimum. Later PySpark releases are accepted

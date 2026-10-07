@@ -12,7 +12,7 @@ from collections import Counter
 from copy import deepcopy
 from dataclasses import replace
 from hashlib import sha256
-from html import escape
+from html import escape, unescape
 from importlib.resources import files
 from io import StringIO
 from itertools import pairwise
@@ -381,11 +381,20 @@ def _profile_headers(count_header: str | None = None, *, source: bool = True) ->
     ]
 
 
-def _table(headers: list[str], rows: list[list[str]], *, css: str = "") -> str:
-    """Render prepared HTML cells in a scrollable table.
+def _table(
+    headers: list[str],
+    rows: list[list[str]],
+    values: list[list[str | int | None]],
+    *,
+    numeric_columns: tuple[int, ...] = (),
+    active_column: int | None = None,
+    ascending_columns: tuple[int, ...] = (),
+    css: str = "",
+) -> str:
+    """Render prepared HTML cells with sortable column headers.
 
-    Escape column headings and display an empty-state message when no rows are
-    available.
+    Preserve the supplied initial row order and compare numeric measurements
+    in their original units. Unknown values stay last in either direction.
 
     Parameters
     ----------
@@ -393,7 +402,21 @@ def _table(headers: list[str], rows: list[list[str]], *, css: str = "") -> str:
         Column labels escaped before rendering.
 
     rows : list[list[str]]
-        Prepared row cells and any associated ranking measurements.
+        Prepared HTML cells in their initial display order.
+
+    values : list[list[str | int | None]]
+        Raw sort values aligned with each row and column. Use `None` for
+        unavailable measurements rather than the displayed dash.
+
+    numeric_columns : tuple[int, ...], default=()
+        Zero-based column indices compared numerically, descending initially.
+        Other columns compare text alphabetically, ascending initially.
+
+    active_column : int | None, default=None
+        Zero-based column describing the supplied initial row order, if any.
+
+    ascending_columns : tuple[int, ...], default=()
+        Numeric columns that initially sort ascending, such as step numbers.
 
     css : str, default=''
         CSS classes applied to the rendered table.
@@ -407,10 +430,25 @@ def _table(headers: list[str], rows: list[list[str]], *, css: str = "") -> str:
     if not rows:
         return '<p class="empty">No measurements available in this run.</p>'
 
-    head = "".join(f'<th scope="col">{escape(header)}</th>' for header in headers)
-    body = "".join("<tr>" + "".join(f"<td>{cell}</td>" for cell in row) + "</tr>" for row in rows)
+    head = "".join(
+        _sort_header(
+            header,
+            f"column-{index}",
+            numeric=index in numeric_columns,
+            active=index == active_column,
+            descending=index in numeric_columns and index not in ascending_columns,
+        )
+        for index, header in enumerate(headers)
+    )
+    body = "".join(
+        f"<tr{_sort_values({f'column-{index}': value for index, value in enumerate(raw)})}>"
+        + "".join(f"<td>{cell}</td>" for cell in row)
+        + "</tr>"
+        for row, raw in zip(rows, values, strict=True)
+    )
     return (
-        f'<div class="table-scroll"><table class="{css}"><thead><tr>{head}</tr></thead>'
+        f'<div class="table-scroll"><table class="sortable-table {css}"><thead><tr>{head}</tr>'
+        "</thead>"
         f"<tbody>{body}</tbody></table></div>"
     )
 
@@ -695,7 +733,11 @@ def _metadata(metadata: dict[str, Any]) -> str:
         Rendered metadata detail table.
 
     """
-    return _table(["Detail", "Value"], _metadata_rows(metadata))
+    rows = _metadata_rows(metadata)
+    values: list[list[str | int | None]] = [
+        [unescape(cell) if cell != "—" else None for cell in row] for row in rows
+    ]
+    return _table(["Detail", "Value"], rows, values)
 
 
 def _operator_metrics(metrics: dict[str, Any]) -> str:
@@ -765,7 +807,11 @@ def _operator_metrics(metrics: dict[str, Any]) -> str:
         rows.append([escape(name), escape(formatted)])
 
     return (
-        _table(["Operator metric", "Value"], rows)
+        _table(
+            ["Operator metric", "Value"],
+            rows,
+            [[unescape(cell) if cell != "—" else None for cell in row] for row in rows],
+        )
         if rows
         else '<p class="muted">Operator metrics unavailable.</p>'
     )
@@ -781,7 +827,7 @@ def _spark_operators(operators: list[SparkOperator]) -> list[tuple[SparkOperator
     rows = []
     seen: set[str] = set()
 
-    def visit(operator: SparkOperator) -> None:
+    def visit(operator: SparkOperator):
         """Visit each operator once and retain meaningful ranking rows.
 
         Preserve measured wrapper costs without assigning them to logical
@@ -876,11 +922,13 @@ def _spark_cost_cells(cost: _SparkCost) -> list[str]:
 def _spark_cost_table(
     title: str,
     headers: list[str],
-    rows: list[tuple[list[str], _SparkCost]],
+    rows: list[tuple[list[str], list[str | int | None]]],
     *,
+    numeric_columns: tuple[int, ...],
     css: str,
+    show_title: bool = True,
 ) -> str:
-    """Render a Spark cost ranking with independent ordering controls.
+    """Render a Spark cost ranking with sortable column headers.
 
     Put known larger timings first while retaining missing metric values.
 
@@ -892,48 +940,45 @@ def _spark_cost_table(
     headers : list[str]
         Column labels escaped before rendering.
 
-    rows : list[tuple[list[str], _SparkCost]]
-        Prepared row cells and any associated ranking measurements.
+    rows : list[tuple[list[str], list[str | int | None]]]
+        Prepared row cells paired with raw sort values in original units.
+
+    numeric_columns : tuple[int, ...]
+        Zero-based numeric columns, starting with the initial time ranking.
 
     css : str
         CSS classes applied to the rendered table.
 
+    show_title : bool, default=True
+        Display the ranking heading. Hide it when the enclosing disclosure
+        already names the ranking.
+
     Returns
     -------
     str
-        Ranking markup with independent ordering controls.
+        Ranking markup with arrows on each sortable column.
 
     """
+    heading = f"<h2>{escape(title)}</h2>" if show_title else ""
     if not rows:
-        return f'<h2>{escape(title)}</h2><p class="muted">Operator details unavailable.</p>'
+        return f'{heading}<p class="muted">Operator details unavailable.</p>'
 
     # Render the initial ranking in Python so the costs are readable without JS.
-    rows = sorted(rows, key=lambda row: (row[1].time_ns is None, -(row[1].time_ns or 0)))
-    controls = "".join(
-        f'<button type="button" class="spark-order" data-order="{order}"'
-        f' aria-pressed="{"true" if order == "time" else "false"}">{label}</button>'
-        for order, label in (("time", "Time"), ("memory", "Memory"), ("spill", "Spill"))
+    time_column = numeric_columns[0]
+    rows = sorted(
+        rows,
+        key=lambda row: (row[1][time_column] is None, -int(row[1][time_column] or 0)),
     )
-    head = "".join(f'<th scope="col">{escape(header)}</th>' for header in headers)
-    body = []
-    for cells, cost in rows:
-        attributes = "".join(
-            f' data-{name}="{"" if value is None else value}"'
-            for name, value in (
-                ("time", cost.time_ns),
-                ("memory", cost.peak_memory_bytes),
-                ("spill", cost.spill_bytes),
-            )
-        )
-        body.append(f"<tr{attributes}>" + "".join(f"<td>{cell}</td>" for cell in cells) + "</tr>")
-
-    return (
-        f'<div class="spark-cost-section"><div class="spark-cost-heading"><h2>{escape(title)}</h2>'
-        f'<div class="spark-toolbar"><span>Highest first</span><div class="spark-order-controls"'
-        f' role="group" aria-label="Order {escape(title.lower(), quote=True)}">{controls}</div>'
-        f'</div></div><div class="table-scroll spark-cost-scroll"><table class="{css}">'
-        f"<thead><tr>{head}</tr></thead><tbody>{''.join(body)}</tbody></table></div></div>"
-    )
+    table = _table(
+        headers,
+        [cells for cells, _ in rows],
+        [values for _, values in rows],
+        numeric_columns=numeric_columns,
+        active_column=time_column,
+        css=css,
+    ).replace('class="table-scroll"', 'class="table-scroll spark-cost-scroll"', 1)
+    heading = f'<div class="spark-cost-heading">{heading}</div>' if heading else ""
+    return f'<div class="spark-cost-section">{heading}{table}</div>'
 
 
 def _spark_operator_rows(
@@ -941,7 +986,7 @@ def _spark_operator_rows(
     sources: dict[str, SourceUnit],
     *,
     context: bool = False,
-) -> list[tuple[list[str], _SparkCost]]:
+) -> list[tuple[list[str], list[str | int | None]]]:
     """Build ranked operator rows from observed action plans.
 
     Include action context when requested and preserve each metric's measurement
@@ -960,8 +1005,8 @@ def _spark_operator_rows(
 
     Returns
     -------
-    list[tuple[list[str], _SparkCost]]
-        Prepared operator cells paired with selected costs.
+    list[tuple[list[str], list[str | int | None]]]
+        Prepared operator cells paired with raw names and selected costs.
 
     """
     rows = []
@@ -981,6 +1026,7 @@ def _spark_operator_rows(
                     f'<small class="spark-secondary">#{escape(operator.id)}</small></a>'
                 )
             ]
+            values: list[str | int | None] = [name]
             if context:
                 cells.append(
                     f'<a href="#{_key("spark", execution.id)}">{escape(execution.name)} '
@@ -989,9 +1035,102 @@ def _spark_operator_rows(
                     f"{_spark_source_link(execution.location, sources)}</small>"
                 )
 
-            rows.append(([*cells, *_spark_cost_cells(cost)], cost))
+                unit = sources.get(execution.location.source_id) if execution.location else None
+                values.append(
+                    f"{execution.name} #{execution.id[:8]} "
+                    f"{unit.path if unit else ''}:"
+                    f"{execution.location.line if execution.location else ''}"
+                )
+
+            values.extend([cost.time_ns, cost.peak_memory_bytes, cost.spill_bytes])
+            rows.append(([*cells, *_spark_cost_cells(cost)], values))
 
     return rows
+
+
+def _spark_action_table(executions: list[SparkExecution], sources: dict[str, SourceUnit]) -> str:
+    """Summarize each action's wall time and largest reported plan costs.
+
+    Use the same steps and shared pipelines as the action detail findings.
+    Select each maximum independently without adding overlapping counters or
+    substituting executor totals for missing operator measurements.
+
+    Parameters
+    ----------
+    executions : list[[SparkExecution]]
+        Captured actions, including actions from child notebook runs.
+
+    sources : dict[str, [SourceUnit]]
+        Source snapshots used to link each action's exact trigger line.
+
+    Returns
+    -------
+    str
+        Sortable overview with action links and unknown costs left as dashes.
+
+    """
+    rows = []
+    for execution in executions:
+        steps, pipelines = _spark_steps(execution.operators)
+        costs = [step.cost for step in steps] + [pipeline.cost for pipeline in pipelines]
+        timing = max(
+            (cost for cost in costs if cost.time_ns is not None),
+            key=lambda cost: cost.time_ns or 0,
+            default=_SparkCost(),
+        )
+        cost = _SparkCost(
+            timing.time_ns,
+            max(
+                (cost.peak_memory_bytes for cost in costs if cost.peak_memory_bytes is not None),
+                default=None,
+            ),
+            max(
+                (cost.spill_bytes for cost in costs if cost.spill_bytes is not None), default=None
+            ),
+            timing.time_label,
+        )
+        status = (
+            f'<small class="spark-secondary">{escape(execution.status)}</small>'
+            if execution.status != "success"
+            else ""
+        )
+        rows.append(
+            (
+                [
+                    (
+                        f'<a class="spark-action-link" href="#{_key("spark", execution.id)}">'
+                        f"{escape(execution.name)} <small>#{escape(execution.id[:8])}</small>"
+                        f"</a>{status}"
+                    ),
+                    _spark_trigger(execution.location, sources),
+                    f'<strong class="hot-time">{_time(execution.stats.wall_time_ns)}</strong>',
+                    *_spark_cost_cells(cost),
+                ],
+                [
+                    execution.name,
+                    _source_sort_values(execution.location, sources)[0],
+                    execution.stats.wall_time_ns,
+                    cost.time_ns,
+                    cost.peak_memory_bytes,
+                    cost.spill_bytes,
+                ],
+            )
+        )
+
+    return _spark_cost_table(
+        "Actions",
+        [
+            "Action",
+            "Source",
+            "Wall time",
+            "Largest operator time",
+            "Largest operator peak memory",
+            "Largest operator disk spill",
+        ],
+        rows,
+        numeric_columns=(2, 3, 4, 5),
+        css="spark-action-summary",
+    )
 
 
 def _spark_step_label(step: _SparkStep) -> tuple[str, str]:
@@ -1081,14 +1220,14 @@ def _spark_findings(steps: list[_SparkStep], pipelines: list[_SparkPipeline]) ->
     costs.extend((_spark_group_label(pipeline), pipeline.cost) for pipeline in pipelines)
     cards = []
     for title, attribute, formatter, missing in (
-        ("Largest reported time", "time_ns", _time, "Separate step timings unavailable."),
+        ("Largest operator time", "time_ns", _time, "Separate step timings unavailable."),
         (
-            "Largest reported memory",
+            "Largest operator peak memory",
             "peak_memory_bytes",
             _bytes,
             "Peak-memory counters unavailable.",
         ),
-        ("Largest disk spill", "spill_bytes", _bytes, "Disk-spill counters unavailable."),
+        ("Largest operator disk spill", "spill_bytes", _bytes, "Disk-spill counters unavailable."),
     ):
         known = [(label, getattr(cost, attribute)) for label, cost in costs]
         known = [(label, value) for label, value in known if value is not None]
@@ -1220,9 +1359,20 @@ def _spark_plan_overview(execution: SparkExecution) -> str:
         ]
         shared = (
             '<div class="spark-shared-costs"><h3>Operations measured together</h3>'
-            '<p class="muted">Spark runs these steps as one combined pipeline. Its cost cannot'
-            " be split reliably between the individual steps.</p>"
-            + _table(["Shared steps", "Reported time", "Peak memory", "Spill"], shared_rows)
+            + _table(
+                ["Shared steps", "Reported time", "Peak memory", "Spill"],
+                shared_rows,
+                [
+                    [
+                        _spark_group_label(pipeline),
+                        pipeline.cost.time_ns,
+                        pipeline.cost.peak_memory_bytes,
+                        pipeline.cost.spill_bytes,
+                    ]
+                    for pipeline in pipelines
+                ],
+                numeric_columns=(1, 2, 3),
+            )
             + "</div>"
         )
 
@@ -1238,6 +1388,19 @@ def _spark_plan_overview(execution: SparkExecution) -> str:
     step_table = _table(
         ["Step", "From step", "Reported time", "Peak memory", "Rows after"],
         rows,
+        [
+            [
+                step.number,
+                " + ".join(str(number) for number in step.inputs) or "Source",
+                step.cost.time_ns,
+                step.cost.peak_memory_bytes,
+                step.rows,
+            ]
+            for step in steps
+        ],
+        numeric_columns=(0, 2, 3, 4),
+        active_column=0,
+        ascending_columns=(0,),
         css="spark-steps",
     )
     return (
@@ -1246,11 +1409,7 @@ def _spark_plan_overview(execution: SparkExecution) -> str:
         f"{_spark_findings(steps, pipelines)}"
         f"{step_table}"
         f"{shared}"
-        '<p class="spark-metric-note">Read in data-flow order; separate inputs can run in'
-        " parallel. Reported times can include upstream work or waiting, overlap, and do not"
-        " add up to wall time. Memory is the"
-        " reported peak counter, not total data size. A dash means unavailable;"
-        " “From input” carries a known count through a step that preserves rows.</p></div>"
+        "</div>"
     )
 
 
@@ -1399,10 +1558,11 @@ def _source_groups(sources: list[SourceUnit]) -> list[list[SourceUnit]]:
 
 
 def _cell_label(unit: SourceUnit, position: int) -> str:
-    """Label a captured cell without exposing its source digest.
+    """Read a captured cell label without exposing its source digest.
 
-    Retain frontend cell IDs or execution counts when supplied. Use the capture
-    position for snapshots without a cell identity.
+    Use frontend IDs or execution counts to recognize revisions before
+    assigning report numbers. Use the capture position for snapshots without
+    a cell identity.
 
     Parameters
     ----------
@@ -1432,6 +1592,39 @@ def _cell_label(unit: SourceUnit, position: int) -> str:
             identity = cell
         return f"Cell {identity}"
     return f"Cell {position}"
+
+
+def _display_sources(sources: list[SourceUnit]) -> list[SourceUnit]:
+    """Copy source labels with notebook cells numbered in capture order.
+
+    Start each notebook at one, retaining a cell's number across revised
+    snapshots. Keep original identities and source text for exact navigation
+    and measurements without mutating the collected result.
+
+    Parameters
+    ----------
+    sources : list[[SourceUnit]]
+        Original snapshots in report capture order.
+
+    Returns
+    -------
+    list[[SourceUnit]]
+        Snapshots with filename labels and consecutive notebook cell numbers.
+
+    """
+    notebook_cells: dict[str, dict[str, int]] = {}
+    display = []
+    for unit in sources:
+        label = _source_name(unit)
+        if unit.kind == SourceKind.NOTEBOOK and (
+            " · cell " in unit.path or unit.id.rpartition("#")[2].startswith("cell-")
+        ):
+            cells = notebook_cells.setdefault(_notebook_path(unit), {})
+            identity = _cell_label(unit, len(cells) + 1)
+            number = cells.setdefault(identity, len(cells) + 1)
+            label = f"{_source_name(unit, include_cell=False)} · cell {number}"
+        display.append(replace(unit, path=label))
+    return display
 
 
 def _source_page(
@@ -1611,8 +1804,7 @@ def _source_page(
         else ""
     )
     gpu_head = (
-        _sort_header("Estimated GPU time", "gpu-time")
-        + _sort_header("GPU peak memory", "gpu-memory")
+        _sort_header("GPU time", "gpu-time") + _sort_header("GPU peak memory", "gpu-memory")
         if gpu
         else ""
     )
@@ -1856,6 +2048,36 @@ def _memory_source(location: SourceLocation, sources: dict[str, SourceUnit]) -> 
     return f"<code>{escape(text)}</code>"
 
 
+def _source_sort_values(
+    location: SourceLocation | None,
+    sources: dict[str, SourceUnit],
+) -> tuple[str | None, str | None]:
+    """Retrieve a location label and captured code for column sorting.
+
+    Parameters
+    ----------
+    location : [SourceLocation] | None
+        One-based project source line, when its snapshot is available.
+
+    sources : dict[str, [SourceUnit]]
+        Snapshots owning the location labels and source text.
+
+    Returns
+    -------
+    tuple[str | None, str | None]
+        Plain location and stripped source text, or unavailable values when
+        the snapshot or referenced line is missing.
+
+    """
+    unit = sources.get(location.source_id) if location is not None else None
+    if unit is None or location is None or not 0 < location.line <= len(unit.source.splitlines()):
+        return None, None
+    return (
+        f"{_source_name(unit)}:{location.line}",
+        unit.source.splitlines()[location.line - 1].strip(),
+    )
+
+
 def _memory_badges(run: ProfileRun, sources: dict[str, SourceUnit]) -> str:
     """Summarize observed RAM peaks and accumulated line changes for one run.
 
@@ -2060,7 +2282,23 @@ def _memory_page(runs: list[ProfileRun], sources: dict[str, SourceUnit]) -> str:
         heading = ""
         if len(measured_runs) > 1 or run is not runs[0]:
             heading = f"<h2>{'Main run' if run is runs[0] else escape(run.name)}</h2>"
-        table = _table(["Mem Change", "Peak Mem", "Location", "Source"], rows, css="memory-growth")
+        values: list[list[str | int | None]] = [
+            [
+                line.ram.delta_bytes,
+                line.ram.peak_bytes,
+                *_source_sort_values(line.location, sources),
+            ]
+            for line in growth[:10]
+            if line.ram is not None and line.ram.delta_bytes is not None
+        ]
+        table = _table(
+            ["Mem Change", "Peak Mem", "Location", "Source"],
+            rows,
+            values,
+            numeric_columns=(0, 1),
+            active_column=0,
+            css="memory-growth",
+        )
         sections.append(
             f'<section class="memory-run" id="{_key("memory-run", run.id)}">{heading}'
             f"{_memory_badges(run, sources)}{_memory_timeline(run, sources)}"
@@ -2071,6 +2309,176 @@ def _memory_page(runs: list[ProfileRun], sources: dict[str, SourceUnit]) -> str:
         '<section id="memory" class="page" hidden><h1>Memory</h1>'
         + "".join(sections)
         + "</section>"
+    )
+
+
+def _gpu_summary(lines: list[LineStats]) -> list[tuple[str, str]]:
+    """Format available device estimates independently of driver measurements.
+
+    Sum available line estimates and take the largest sampled memory value.
+    Preserve unknown totals and peaks instead of substituting zero.
+
+    Parameters
+    ----------
+    lines : list[[LineStats]]
+        Source-linked lines collected by GPU-capable backends.
+
+    Returns
+    -------
+    list[tuple[str, str]]
+        GPU card labels and formatted measurements for the overview and page.
+
+    """
+    measurements = [line.gpu for line in lines if line.gpu is not None]
+    duration = _total([measurement.time_ns for measurement in measurements])
+    peaks = [
+        measurement.peak_memory_bytes
+        for measurement in measurements
+        if measurement.peak_memory_bytes is not None
+    ]
+    return [
+        ("Attributed GPU time", _time(duration)),
+        ("GPU peak memory", _bytes(max(peaks) if peaks else None)),
+    ]
+
+
+def _gpu_memory_reason(lines: list[LineStats], warnings: list[str]) -> str | None:
+    """Explain an unavailable GPU memory peak using recorded diagnostics.
+
+    Suppress the notice when any captured line has a known memory reading,
+    including zero. Use a collection-only explanation when no reason was
+    recorded rather than guessing a device or driver limitation.
+
+    Parameters
+    ----------
+    lines : list[[LineStats]]
+        Source-linked GPU measurements used for the peak-memory card.
+
+    warnings : list[str]
+        Collector and integration diagnostics saved with the result.
+
+    Returns
+    -------
+    str | None
+        Recorded memory limitation or fallback explanation, or None when the
+        report contains a known peak-memory value.
+
+    """
+    if any(line.gpu and line.gpu.peak_memory_bytes is not None for line in lines):
+        return None
+    return next(
+        (warning for warning in warnings if "gpu memory" in warning.casefold()),
+        "No GPU memory measurements were recorded for the captured source.",
+    )
+
+
+def _stat_card(label: str, value: str, *, unavailable_reason: str | None = None) -> str:
+    """Render a metric card with an escaped reason below an unknown value.
+
+    Keep the notification inside its owning widget so it remains adjacent to
+    the measurement on Overview and dedicated metric pages.
+
+    Parameters
+    ----------
+    label : str
+        Human-readable metric name to escape for display.
+
+    value : str
+        Formatted and escaped measurement text.
+
+    unavailable_reason : str | None, default=None
+        Recorded collection limitation to display beneath the value, or None
+        when no notification belongs to this card.
+
+    Returns
+    -------
+    str
+        Metric widget containing its label, value, and optional notification.
+
+    """
+    notice = (
+        f'<small class="metric-unavailable">{escape(unavailable_reason)}</small>'
+        if unavailable_reason is not None
+        else ""
+    )
+    return f'<div class="stat"><span>{escape(label)}</span><strong>{value}</strong>{notice}</div>'
+
+
+def _gpu_page(
+    lines: list[LineStats],
+    sources: dict[str, SourceUnit],
+    *,
+    memory_unavailable_reason: str | None = None,
+) -> str:
+    """Expose sampled GPU work alongside driver time and exact source links.
+
+    Rank device estimates independently of Python timing. Keep memory-only
+    observations visible and missing measurements distinct from sampled zero.
+
+    Parameters
+    ----------
+    lines : list[[LineStats]]
+        GPU-capable measurements with valid snapshotted source locations.
+
+    sources : dict[str, [SourceUnit]]
+        Captured project source used for escaped labels and navigation.
+
+    memory_unavailable_reason : str | None, default=None
+        Recorded reason for an unavailable memory peak to show in its widget.
+
+    Returns
+    -------
+    str
+        GPU view with device summaries and sortable lines.
+
+    """
+    rows = []
+    values: list[dict[str, str | int | None]] = []
+    for line in lines:
+        if line.gpu is None or (line.gpu.time_ns is None and line.gpu.peak_memory_bytes is None):
+            continue
+        unit = sources[line.location.source_id]
+        label = f"{_source_name(unit)}:{line.location.line}"
+        source = unit.source.splitlines()[line.location.line - 1].strip()
+        rows.append(
+            [
+                _time(line.gpu.time_ns),
+                _bytes(line.gpu.peak_memory_bytes),
+                _time(line.wall_time_ns),
+                f'<a href="{_source_link(unit.id, line.location.line)}">{escape(label)}</a>',
+                f"<code>{escape(source)}</code>",
+            ]
+        )
+        values.append(
+            {
+                "time": line.gpu.time_ns,
+                "gpu-memory": line.gpu.peak_memory_bytes,
+                "driver-time": line.wall_time_ns,
+                "name": label,
+                "kind": source,
+            }
+        )
+    cards = "".join(
+        _stat_card(
+            label,
+            value,
+            unavailable_reason=memory_unavailable_reason if label == "GPU peak memory" else None,
+        )
+        for label, value in _gpu_summary(lines)
+    )
+    headers = [
+        ("GPU time", "time"),
+        ("GPU peak memory", "gpu-memory"),
+        ("Driver time", "driver-time"),
+        ("Location", "name"),
+        ("Source", "kind"),
+    ]
+    return (
+        '<section id="gpu" class="page" hidden><h1>GPU</h1>'
+        '<p class="intro">Sampled device work, separate from Python driver time.</p>'
+        f'<div class="stats gpu-stats">{cards}</div>'
+        "<h2>GPU measurements by source line</h2>"
+        f"{_summary_table(headers, rows, values)}</section>"
     )
 
 
@@ -2086,7 +2494,7 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
     result : [ProfileResult]
         Normalized measurements and exact source snapshots.
 
-    root : str | Path | None, default=None
+    root : str | [Path] | None, default=None
         Launch directory retained for existing callers. Python source labels
         always show the filename.
 
@@ -2103,6 +2511,16 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
     for line in lines:
         lines_by_source.setdefault(line.location.source_id, []).append(line)
     capabilities = _source_capabilities(result, runs)
+    has_gpu = result.capabilities.gpu or any(item.gpu for item in capabilities.values())
+    gpu_lines = [
+        line
+        for line in lines
+        if capabilities.get(line.location.source_id, result.capabilities).gpu
+        and line.location.source_id in result.sources
+        and 0
+        < line.location.line
+        <= len(result.sources[line.location.source_id].source.splitlines())
+    ]
     mixed = any(
         run.metadata.get("child_backend", result.backend) != result.backend for run in runs
     )
@@ -2125,12 +2543,10 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
         ),
         default=0,
     )
-    # Source identities retain their paths; display labels need only filenames.
+    # Presentation copies retain identities for attribution and exact links.
     del root
-    sources = []
-    for unit in result.sources.values():
-        label = _source_name(unit)
-        sources.append(replace(unit, path=label))
+    sources = _display_sources(list(result.sources.values()))
+    display_sources = {unit.id: unit for unit in sources}
     source_names = {unit.id: unit.path for unit in sources}
     source_groups = _source_groups(sources)
     has_notebooks = any(unit.kind == SourceKind.NOTEBOOK for unit in sources) or len(runs) > 1
@@ -2160,16 +2576,31 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
         ):
             total_samples = 0
         cards.append(("Samples", _count(total_samples)))
-    if result.capabilities.sampled and "sample_rate" in result.root_run.metadata:
-        rate_label = escape(_metric_value(result.root_run.metadata["sample_rate"]))
-        cards.append(("Target samples / sec", rate_label))
+    if result.capabilities.sampled:
+        # Match the main run's observations to its own elapsed time; child
+        # processes can overlap and must not inflate this measured rate.
+        sample_counts = [
+            line.samples
+            for line in result.root_run.lines
+            if line.samples is not None or line.wall_time_ns is not None
+        ]
+        main_samples = _total(sample_counts)
+        if not sample_counts and result.capabilities.sample_counts:
+            main_samples = 0
+        elapsed = result.root_run.elapsed_ns
+        rate_label = (
+            f"{main_samples * 1_000_000_000 / elapsed:,.1f}"
+            if main_samples is not None
+            and all(count is not None for count in sample_counts)
+            and elapsed > 0
+            else "—"
+        )
+        cards.append(("Measured samples / sec", rate_label))
 
-    card_html = "".join(
-        f'<div class="stat"><span>{escape(label)}</span><strong>{value}</strong></div>'
-        for label, value in cards
-    )
+    card_html = "".join(_stat_card(label, value) for label, value in cards)
     slowest = sorted(measured, key=lambda line: line.wall_time_ns or 0, reverse=True)[:10]
     hot_rows = []
+    hot_values = []
 
     for line in slowest:
         unit = result.sources.get(line.location.source_id)
@@ -2190,6 +2621,9 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
                 *([_count(line.samples)] if sampled else []),
                 f"<code>{escape(source_line)}</code>",
             ]
+        )
+        hot_values.append(
+            [line.wall_time_ns, label, *([line.samples] if sampled else []), source_line]
         )
 
     function_rows = [
@@ -2218,12 +2652,26 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
         }
         for item in functions
     ]
-    hot_table = _table(_profile_headers(count_header), hot_rows, css="hot-lines")
+    hot_table = _table(
+        _profile_headers(count_header),
+        hot_rows,
+        hot_values,
+        numeric_columns=(0, 2) if sampled else (0,),
+        active_column=0,
+        css="hot-lines",
+    )
+    gpu_link = (
+        '<p class="gpu-overview-link"><a href="#gpu">'
+        "Inspect GPU measurements and source lines ↗</a></p>"
+        if has_gpu
+        else ""
+    )
     pages = [
         (
             f'<section id="overview" class="page"><h1>Overview</h1>'
             f'<p class="intro">{intro}</p><div'
-            f' class="stats overview-stats">{card_html}</div><div class="section-heading">'
+            f' class="stats overview-stats">{card_html}</div>{gpu_link}'
+            '<div class="section-heading">'
             f"<h2>Most expensive"
             f' lines</h2><a href="#files">Explore all sources <span aria-hidden="true">↗</span>'
             f"</a></div>"
@@ -2233,7 +2681,15 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
     ]
     has_memory = any(run.memory_samples for run in runs)
     if has_memory:
-        pages.append(_memory_page(runs, result.sources))
+        pages.append(_memory_page(runs, display_sources))
+    if has_gpu:
+        pages.append(
+            _gpu_page(
+                gpu_lines,
+                display_sources,
+                memory_unavailable_reason=_gpu_memory_reason(gpu_lines, result.warnings),
+            )
+        )
     file_rows = []
     file_values: list[dict[str, str | int | None]] = []
     source_times: dict[str, int | None] = {}
@@ -2291,7 +2747,16 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
     ]
     invocations = (
         "<h2>Notebook invocations</h2>"
-        + _table(["Notebook", "Parent wait", "Status"], child_rows, css="notebook-invocations")
+        + _table(
+            ["Notebook", "Parent wait", "Status"],
+            child_rows,
+            [
+                [run.name, run.metadata.get("parent_wait_time_ns", run.elapsed_ns), run.status]
+                for run in runs[1:]
+            ],
+            numeric_columns=(1,),
+            css="notebook-invocations",
+        )
         if child_rows
         else ""
     )
@@ -2307,15 +2772,12 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
     function_columns = list(
         zip(function_headers, ["time", "line", "count", "name", "lines"], strict=True)
     )
-    function_estimate = " Sampling reports estimate this time." if sampled else ""
     pages.append(
         f'<section id="functions" class="page" hidden><div class="summary-header">'
         f"<h1>Functions</h1>"
         f"{_heat_controls(enabled=False)}</div>"
         f'<p class="muted">Time spent on each function\'s own lines, excluding time'
-        f" in other project functions it calls.{function_estimate} Select a function to open"
-        f" its definition. The line count includes the definition and body, with blank lines"
-        f" and comments."
+        f" in other project functions it calls."
         f"</p>{_summary_table(function_columns, function_rows, function_values)}</section>"
     )
     for run in runs[1:]:
@@ -2367,12 +2829,19 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
                             f'<a href="#{_key("spark", execution.id)}">{escape(execution.name)} '
                             f"<small>#{escape(execution.id[:8])}</small></a>{status}"
                         ),
-                        _spark_trigger(execution.location, result.sources),
+                        _spark_trigger(execution.location, display_sources),
                         _spark_cost_cells(cost)[0],
                         _time(execution.stats.executor_time_ns),
                         *_spark_cost_cells(cost)[1:],
                     ],
-                    cost,
+                    [
+                        execution.name,
+                        _source_sort_values(execution.location, display_sources)[0],
+                        cost.time_ns,
+                        execution.stats.executor_time_ns,
+                        cost.peak_memory_bytes,
+                        cost.spill_bytes,
+                    ],
                 )
             )
 
@@ -2380,49 +2849,29 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
             "Most expensive actions",
             ["Action", "Source", "Wall time", "Executor time", "Peak memory", "Spill"],
             spark_rows,
+            numeric_columns=(2, 3, 4, 5),
             css="spark-actions",
         )
         operator_table = _spark_cost_table(
             "Most expensive operators",
             ["Operation", "Action / source", "Operator time", "Peak memory", "Spill"],
-            _spark_operator_rows(executions, result.sources, context=True),
+            _spark_operator_rows(executions, display_sources, context=True),
+            numeric_columns=(2, 3, 4),
             css="spark-operators",
-        )
-        ordered_executions = sorted(
-            executions,
-            key=lambda execution: (
-                execution.stats.wall_time_ns is None,
-                -(execution.stats.wall_time_ns or 0),
-            ),
-        )
-        choices = "".join(
-            f'<option value="{index}">{escape(execution.name)} #{escape(execution.id[:8])}'
-            f" · {_time(execution.stats.wall_time_ns)}</option>"
-            for index, execution in enumerate(ordered_executions)
-        )
-        overviews = "".join(
-            f'<div class="spark-action-overview" data-action="{index}"'
-            f"{' hidden' if index else ''}>"
-            f'<p class="spark-overview-context">'
-            f'<a href="#{_key("spark", execution.id)}">Open action details ↗</a>'
-            f" · {_spark_source_link(execution.location, result.sources)}</p>"
-            f"{_spark_plan_overview(execution)}</div>"
-            for index, execution in enumerate(ordered_executions)
         )
         pages.append(
             f'<section id="spark" class="page" hidden><h1>Spark</h1>'
-            '<p class="intro">Follow the data through the main steps and see where reported'
-            " time, memory, or row growth stands out.</p>"
-            f'<div class="spark-action-picker"><label for="spark-action-select">'
-            f'Plan overview for</label><select id="spark-action-select">{choices}</select></div>'
-            f'{overviews}<details class="execution-details"><summary>Compare all actions</summary>'
+            '<p class="intro">Compare captured actions and their largest reported operator costs.'
+            " Select an action to explore its plan and main steps.</p>"
+            f"{_spark_action_table(executions, display_sources)}"
+            f'<details class="execution-details"><summary>Compare all actions</summary>'
             f'{spark_table}</details><details class="execution-details">'
             f"<summary>All operator costs</summary>"
             f"{operator_table}</details></section>"
         )
 
     for execution in executions:
-        trigger = _spark_trigger(execution.location, result.sources)
+        trigger = _spark_trigger(execution.location, display_sources)
         plan_views = []
         plan_buttons = []
 
@@ -2461,16 +2910,20 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
         )
         stats = execution.stats
         metrics = {
-            "Jobs": len(execution.jobs),
-            "Status": execution.status,
             "Rows": stats.rows,
             "Read": _bytes(stats.bytes_read),
             "Shuffle read": _bytes(stats.shuffle_read_bytes),
             "Shuffle write": _bytes(stats.shuffle_write_bytes),
             "Spill": _bytes(stats.spill_bytes),
         }
-        metric_html = _metadata(
-            {key: value for key, value in metrics.items() if value is not None and value != "—"}
+        metrics = {
+            key: value for key, value in metrics.items() if value is not None and value != "—"
+        }
+        action_metrics = (
+            '<details class="execution-details"><summary>Action metrics</summary>'
+            f"{_metadata(metrics)}</details>"
+            if metrics
+            else ""
         )
         details = (
             "".join(
@@ -2505,13 +2958,17 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
                 ("Wall time", _time(stats.wall_time_ns)),
                 ("Cumulative executor time", _time(stats.executor_time_ns)),
                 ("Executor peak memory", _bytes(stats.peak_memory_bytes)),
+                ("Jobs", _count(len(execution.jobs))),
+                ("Status", escape(execution.status)),
             )
         )
         operator_table = _spark_cost_table(
             "Most expensive operators",
             ["Operation", "Operator time", "Peak memory", "Spill"],
-            _spark_operator_rows([execution], result.sources),
+            _spark_operator_rows([execution], display_sources),
+            numeric_columns=(1, 2, 3),
             css="spark-operators",
+            show_title=False,
         )
         pages.append(
             f'<section id="{_key("spark", execution.id)}" class="page" hidden>'
@@ -2523,9 +2980,8 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
             f'<div class="plan-tabs"'
             f' role="group" aria-label="Plan views">{"".join(plan_buttons)}'
             f"</div>{''.join(plan_views)}</details>"
-            f'<details class="execution-details"><summary>Physical operator tree and all metrics'
-            f"</summary>{operators}</details><details"
-            f' class="execution-details"><summary>Action metrics</summary>{metric_html}</details>'
+            f'<details class="execution-details"><summary>Physical Operator Tree and metrics'
+            f"</summary>{operators}</details>{action_metrics}"
             f"{collection_notes}<details"
             f' class="execution-details"><summary>Stage and task details'
             f"</summary>{details}</details>"
@@ -2578,6 +3034,8 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
         )
     if executions:
         views.append(("spark", "✧", "Spark"))
+    if has_gpu:
+        views.append(("gpu", "▦", "GPU"))
 
     navigation = "".join(
         f'<a href="#{page}" class="nav-link"><span aria-hidden="true">{icon}</span>{label}</a>'

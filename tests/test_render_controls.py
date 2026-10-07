@@ -5,6 +5,8 @@ Description: Verify report column sorting metadata and optional summary heat.
 
 """
 
+import re
+
 import pytest
 
 from linescope.model import (
@@ -12,14 +14,102 @@ from linescope.model import (
     FunctionStats,
     GPUStats,
     LineStats,
+    MemorySample,
     ProcessMemoryStats,
     ProfileResult,
     ProfileRun,
     SourceLocation,
     SourceUnit,
+    SparkExecution,
+    SparkExecutionStats,
+    SparkOperator,
 )
 from linescope.render.html import render_html
 from tests.test_render import ReportDOM, cell_values
+
+
+def _css_declarations(css: str, selector: str) -> dict[str, str]:
+    """Read the first exact selector rule from embedded report styles.
+
+    Parameters
+    ----------
+    css : str
+        Self-contained stylesheet embedded in the generated report.
+
+    selector : str
+        Complete selector whose layout declarations should be inspected.
+
+    Returns
+    -------
+    dict[str, str]
+        Property values, or an empty mapping when the rule is absent.
+
+    """
+    rule = re.search(rf"(?<![\w.-]){re.escape(selector)}\{{([^}}]*)\}}", css)
+    if rule is None:
+        return {}
+
+    return dict(declaration.split(":", 1) for declaration in rule[1].split(";") if declaration)
+
+
+@pytest.mark.parametrize("selector", ["html", "body", ".workspace", "main", ".page"])
+def test_report_pages_leave_vertical_scrolling_to_the_document(selector: str):
+    """Allow long reports to reach the browser's outer scrollbar.
+
+    Parameters
+    ----------
+    selector : str
+        Report ancestor that must grow with the active summary page.
+
+    """
+    css = ReportDOM(render_html(_profile())).root.find_all("style")[0].text()
+    declarations = _css_declarations(css, selector)
+
+    assert declarations
+    assert declarations.get("height", "auto") == "auto"
+    assert declarations.get("max-height", "none") == "none"
+    assert declarations.get("overflow", "visible") == "visible"
+    assert declarations.get("overflow-y", "visible") == "visible"
+
+
+@pytest.mark.parametrize("selector", [".spark-plan-overview>.table-scroll", ".spark-cost-scroll"])
+def test_spark_tables_expand_without_nested_vertical_scrollbars(selector: str):
+    """Keep every Spark step and operator in the page's scrolling flow.
+
+    Parameters
+    ----------
+    selector : str
+        Spark table wrapper that previously clipped rows to a fixed height.
+
+    """
+    css = ReportDOM(render_html(_profile())).root.find_all("style")[0].text()
+    declarations = _css_declarations(css, selector)
+
+    assert declarations.get("max-height", "none") == "none"
+    assert declarations.get("overscroll-behavior", "auto") == "auto"
+    assert _css_declarations(css, ".table-scroll")["overflow"] == "auto"
+
+
+def test_source_navigation_keeps_its_viewport_and_spark_links_keep_their_alignment():
+    """Preserve source scrolling and align Spark targets after a page reset.
+
+    Reset the document before scrolling to a selected operator so its
+    disclosure remains visible when browser scrolling owns the report.
+
+    """
+    document = ReportDOM(render_html(_profile())).root
+    css = document.find_all("style")[0].text()
+    javascript = document.find_all("script")[0].text()
+
+    assert _css_declarations(css, ".source-view")["height"] == "100dvh"
+    assert _css_declarations(css, ".source-view")["overflow"] == "hidden"
+    assert _css_declarations(css, ".source-page")["overflow"] == "hidden"
+    assert _css_declarations(css, ".source-scroll")["overflow"] == "auto"
+    assert re.search(r"@media\s+screen\s*\{\s*\.source-view\s*\{", css)
+    assert (
+        "classList.toggle('source-view', selected.classList.contains('source-page'))" in javascript
+    )
+    assert javascript.index("window.scrollTo(0, 0)") < javascript.index("target.scrollIntoView(")
 
 
 def _profile(*, sampled: bool = False) -> ProfileResult:
@@ -81,9 +171,143 @@ def _profile(*, sampled: bool = False) -> ProfileResult:
     )
 
 
+def _table_profile(*, sampled: bool = False) -> ProfileResult:
+    """Populate every report table with controlled numeric and text values.
+
+    Parameters
+    ----------
+    sampled : bool, default=False
+        Whether the hot-line table includes a Samples column.
+
+    Returns
+    -------
+    ProfileResult
+        Spark, memory, child-notebook, and metadata tables with zero and
+        unavailable measurements and escaped source names.
+
+    """
+    result = _profile(sampled=sampled)
+    result.root_run.memory_samples = [MemorySample(0, 1024)]
+    result.root_run.metadata = {"detail <&>": "value <&>", "unknown": None}
+    result.root_run.lines.append(
+        LineStats(SourceLocation("missing", 99), ram=ProcessMemoryStats(delta_bytes=0))
+    )
+    scan = SparkOperator("scan", "Scan <&>", metrics={"numOutputRows": 12})
+    operation = SparkOperator(
+        "sort",
+        "Sort",
+        metrics={"time_ns": 1_000_000, "peak_memory_bytes": 1024, "spill_bytes": 0},
+        children=[scan],
+    )
+    pipeline = SparkOperator(
+        "pipeline", "WholeStageCodegen (1)", metrics={"time_ns": 2_000_000}, children=[operation]
+    )
+    result.root_run.spark_executions = [
+        SparkExecution(
+            "measured",
+            "collect <&>",
+            SourceLocation("zeta", 2),
+            SparkExecutionStats(
+                wall_time_ns=1_000_000_000,
+                executor_time_ns=2_000_000_000,
+                peak_memory_bytes=0,
+                spill_bytes=1024,
+            ),
+            operators=[pipeline],
+        ),
+        SparkExecution("unknown", "unknown"),
+        SparkExecution("zero", "zero", stats=SparkExecutionStats(wall_time_ns=0)),
+    ]
+    result.root_run.children = [
+        ProfileRun(name="child <&>", metadata={"parent_wait_time_ns": 0}, status="failed")
+    ]
+    return result
+
+
+@pytest.mark.parametrize("sampled", [False, True])
+def test_every_report_table_exposes_sortable_columns_with_raw_values(*, sampled: bool):
+    """Expose arrows and corresponding row values in every report table.
+
+    Parameters
+    ----------
+    sampled : bool
+        Whether to include the sampled hot-line layout.
+
+    """
+    document = ReportDOM(render_html(_table_profile(sampled=sampled))).root
+    tables = document.find_all("table")
+    assert len(tables) > 15
+    assert not document.find_all("button", css="spark-order")
+    assert "Highest first" not in document.text()
+    for table in tables:
+        assert "sortable-table" in table.attributes["class"].split()
+        for heading in table.find_all("thead")[0].find_all("th"):
+            if heading.attributes.get("aria-label") == "Line number":
+                continue
+            button = heading.find_all("button", css="table-sort")[0]
+            assert button.text() == heading.text()
+            assert button.find_all("svg", css="table-sort-icon")
+            key = button.attributes["data-sort"]
+            rows = [row for body in table.find_all("tbody") for row in body.find_all("tr")]
+            assert all(
+                f"data-{key}" in row.attributes
+                for row in rows
+                if "source-cell-heading" not in row.attributes.get("class", "").split()
+            )
+
+
+def test_plan_steps_preserve_data_flow_and_separate_shared_sort_values():
+    """Keep step order and pipeline ownership while adding numeric sorters.
+
+    Shared timings remain unavailable on their unmeasured constituent steps.
+
+    """
+    document = ReportDOM(render_html(_table_profile())).root
+    steps = document.find_all("table", css="spark-steps")[0]
+    headers = steps.find_all("thead")[0].find_all("th")
+    assert headers[0].attributes["aria-sort"] == "ascending"
+    assert [button.attributes["data-sort-type"] for button in steps.find_all("button")] == [
+        "number",
+        "text",
+        "number",
+        "number",
+        "number",
+    ]
+    rows = steps.find_all("tbody")[0].find_all("tr")
+    assert [row.attributes["data-column-0"] for row in rows] == ["1", "2"]
+    assert [row.attributes["data-column-2"] for row in rows] == ["", "1000000"]
+    assert [row.attributes["data-column-4"] for row in rows] == ["12", "12"]
+    shared = next(table for table in document.find_all("table") if "Shared steps" in table.text())
+    assert shared.find_all("tbody")[0].find_all("tr")[0].attributes["data-column-1"] == "2000000"
+    for link in steps.find_all("a"):
+        assert document.find_all("details", id=link.attributes["href"][1:])
+
+
+def test_memory_and_invocation_tables_keep_negative_zero_and_missing_values():
+    """Sort by bytes and parent wait while retaining unavailable source.
+
+    A missing snapshot must remain renderable beside freed memory and zero.
+
+    """
+    document = ReportDOM(render_html(_table_profile())).root
+    memory = document.find_all("table", css="memory-growth")[0]
+    rows = memory.find_all("tbody")[0].find_all("tr")
+    assert [row.attributes["data-column-0"] for row in rows] == ["0", "0", "-512"]
+    assert rows[1].attributes["data-column-1"] == ""
+    assert rows[1].attributes["data-column-2"] == ""
+    assert rows[1].attributes["data-column-3"] == ""
+    assert rows[2].attributes["data-column-3"] == "def zulu(): return 1"
+    invocations = document.find_all("table", css="notebook-invocations")[0]
+    row = invocations.find_all("tbody")[0].find_all("tr")[0]
+    assert row.attributes["data-column-0"] == "child <&>"
+    assert row.attributes["data-column-1"] == "0"
+    assert row.attributes["data-column-2"] == "failed"
+    assert document.find_all("section", id=row.find_all("a")[0].attributes["href"][1:])
+
+
 @pytest.mark.parametrize("sampled", [False, True])
 @pytest.mark.parametrize("page_id", ["functions", "files"])
-def test_summary_columns_sort_and_heat_defaults_to_none(page_id: str, *, sampled: bool) -> None:
+def test_summary_columns_sort_and_heat_defaults_to_none(page_id: str, *, sampled: bool):
     """Expose each column's sorter and disable summary heat on initial load.
 
     Parameters
@@ -130,7 +354,7 @@ def test_summary_columns_sort_and_heat_defaults_to_none(page_id: str, *, sampled
 
 
 @pytest.mark.parametrize("sampled", [False, True])
-def test_summary_rows_preserve_unknowns_zeroes_heat_and_navigation(*, sampled: bool) -> None:
+def test_summary_rows_preserve_unknowns_zeroes_heat_and_navigation(*, sampled: bool):
     """Keep raw metrics, available heat, and definition links together.
 
     Parameters
@@ -174,7 +398,7 @@ def test_summary_rows_preserve_unknowns_zeroes_heat_and_navigation(*, sampled: b
 
 
 @pytest.mark.parametrize("sampled", [False, True])
-def test_source_sorters_use_original_units_for_every_available_metric(*, sampled: bool) -> None:
+def test_source_sorters_use_original_units_for_every_available_metric(*, sampled: bool):
     """Match every sortable source heading with an honest raw row value.
 
     Parameters

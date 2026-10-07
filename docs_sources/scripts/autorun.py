@@ -29,7 +29,8 @@ def execute(src: str) -> tuple[list[list[str]], list[str]]:
     ----------
     src : str
         Python code. A statement ending with `# hide` runs without appearing;
-        a statement ending with `# norun` appears without running.
+        a statement ending with `# norun` appears without running. Preserve
+        blank lines between statements and separate imports from example code.
 
     Returns
     -------
@@ -39,11 +40,24 @@ def execute(src: str) -> tuple[list[list[str]], list[str]]:
 
     """
     if any(line.lstrip().startswith(">>> ") for line in src.splitlines()):
-        src = "\n".join(example.source for example in DocTestParser().get_examples(src))
+        original_lines = src.splitlines()
+        source_lines = []
+        previous_end = 0
+        for example in DocTestParser().get_examples(src):
+            if source_lines and any(
+                not line.strip() for line in original_lines[previous_end : example.lineno]
+            ):
+                source_lines.append("")
+            source_lines.extend(example.source.splitlines())
+            previous_end = (
+                example.lineno + len(example.source.splitlines()) + len(example.want.splitlines())
+            )
+        src = "\n".join(source_lines)
 
     lines = src.splitlines()
     namespace = {"__name__": "__linescope_docs__"}
     transcript: list[str] = []
+    previous_visible: ast.stmt | None = None
 
     for node in ast.parse(src).body:
         block = lines[node.lineno - 1 : node.end_lineno]
@@ -51,9 +65,17 @@ def execute(src: str) -> tuple[list[list[str]], list[str]]:
         skipped = block[0].rstrip().endswith("# norun")
 
         if not hidden:
+            if previous_visible is not None:
+                gap = lines[previous_visible.end_lineno : node.lineno - 1]
+                after_imports = isinstance(
+                    previous_visible, (ast.Import, ast.ImportFrom)
+                ) and not isinstance(node, (ast.Import, ast.ImportFrom))
+                if after_imports or any(not line.strip() for line in gap):
+                    transcript.append("")
             for number, line in enumerate(block):
                 prefix = ">>> " if number == 0 else "... "
                 transcript.append(prefix + line.removesuffix("# norun").rstrip())
+            previous_visible = node
 
         if skipped:
             continue
@@ -61,7 +83,7 @@ def execute(src: str) -> tuple[list[list[str]], list[str]]:
         output = StringIO()
         original_hook = sys.displayhook
 
-        def display(value: object) -> None:
+        def display(value: object):
             """Capture an executable example's displayed expression value.
 
             Preserve output for rendering while suppressing None expression

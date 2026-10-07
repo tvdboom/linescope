@@ -5,12 +5,16 @@ Description: Check GPU metrics remain separate, optional and visible in reports.
 
 """
 
+from contextlib import nullcontext
+import sys
 from types import SimpleNamespace
+import warnings
 
 import pytest
 
 from linescope import Session
 from linescope.backends.scalene import ScaleneBackend, normalize_scalene
+from linescope.backends.trace import TraceBackend
 from linescope.model import (
     BackendCapabilities,
     GPUStats,
@@ -107,7 +111,7 @@ def test_gpu_report_columns_and_filename_labels(tmp_path):
     assert 'class="path-title">worker.py</h1>' in html
     assert "jobs/worker.py" not in html
     assert str(tmp_path) not in html
-    assert "Estimated GPU time" in html
+    assert "GPU time" in html
     assert "GPU peak memory" in html
     assert "4.1 KB" in html
     assert "Offline report" not in html
@@ -116,17 +120,114 @@ def test_gpu_report_columns_and_filename_labels(tmp_path):
     assert "data:image/svg+xml;base64," in html
 
 
-@pytest.mark.parametrize("name", ["trace", "tachyon"])
-def test_unsupported_gpu_request_releases_session_lock(name):
-    """Verify unsupported gpu request releases session lock.
+@pytest.mark.parametrize(
+    "backend_options", [{}, {"backend": "trace"}], ids=["default", "explicit"]
+)
+@pytest.mark.parametrize("workload_failed", [False, True])
+def test_trace_gpu_request_warns_and_preserves_python_profiling(
+    tmp_path,
+    backend_options,
+    workload_failed,
+):
+    """Warn once and retain Python measurements without inventing GPU values.
 
-    Use controlled accelerator data unless the case explicitly checks real
-    supported device sampling.
+    Keep the diagnostic in session results after repeated snapshots and restore
+    interpreter hooks and session ownership after success or a workload error.
+
+    """
+    source = "value = sum(range(10))\n"
+    path = tmp_path / "workload.py"
+    path.write_text(source, encoding="utf-8")
+    previous_trace, previous_profile = sys.gettrace(), sys.getprofile()
+    session = Session(
+        **backend_options,
+        gpu=True,
+        root=str(tmp_path),
+        display="none",
+        notebooks=False,
+        spark=False,
+    )
+    expected_error = (
+        pytest.raises(RuntimeError, match="workload failed") if workload_failed else nullcontext()
+    )
+    with warnings.catch_warnings(record=True) as emitted:
+        warnings.simplefilter("always", RuntimeWarning)
+        with expected_error, session:
+            scope = {}
+            exec(compile(source, str(path), "exec"), scope)
+            session._refresh()
+            session._refresh()
+            if workload_failed:
+                raise RuntimeError("workload failed")
+
+    assert len(emitted) == 1
+    assert emitted[0].category is RuntimeWarning
+    diagnostic = str(emitted[0].message)
+    assert "backend='scalene'" in diagnostic
+    assert session.config.gpu
+    assert session.result.backend == "trace"
+    assert not session.result.capabilities.gpu
+    assert session.result.warnings.count(diagnostic) == 1
+    assert session.result.root_run.lines
+    assert all(line.gpu is None for line in session.result.root_run.lines)
+    assert any(line.hits for line in session.result.root_run.lines)
+    assert scope["value"] == 45
+    assert not session._backend._running
+    assert sys.gettrace() is previous_trace
+    assert sys.getprofile() is previous_profile
+    report = render_html(session.result, root=tmp_path)
+    assert "GPU time" not in report
+    assert "GPU peak memory" not in report
+    with Session(backend="trace", display="none", notebooks=False, spark=False):
+        pass
+
+
+@pytest.mark.parametrize("gpu", [False, True])
+def test_trace_backend_gpu_diagnostic_is_optional_and_detached(gpu):
+    """Retain the GPU warning only when device measurements were requested.
+
+    Allow direct collector use and keep caller edits to result diagnostics
+    independent of future snapshots.
+
+    """
+    with warnings.catch_warnings(record=True) as emitted:
+        warnings.simplefilter("always", RuntimeWarning)
+        collector = TraceBackend(accepts=lambda _: True, on_source=lambda _: None, gpu=gpu)
+    assert len(emitted) == int(gpu)
+    result = collector.result()
+    diagnostics = [message for message in result.warnings if "GPU" in message]
+    assert len(diagnostics) == int(gpu)
+    result.warnings.clear()
+    assert collector.result().warnings
+
+
+def test_trace_gpu_warning_as_error_releases_session_lock():
+    """Release session ownership when the GPU warning becomes an error.
+
+    Leave interpreter hooks untouched after repeated startup failures and
+    allow a subsequent Python-only session to start.
+
+    """
+    previous_trace = sys.gettrace()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        for _ in range(2):
+            with pytest.raises(RuntimeWarning, match=r"trace.*GPU"):
+                Session(backend="trace", gpu=True, notebooks=False, spark=False).start()
+            assert sys.gettrace() is previous_trace
+    with Session(backend="trace", display="none", notebooks=False, spark=False):
+        pass
+
+
+def test_tachyon_gpu_request_releases_session_lock():
+    """Reject unsupported Tachyon device collection without retaining ownership.
+
+    Keep repeated invalid requests from blocking subsequent profiling runs.
 
     """
     for _ in range(2):
         with pytest.raises(ValueError, match="GPU"):
-            Session(backend=name, gpu=True, notebooks=False, spark=False).start()
+            Session(backend="tachyon", gpu=True, notebooks=False, spark=False).start()
 
 
 @pytest.mark.scalene

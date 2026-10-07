@@ -19,14 +19,13 @@ from tests.test_render import ReportDOM
 
 
 @pytest.fixture(autouse=True)
-def isolated_memory_tracing(monkeypatch):
-    """Keep tests independent of process configuration and memory tracing.
+def isolated_memory_tracing():
+    """Give each memory test ownership of a fresh allocation tracer.
 
     Inspect allocation tracer ownership and detached memory results while
     preserving existing trace hooks.
 
     """
-    monkeypatch.setattr("linescope.config._overrides", {})
     if tracemalloc.is_tracing():
         pytest.skip("Requires ownership of a fresh tracemalloc session")
     yield

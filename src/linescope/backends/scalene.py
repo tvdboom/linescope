@@ -266,10 +266,10 @@ class ScaleneBackend:
     gpu : bool, default=False
         Collect utilization and device memory from supported accelerators.
 
-    sample_rate : int, default=100
+    sample_rate : int, default=1000
         Target samples per second. POSIX timers randomize intervals around
         this rate; Windows uses a fixed interval. Actual rates depend on
-        workload and scheduler delays.
+        workload, operating-system timer resolution, and scheduling settings.
 
     Attributes
     ----------
@@ -354,6 +354,10 @@ class ScaleneBackend:
     _gpu_error : str | None
         Diagnostic explaining unavailable accelerator measurements.
 
+    _gpu_memory_error : str | None
+        Diagnostic suppressing unavailable device-memory values independently
+        of GPU utilization and time estimates.
+
     _stats : Any
         Scalene statistics container initialized at startup.
 
@@ -396,6 +400,7 @@ class ScaleneBackend:
 
     ```pycon
     from linescope.backends.scalene import ScaleneBackend
+
     backend = ScaleneBackend(
         accepts=lambda filename: True, on_source=lambda filename: None
     )
@@ -414,8 +419,8 @@ class ScaleneBackend:
         memory: bool = False,
         root: str | None = None,
         gpu: bool = False,
-        sample_rate: int = 100,
-    ) -> None:
+        sample_rate: int = 1000,
+    ):
         """Initialize scoped sampling options and owned cleanup state.
 
         Defer optional Scalene components and instrumentation until collection
@@ -438,8 +443,10 @@ class ScaleneBackend:
         gpu : bool, default=False
             Whether supported GPU collection is requested.
 
-        sample_rate : int, default=100
+        sample_rate : int, default=1000
             Requested sampling frequency in samples per second.
+            The achieved rate depends on operating-system timer resolution
+            and scheduling settings, workload, and collection overhead.
 
         """
         _validate_sample_rate(sample_rate)
@@ -471,8 +478,9 @@ class ScaleneBackend:
         self._random = random.Random()
         self._accelerator: Any = None
         self._gpu_error: str | None = None
+        self._gpu_memory_error: str | None = None
 
-    def _start_gpu(self) -> None:
+    def _start_gpu(self):
         """Initialize a supported accelerator and record capability diagnostics.
 
         Keep GPU measurements unavailable when no supported device can be
@@ -486,7 +494,10 @@ class ScaleneBackend:
         try:
             accelerator = _component("scalene_nvidia_gpu", "ScaleneNVIDIAGPU")()
 
-            if not accelerator.has_gpu():
+            if accelerator.has_gpu():
+                if sys.platform == "win32":
+                    self._check_gpu_memory()
+            else:
                 accelerator = _component("scalene_neuron", "ScaleneNeuron")()
 
             if not accelerator.has_gpu():
@@ -501,6 +512,27 @@ class ScaleneBackend:
             )
         except Exception as error:  # noqa: BLE001
             self._gpu_error = f"Scalene GPU initialization failed: {type(error).__name__}: {error}"
+
+    def _check_gpu_memory(self):
+        """Keep WDDM process memory unavailable while collecting GPU time.
+
+        NVML supplies no per-process memory on WDDM. Scalene converts those
+        missing readings to zero, so suppress them before normalization. A
+        failed driver-model check affects memory availability only.
+
+        """
+        try:
+            nvml = _component("scalene_nvidia_gpu", "pynvml")
+            if any(
+                nvml.nvmlDeviceGetCurrentDriverModel(nvml.nvmlDeviceGetHandleByIndex(index))
+                == nvml.NVML_DRIVER_WDDM
+                for index in range(nvml.nvmlDeviceGetCount())
+            ):
+                self._gpu_memory_error = "Per-process GPU memory is unavailable with NVIDIA WDDM."
+        except Exception as error:  # noqa: BLE001
+            self._gpu_memory_error = (
+                f"GPU memory availability check failed: {type(error).__name__}: {error}"
+            )
 
     def _observe(self, filename: str) -> bool:
         """Snapshot accepted source and register native file state.
@@ -551,7 +583,7 @@ class ScaleneBackend:
         del function
         return self._observe(filename)
 
-    def _source_event(self, frame: FrameType, event: str, arg: Any) -> None:
+    def _source_event(self, frame: FrameType, event: str, arg: Any):
         """Observe source files reached by the Python profile hook.
 
         Capture accepted project snapshots without collecting function hit
@@ -590,7 +622,7 @@ class ScaleneBackend:
         current.wallclock = time.perf_counter()
         return current
 
-    def _set_signal(self, signum: Any, handler: Any) -> None:
+    def _set_signal(self, signum: Any, handler: Any):
         """Install a signal handler while retaining the original for cleanup.
 
         Save each original handler only once during the collector lifecycle.
@@ -607,7 +639,7 @@ class ScaleneBackend:
         self._signals.setdefault(signum, signal.getsignal(signum))
         signal.signal(signum, handler)
 
-    def start(self) -> None:
+    def start(self):
         """Start the real Scalene collector and source observation hooks.
 
         Own the installed hooks until stop or startup failure restores them.
@@ -688,7 +720,7 @@ class ScaleneBackend:
             self._cleanup()
             raise
 
-    def _sample_loop(self) -> None:
+    def _sample_loop(self):
         """Collect Windows samples until the owned stop event is set.
 
         Wait between samples so shutdown can wake the sampler promptly.
@@ -697,7 +729,7 @@ class ScaleneBackend:
         while not self._stop_event.wait(self._interval):
             self._sample()
 
-    def _sample(self, signum: Any = None, frame: FrameType | None = None) -> None:
+    def _sample(self, signum: Any = None, frame: FrameType | None = None):
         """Collect one sample while preventing reentrant sample processing.
 
         Retain collection failures as diagnostics and reschedule POSIX sampling
@@ -725,7 +757,7 @@ class ScaleneBackend:
         with self._sample_lock:
             self._collect_sample()
 
-    def _collect_sample(self) -> None:
+    def _collect_sample(self):
         """Collect project stack observations and available device metrics.
 
         Keep external work on its relevant project caller and retain separate
@@ -791,7 +823,7 @@ class ScaleneBackend:
                 self._interval = max(1e-9, self._random.expovariate(self.sample_rate))
                 signal.setitimer(signal.ITIMER_REAL, self._interval)
 
-    def _replace_native(self, name: str, value: Any) -> None:
+    def _replace_native(self, name: str, value: Any):
         """Replace a native attribute and retain its original value.
 
         Restore owned replacements when allocation sampling stops or startup
@@ -809,7 +841,7 @@ class ScaleneBackend:
         self._native_state[name] = inspect.getattr_static(self._native, name, _MISSING)
         setattr(self._native, name, value)
 
-    def _start_memory(self) -> None:
+    def _start_memory(self):
         """Initialize native allocation sampling and its processing queues.
 
         Retain ownership of native replacements so partial startup can be
@@ -895,7 +927,7 @@ class ScaleneBackend:
             for queue in self._native_queues:
                 queue.start()
 
-    def _register_native_files(self) -> None:
+    def _register_native_files(self):
         """Register observed project source with the native allocation profiler.
 
         Keep native attribution aligned with the collector's source ownership
@@ -910,7 +942,7 @@ class ScaleneBackend:
             os.path.dirname(package.__file__ or ""),
         )
 
-    def _stop_memory(self) -> None:
+    def _stop_memory(self):
         """Stop allocation queues and restore native attributes.
 
         Release owned resources even when allocation collection was only
@@ -947,7 +979,7 @@ class ScaleneBackend:
             self._native_queues.clear()
             self._native = None
 
-    def _cleanup(self) -> None:
+    def _cleanup(self):
         """Release sampling hooks, threads, signals, and native collector state.
 
         Restore only owned instrumentation and clear the active collector
@@ -984,7 +1016,7 @@ class ScaleneBackend:
             if _ACTIVE is self:
                 _ACTIVE = None
 
-    def stop(self) -> None:
+    def stop(self):
         """Stop collection, detach hooks, and normalize sampled measurements.
 
         Normalize the final samples after releasing collector-owned
@@ -1084,6 +1116,8 @@ class ScaleneBackend:
                 and gpu.n_gpu_samples[filename][number] > 0
             ):
                 row["gpu_time_ns"] = gpu.gpu_samples[filename][number] * 1_000_000_000
+                if self._gpu_memory_error is not None:
+                    row.pop("n_gpu_peak_memory_mb", None)
             else:
                 row.pop("n_gpu_peak_memory_mb", None)
 
@@ -1095,6 +1129,8 @@ class ScaleneBackend:
 
         if self._gpu_error:
             result.warnings.append(self._gpu_error)
+        if self._gpu_memory_error:
+            result.warnings.append(self._gpu_memory_error)
 
         if self._sampling_error:
             result.warnings.append(self._sampling_error)

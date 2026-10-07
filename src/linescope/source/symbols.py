@@ -276,7 +276,7 @@ class _Collector(ast.NodeVisitor):
 
     """
 
-    def __init__(self, unit: SourceUnit, definitions: list[SymbolDefinition]) -> None:
+    def __init__(self, unit: SourceUnit, definitions: list[SymbolDefinition]):
         """Initialize lexical collection for one captured source unit.
 
         Append definitions to the shared output without executing source or
@@ -297,7 +297,7 @@ class _Collector(ast.NodeVisitor):
         self.definitions = definitions
         self.assigned_attributes: set[str] = set()
 
-    def visit(self, node: ast.AST) -> None:
+    def visit(self, node: ast.AST):
         """Record a syntax node's current scope before dispatching its visitor.
 
         Retain scope ownership for later conservative expression resolution.
@@ -311,7 +311,7 @@ class _Collector(ast.NodeVisitor):
         self.scopes[node] = self.scope
         super().visit(node)
 
-    def _bind(self, name: str, binding: _Binding | None = None) -> None:
+    def _bind(self, name: str, binding: _Binding | None = None):
         """Add a candidate name binding to the current lexical scope.
 
         Treat unspecified bindings as unresolved rather than guessing their
@@ -328,7 +328,7 @@ class _Collector(ast.NodeVisitor):
         """
         self.scope.bindings[name].append(binding or _Binding(_BindingKind.UNKNOWN, self.scope))
 
-    def _definition(self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef) -> None:
+    def _definition(self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
         """Collect a function, method, or class definition and its inner scope.
 
         Preserve lexical names and flag classes whose dynamic behavior prevents
@@ -406,7 +406,7 @@ class _Collector(ast.NodeVisitor):
     visit_AsyncFunctionDef = _definition
     visit_ClassDef = _definition
 
-    def _parameters(self, args: ast.arguments) -> None:
+    def _parameters(self, args: ast.arguments):
         """Register function parameters as unresolved lexical bindings.
 
         Include positional, keyword-only, variadic, and keyword capture
@@ -426,7 +426,7 @@ class _Collector(ast.NodeVisitor):
             if arg:
                 self._bind(arg.arg)
 
-    def visit_Lambda(self, node: ast.Lambda) -> None:
+    def visit_Lambda(self, node: ast.Lambda):
         """Collect a lambda's parameters and expression in a separate scope.
 
         Evaluate default expressions in the enclosing lexical scope.
@@ -450,7 +450,7 @@ class _Collector(ast.NodeVisitor):
     def _comprehension(
         self,
         node: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp,
-    ) -> None:
+    ):
         """Collect bindings in a comprehension's own lexical scope.
 
         Keep the first iterable in the enclosing scope as required by Python
@@ -489,7 +489,7 @@ class _Collector(ast.NodeVisitor):
     visit_DictComp = _comprehension
     visit_GeneratorExp = _comprehension
 
-    def visit_Import(self, node: ast.Import) -> None:
+    def visit_Import(self, node: ast.Import):
         """Register module imports without executing their code.
 
         Preserve alias and top-level package binding behavior.
@@ -506,7 +506,7 @@ class _Collector(ast.NodeVisitor):
                 alias.asname or module, _Binding(_BindingKind.IMPORT, self.scope, module=module)
             )
 
-    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+    def visit_ImportFrom(self, node: ast.ImportFrom):
         """Register imported members and relative module depth.
 
         Leave star imports unresolved rather than inferring their exported
@@ -531,7 +531,7 @@ class _Collector(ast.NodeVisitor):
                     ),
                 )
 
-    def _assignment(self, target: ast.expr, value: ast.expr | None) -> None:
+    def _assignment(self, target: ast.expr, value: ast.expr | None):
         """Record an assigned expression as a candidate alias binding.
 
         Visit non-name targets so attribute mutation remains visible to
@@ -551,7 +551,7 @@ class _Collector(ast.NodeVisitor):
         else:
             self.visit(target)
 
-    def visit_Assign(self, node: ast.Assign) -> None:
+    def visit_Assign(self, node: ast.Assign):
         """Collect ordinary assignment targets and their value expression.
 
         Retain all candidate bindings so rebinding can invalidate inferred
@@ -568,7 +568,7 @@ class _Collector(ast.NodeVisitor):
 
         self.visit(node.value)
 
-    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+    def visit_AnnAssign(self, node: ast.AnnAssign):
         """Collect an annotated assignment and its annotation expression.
 
         Preserve unresolved targets when no assigned value is present.
@@ -586,7 +586,7 @@ class _Collector(ast.NodeVisitor):
 
         self.visit(node.annotation)
 
-    def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
+    def visit_NamedExpr(self, node: ast.NamedExpr):
         """Collect a named expression's binding and value.
 
         Use the current lexical scope for conservative alias resolution.
@@ -600,7 +600,7 @@ class _Collector(ast.NodeVisitor):
         self._assignment(node.target, node.value)
         self.visit(node.value)
 
-    def visit_Name(self, node: ast.Name) -> None:
+    def visit_Name(self, node: ast.Name):
         """Register stored or deleted names as unresolved lexical bindings.
 
         Leave name reads available for the later resolution pass.
@@ -614,7 +614,7 @@ class _Collector(ast.NodeVisitor):
         if isinstance(node.ctx, (ast.Store, ast.Del)):
             self._bind(node.id)
 
-    def visit_Attribute(self, node: ast.Attribute) -> None:
+    def visit_Attribute(self, node: ast.Attribute):
         """Record mutated attributes and inspect their owner expression.
 
         Prevent navigation through names that may be replaced dynamically.
@@ -630,7 +630,7 @@ class _Collector(ast.NodeVisitor):
 
         self.visit(node.value)
 
-    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+    def visit_ExceptHandler(self, node: ast.ExceptHandler):
         """Register an exception handler's bound name and visit its body.
 
         Treat the exception value as unresolved source state.
@@ -646,7 +646,7 @@ class _Collector(ast.NodeVisitor):
 
         self.generic_visit(node)
 
-    def visit_Global(self, node: ast.Global) -> None:
+    def visit_Global(self, node: ast.Global):
         # Assignment through global/nonlocal is dynamic across calls. We do
         # not infer links through these declarations.
         """Record names whose assignments redirect to the module scope.
@@ -662,7 +662,7 @@ class _Collector(ast.NodeVisitor):
         self.scope.redirects.update(node.names)
         self.scope.redirect_kinds.update(dict.fromkeys(node.names, _RedirectKind.GLOBAL))
 
-    def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
+    def visit_Nonlocal(self, node: ast.Nonlocal):
         """Record names whose assignments redirect to an enclosing scope.
 
         Retain redirection kinds for the mutation invalidation pass.
@@ -676,7 +676,7 @@ class _Collector(ast.NodeVisitor):
         self.scope.redirects.update(node.names)
         self.scope.redirect_kinds.update(dict.fromkeys(node.names, _RedirectKind.NONLOCAL))
 
-    def invalidate_mutations(self) -> None:
+    def invalidate_mutations(self):
         """Invalidate outer bindings that nested functions may replace.
 
         Treat nonlocal and global assignments as potential rebinding across
@@ -701,7 +701,7 @@ class _Collector(ast.NodeVisitor):
                 if target:
                     target.bindings[name].append(_Binding(_BindingKind.UNKNOWN, target))
 
-    def visit_MatchAs(self, node: ast.MatchAs) -> None:
+    def visit_MatchAs(self, node: ast.MatchAs):
         """Collect an alias introduced by structural pattern matching.
 
         Visit nested patterns to retain all potential lexical bindings.
@@ -717,7 +717,7 @@ class _Collector(ast.NodeVisitor):
 
         self.generic_visit(node)
 
-    def visit_MatchStar(self, node: ast.MatchStar) -> None:
+    def visit_MatchStar(self, node: ast.MatchStar):
         """Collect the name bound by a starred sequence pattern.
 
         Leave the matched value unresolved for static navigation.
@@ -731,7 +731,7 @@ class _Collector(ast.NodeVisitor):
         if node.name:
             self._bind(node.name)
 
-    def visit_MatchMapping(self, node: ast.MatchMapping) -> None:
+    def visit_MatchMapping(self, node: ast.MatchMapping):
         """Collect a mapping pattern's rest binding and nested patterns.
 
         Preserve unresolved pattern values without guessing definitions.
@@ -798,6 +798,7 @@ class SymbolIndex:
     ```pycon
     from linescope.model import SourceUnit
     from linescope.source import SymbolIndex
+
     code = "def double(value): return value * 2"
     source = SourceUnit("demo", "example.py", code)
     index = SymbolIndex({source.id: source})
@@ -806,7 +807,7 @@ class SymbolIndex:
 
     """
 
-    def __init__(self, sources: dict[str, SourceUnit]) -> None:
+    def __init__(self, sources: dict[str, SourceUnit]):
         """Index definitions and references from captured source.
 
         Resolve only unique project targets and keep dynamic or ambiguous calls
@@ -833,7 +834,7 @@ class SymbolIndex:
         for source_id, tree in self._trees.items():
             self._link(source_id, tree)
 
-    def _collect(self, unit: SourceUnit) -> None:
+    def _collect(self, unit: SourceUnit):
         """Parse a snapshot and collect its definitions and lexical bindings.
 
         Retain notebook line positions while masking magic syntax and skip
@@ -1194,7 +1195,7 @@ class SymbolIndex:
 
         return None
 
-    def _link(self, source_id: str, tree: ast.Module) -> None:
+    def _link(self, source_id: str, tree: ast.Module):
         """Collect resolvable call and notebook references from a snapshot.
 
         Link individual source tokens and preserve Unicode character offsets.
@@ -1303,7 +1304,7 @@ class SymbolIndex:
         for references in self.references.values():
             references.sort(key=lambda reference: reference.column)
 
-    def _link_notebook(self, unit: SourceUnit, path: str, line: int, start: int, end: int) -> None:
+    def _link_notebook(self, unit: SourceUnit, path: str, line: int, start: int, end: int):
         """Link an inline notebook token to one captured notebook target.
 
         Omit links when the workspace path cannot be resolved conservatively.
@@ -1369,6 +1370,7 @@ def build_navigation(
     ```pycon
     >>> from linescope.model import SourceUnit
     >>> from linescope.source import build_navigation
+
     >>> source = SourceUnit("demo.py", "demo.py", "def work(): pass\nwork()\n")
     >>> definitions, references = build_navigation({source.id: source})
     >>> references[("demo.py", 2)][0].target.line

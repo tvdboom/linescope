@@ -1,13 +1,9 @@
-# profile / profiler
---------------------
+# ProfileController
+-------------------
 
-Use `profile` to create a context-managed session or collect a notebook across
-cells with `start()` and `stop()`. `profiler` is an alias for the same
-[ProfileController] instance. Import both names directly from `linescope`.
-
-[](){#profilecontroller}
-[](){#profile}
-[](){#profiler}
+Create a controller when you need an independent owner for explicit profiling
+sessions. The shared [profile] and [profiler] entry points are instances of this
+class. Import `ProfileController` directly from `linescope`.
 
 :: linescope.api:ProfileController
     :: signature
@@ -21,12 +17,17 @@ cells with `start()` and `stop()`. `profiler` is an alias for the same
 
 <br>
 
+## Example
+
+:: examples
+
+<br>
+
 ## Methods
 
 :: methods:
     toc_only: False
     include:
-        - __call__
         - start
         - stop
         - save

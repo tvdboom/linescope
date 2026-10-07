@@ -145,7 +145,7 @@ class SourceUnit:
     source: str
     kind: str | SourceKind = SourceKind.PYTHON
 
-    def __post_init__(self) -> None:
+    def __post_init__(self):
         """Normalize the source kind to its enum member.
 
         Accept string values when constructing source snapshots.
@@ -189,7 +189,7 @@ class SymbolDefinition:
     line: int
     column: int | None = None
 
-    def __post_init__(self) -> None:
+    def __post_init__(self):
         """Normalize the symbol kind to its enum member.
 
         Accept string values when constructing resolved definitions.
@@ -397,7 +397,7 @@ class LineStats:
         Collected sampling observations, or None when unsupported; never exact
         hits.
 
-    ram : ProcessMemoryStats | None
+    ram : [ProcessMemoryStats] | None
         Observed process RAM during this line, separate from allocation deltas.
 
     See Also
@@ -638,7 +638,7 @@ class SparkExecution:
     warnings: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self) -> None:
+    def __post_init__(self):
         """Normalize the execution outcome to its enum member.
 
         Accept string values when constructing observed Spark actions.
@@ -712,7 +712,7 @@ class ProfileRun:
     metadata: dict[str, Any] = field(default_factory=dict)
     memory_samples: list[MemorySample] = field(default_factory=list)
 
-    def __post_init__(self) -> None:
+    def __post_init__(self):
         """Normalize the run outcome to its enum member.
 
         Accept string values when constructing profiling scopes.

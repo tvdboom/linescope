@@ -12,7 +12,7 @@ from sample_package.__main__ import main as run_package
 from linescope import profile
 
 
-def main() -> None:
+def main():
     """Profile the sample package and save its source report.
 
     Include the runner and package source while keeping unrelated examples

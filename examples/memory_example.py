@@ -30,7 +30,7 @@ def process_data(data: bytearray) -> int:
     return len(data) + len(temporary)
 
 
-def main() -> None:
+def main():
     """Profile RAM growth and save a source-linked memory timeline.
 
     Open the Memory view to inspect the temporary spike and repeated growth.

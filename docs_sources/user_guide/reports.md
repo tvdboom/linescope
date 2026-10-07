@@ -12,7 +12,8 @@ line times for that file or notebook; sampling reports estimate these times.
 A dash means no line time is available. Column headings stay visible as you
 scroll, and long source lines scroll horizontally inside the same table.
 
-Select a column heading in Functions, Files, or a source table to sort its rows.
+Select a column heading in any report table to sort its rows, including Spark
+actions, operators, plan steps, and memory growth.
 The arrow to the right of the label shows the direction; select the same
 heading again to reverse it. Names sort alphabetically, line locations sort by
 position in the file, and measurements sort by their numeric values. Source
@@ -79,7 +80,14 @@ report rather than a benchmark.
 | Files | Which files, notebooks, and child invocations can I inspect? |
 | Functions | Where is it defined, and what time was attributed to it? |
 | Memory | When did process RAM grow, and which line was active? |
+| GPU | Which source lines have sampled device work and GPU memory? |
 | Spark | How does data flow, and which steps cost time or memory? |
+
+GPU collection adds a GPU view with device cards and sortable
+line estimates, sampled memory peaks, driver time, and exact source links.
+Attributed GPU time sums available line estimates; it can overlap driver time
+and must remain separate from elapsed wall time. A dash means unavailable,
+including device memory on unsupported driver models.
 
 ## Report header
 
@@ -138,7 +146,7 @@ scope](spark.md#worker-scope-and-overall-time) for an example.
 | Avg / hit | Time divided by hits, only when both are available |
 | Mem Change | Accumulated process-memory change during this line's intervals |
 | Peak Mem | Highest observed process memory during this line |
-| Estimated GPU time | Sampled device work, separate from driver wall time |
+| GPU time | Sampled device work, separate from driver wall time |
 | GPU peak memory | Highest sampled device-memory value for the line |
 | Spark | Separate navigation references to observed executions |
 | Source | Complete captured source text for this line |
@@ -181,7 +189,10 @@ needed. Separate child processes keep their own badges and timelines. See
 and observed-peak limitations.
 
 Sampling reports include Samples in the hot-line, source, Functions, and Files
-tables, plus a total sample count and the main run's target samples per second.
+tables, plus a total sample count and the main run's measured samples per
+second. The measured rate divides that run's observed samples by its elapsed
+wall time; child-process samples do not contribute to this rate. Unknown
+counts or zero elapsed time leave the rate unavailable.
 Function counts sum the observations of their own lines, excluding nested
 definitions. File and notebook counts sum their captured line counts.
 Child runs retain their own sampling settings in their invocation details.

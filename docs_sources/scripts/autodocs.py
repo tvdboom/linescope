@@ -54,6 +54,7 @@ CUSTOM_URLS = {
         "https://github.com/tvdboom/linescope/blob/main/.github/CODE_OF_CONDUCT.md"
     ),
     "java": "https://spark.apache.org/docs/latest/api/python/getting_started/install.html",
+    "path": "https://docs.python.org/3/library/pathlib.html#pathlib.Path",
     "dataframe": (
         "https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/"
         "api/pyspark.sql.DataFrame.html"
@@ -89,8 +90,12 @@ LINKED_TYPES = {
     "GPUStats",
     "InteractiveShell",
     "LineStats",
+    "MemorySample",
     "MemoryStats",
+    "NotebookCollection",
     "NotebookIntegration",
+    "Path",
+    "ProcessMemoryStats",
     "ProfileController",
     "ProfilerBackend",
     "ProfileResult",
@@ -155,10 +160,14 @@ class AutoDocs:
     Parameters
     ----------
     obj : object
-        Class, method or function to parse.
+        Class, method, function, or callable instance to parse.
 
     method : str | None, default=None
         Method of `obj` to parse.
+
+    name : str | None, default=None
+        Exported object name or parent name for a selected method. None uses
+        the object's name or its class name for an unnamed instance.
 
     Attributes
     ----------
@@ -166,7 +175,17 @@ class AutoDocs:
         Supported NumPy section markers and the end-of-docstring pattern.
 
     obj : object
-        Class, function, command, or bound member being documented.
+        Class, function, command, or bound member being documented. Callable
+        instances retain their owning class for safe attribute inspection.
+
+    _signature_obj : object
+        Actual callable whose parameters appear in the generated signature.
+
+    _source_obj : object
+        Definition used for source links and callable documentation.
+
+    _is_instance : bool
+        Whether the reference describes a named callable instance.
 
     _parent_cls : type | None
         Parent class retained when documenting one of its members.
@@ -204,38 +223,54 @@ class AutoDocs:
         r"\Z",
     )
 
-    def __init__(self, obj: type[object], method: str | None = None):
+    def __init__(self, obj: object, method: str | None = None, *, name: str | None = None):
         """Resolve an object's docstring and retain its documentation context.
 
-        Raise `ValueError` when no docstring is available for the selected
-        object.
+        Keep the parent class for member anchors and source links.
 
         """
+        parent_name = name or getattr(obj, "__name__", type(obj).__name__)
+        self._is_instance = (
+            method is None
+            and callable(obj)
+            and not isinstance(obj, Command)
+            and not hasattr(obj, "__name__")
+        )
         if method:
             self.obj = getattr(obj, method)
-            self._parent_cls = obj
-            self._parent_anchor = f"{obj.__name__.lower()}-"
+            self._parent_cls = obj if isclass(obj) else type(obj)
+            self._parent_anchor = f"{parent_name.lower()}-"
         else:
-            self.obj = obj
+            self.obj = type(obj) if self._is_instance else obj
             self._parent_cls = None
             self._parent_anchor = ""
 
-        self.method = method
-        self.module = (
-            obj.callback.__module__
-            if isinstance(obj, Command) and obj.callback is not None
-            else obj.__module__
+        self._signature_obj = getattr(obj, method) if method else obj
+        self._source_obj = (
+            obj.__call__
+            if self._is_instance
+            else self.obj.callback
+            if isinstance(self.obj, Command) and self.obj.callback is not None
+            else self.obj
         )
+        self.method = method
+        self.module = self._source_obj.__module__
 
         if isinstance(self.obj, Command):  # Cli commands have no __name__
             self.name = str(self.obj.name)
         else:
-            self.name = self.obj.__name__
+            self.name = self.obj.__name__ if method else parent_name
 
-        if doc := getdoc(self.obj):
+        if doc := getdoc(self._source_obj):
             self.doc = doc
         else:
             raise ValueError(f"Object {self.obj} has no docstring.")
+
+        if self._is_instance:
+            owner = AutoDocs(self.obj)
+            for block in ("Attributes", "See Also"):
+                if content := owner.get_block(block):
+                    self.doc += f"\n\n{block}\n{'-' * len(block)}{content}"
 
     @staticmethod
     def get_obj(command: str) -> AutoDocs:
@@ -263,14 +298,13 @@ class AutoDocs:
         if "." in name:
             name, method = name.split(".")
             cls = getattr(importlib.import_module(module), name)
-            return AutoDocs(cls, method=method)
+            return AutoDocs(cls, method=method, name=name)
         else:
             obj = getattr(importlib.import_module(module), name)
-            # Public controllers expose a callable instance of the class
-            # documented on the API page, such as profile / profiler.
-            return AutoDocs(
-                obj if isinstance(obj, Command) or hasattr(obj, "__name__") else type(obj)
-            )
+            autodocs = AutoDocs(obj, name=name)
+            if autodocs._is_instance:
+                autodocs.module = module
+            return autodocs
 
     @staticmethod
     def parse_body(body: str) -> str:
@@ -330,11 +364,13 @@ class AutoDocs:
             Object's signature.
 
         """
-        params = signature(self.obj).parameters
+        params = signature(self._signature_obj).parameters
         documented_defaults = self._documented_defaults()
 
         # Assign an object type
-        if check_is_dataclass(self.obj):
+        if self._is_instance:
+            obj = "callable instance"
+        elif check_is_dataclass(self.obj):
             obj = "dataclass"
         elif isclass(self.obj):
             if check_is_enum(self.obj):
@@ -375,9 +411,10 @@ class AutoDocs:
         else:
             parameters = ""
 
-        if "linescope" in self.module:
+        source_module = self._source_obj.__module__
+        if "linescope" in source_module:
             # Module and filename sep by /
-            url = f"{LINESCOPE_URL}{self.module.replace('.', '/')}.py"
+            url = f"{LINESCOPE_URL}{source_module.replace('.', '/')}.py"
         else:
             url = ""
 
@@ -393,8 +430,7 @@ class AutoDocs:
 
         if url:
             try:
-                source = self.obj.callback if isinstance(self.obj, Command) else self.obj
-                line = getsourcelines(source)[1]
+                line = getsourcelines(self._source_obj)[1]
                 url = f"<span style='float:right'><a href={url}#L{line}>[source]</a></span>"
             except (OSError, TypeError):  # Unavailable source
                 url = ""
@@ -591,7 +627,7 @@ class AutoDocs:
                     if default := re.search("(?<=default=).+?$", header):
                         try:
                             param = header.split(":")[0].strip()
-                            real = signature(self.obj).parameters[param]
+                            real = signature(self._signature_obj).parameters[param]
 
                             # String representation uses single quotes
                             default = str(default.group()).replace('"', "'")
@@ -673,7 +709,7 @@ class AutoDocs:
 
             - toc_only: Whether to display only the toc.
             - solo_link: Whether the link comes from the parent.
-            - include: Methods to include.
+            - include: Methods to include; magic methods remain hidden.
             - exclude: Methods to exclude.
 
         Returns
@@ -701,15 +737,19 @@ class AutoDocs:
                 if not m.startswith("_") and not any(re.fullmatch(p, m) for p in exclude)
             ]
 
+        methods = [
+            method for method in methods if not (method.startswith("__") and method.endswith("__"))
+        ]
+
         # Create toc
         toc = "<table markdown style='font-size: 0.9em'>"
 
         for method in methods:
-            func = AutoDocs(self.obj, method=method)
+            func = AutoDocs(self.obj, method=method, name=self.name)
 
             name = f"[`{method}`][{'' if solo_link else func._parent_anchor}{method.strip('_')}]"
             summary = func.get_summary()
-            toc += f"<tr markdown><td markdown>{name}</td><td>{summary}</td></tr>"
+            toc += f"<tr markdown><td markdown>{name}</td><td markdown>{summary}</td></tr>"
 
         toc += "</table>"
 
@@ -718,7 +758,7 @@ class AutoDocs:
 
         if not toc_only:
             for method in methods:
-                func = AutoDocs(self.obj, method=method)
+                func = AutoDocs(self.obj, method=method, name=self.name)
 
                 blocks += "<br>" + func.get_signature()
                 blocks += func.get_summary() + "\n"
@@ -853,6 +893,7 @@ def types_conversion(dtype: str) -> str:
         "<class '": "",
         "'>": "",
         "typing.": "",  # For typing.Any
+        "pathlib.Path": "Path",
     }
 
     for k, v in types.items():

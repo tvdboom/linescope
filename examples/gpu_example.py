@@ -1,7 +1,7 @@
 """LineScope.
 
 Author: Mavs
-Description: Profile the Python driver of CUDA signal projections with Trace.
+Description: Profile CUDA signal projections and device metrics with Scalene.
 
 """
 
@@ -19,6 +19,11 @@ def load_signals() -> tuple[torch.Tensor, torch.Tensor]:
     Generate input on the CPU so host preparation and device transfers appear
     separately from the repeated GPU calculations.
 
+    Returns
+    -------
+    tuple[torch.Tensor, torch.Tensor]
+        Signal and projection-weight tensors stored on the CUDA device.
+
     """
     generator = torch.Generator().manual_seed(42)
     signals = torch.randn(2048, 1024, generator=generator)
@@ -27,11 +32,24 @@ def load_signals() -> tuple[torch.Tensor, torch.Tensor]:
 
 
 def project_signals(signals: torch.Tensor, weights: torch.Tensor) -> tuple[torch.Tensor, int]:
-    """Project signals repeatedly to expose Python driver work and waiting.
+    """Project signals repeatedly to sample driver and device work.
 
     Synchronize each iteration to finish queued device work inside the
-    profiling session. Trace measures driver waiting; GPU time and device
-    memory stay unavailable. The iteration count depends on the device.
+    profiling session. Scalene collects driver time and separate estimated
+    GPU time and peak device memory. The iteration count depends on the device.
+
+    Parameters
+    ----------
+    signals : torch.Tensor
+        Input signals already transferred to the CUDA device.
+
+    weights : torch.Tensor
+        Projection weights stored on the same device as the signals.
+
+    Returns
+    -------
+    tuple[torch.Tensor, int]
+        Final projected signals and the number of completed projections.
 
     """
     deadline = perf_counter() + 3
@@ -44,12 +62,13 @@ def project_signals(signals: torch.Tensor, weights: torch.Tensor) -> tuple[torch
             return projected, iterations
 
 
-def main() -> None:
+def main():
     """Run the CUDA workload and save its source profile.
 
     Require a CUDA-enabled PyTorch build and an available NVIDIA GPU before
-    starting collection. Use the default Trace backend for driver timing
-    without collecting Python allocations or GPU metrics.
+    starting collection. Select Scalene explicitly and enable GPU collection
+    to show device metrics separately from driver timing. Driver memory
+    collection remains disabled.
 
     """
     if not torch.cuda.is_available():
@@ -61,6 +80,8 @@ def main() -> None:
     # Initialize CUDA before profiling so one-time device startup is excluded.
     torch.cuda.init()
     with profile(
+        backend="scalene",
+        gpu=True,
         memory=False,
         root=str(Path(__file__).parent),
         spark=False,
@@ -73,6 +94,20 @@ def main() -> None:
     report = session.save("gpu.html")
     print(f"GPU: {torch.cuda.get_device_name()}; projections: {iterations}; mean: {mean:.4f}")
     print(f"Report: {report}")
+    gpu_times = [
+        line.gpu.time_ns
+        for line in session.result.root_run.lines
+        if line.gpu is not None and line.gpu.time_ns is not None
+    ]
+    gpu_peaks = [
+        line.gpu.peak_memory_bytes
+        for line in session.result.root_run.lines
+        if line.gpu is not None and line.gpu.peak_memory_bytes is not None
+    ]
+    gpu_time = f"{sum(gpu_times) / 1_000_000_000:.3f} s" if gpu_times else "unavailable"
+    gpu_memory = f"{max(gpu_peaks) / 1024**2:.1f} MiB" if gpu_peaks else "unavailable"
+    print(f"Attributed GPU time: {gpu_time}; GPU peak memory: {gpu_memory}")
+    print("Select GPU in the report to compare device estimates with Python driver time.")
     for warning in session.result.warnings:
         print(f"Collection note: {warning}")
 

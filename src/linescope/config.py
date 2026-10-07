@@ -1,14 +1,14 @@
 """LineScope.
 
 Author: Mavs
-Description: Validated configuration with project, global, and explicit
-precedence.
+Description: Resolve validated session options from project TOML and explicit
+arguments.
 
 """
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 import tomllib
 from typing import Any
@@ -25,7 +25,7 @@ def default_backend() -> Backend:
     return Backend.TRACE
 
 
-def _validate_sample_rate(sample_rate: int | None) -> None:
+def _validate_sample_rate(sample_rate: int | None):
     """Validate that the requested sampling rate is a positive integer.
 
     Reject boolean values and unsupported rates before collector startup.
@@ -60,12 +60,15 @@ class Config:
         separately, using the shared memory collector.
 
     gpu : bool, default=False
-        Collect supported Scalene GPU utilization and device memory.
+        Collect supported Scalene GPU utilization and device memory. Trace
+        warns and continues Python profiling without GPU measurements.
 
     sample_rate : int | None, default=None
         Target samples per second for Scalene or Tachyon. None preserves
-        the backend default: 100 for Scalene and 1000 for Tachyon. Higher
+        the backend default of 1000 for Scalene and Tachyon. Higher
         rates increase collection overhead. Trace ignores this setting.
+        The achieved rate can differ depending on operating-system timer
+        resolution and scheduling settings.
 
     root : str | None, default=None
         Project directory; otherwise discover the nearest `pyproject.toml`.
@@ -76,8 +79,9 @@ class Config:
     exclude : tuple[str, ...], default=()
         Package names, filesystem paths, or project-relative glob patterns.
 
-    spark : bool, default=True
+    spark : bool, default=False
         Observe Spark driver actions lazily when Spark methods are used.
+        Require PySpark to be available in the existing environment.
         Leave PySpark unloaded and its JVM listener dormant until needed.
 
     notebooks : bool, default=True
@@ -109,7 +113,8 @@ class Config:
         using the shared memory collector.
 
     gpu : bool
-        Collect supported Scalene GPU utilization and device memory.
+        Collect supported Scalene GPU utilization and device memory. Trace
+        warns and continues Python profiling without GPU measurements.
 
     root : str | None
         Project directory; otherwise discover the nearest `pyproject.toml`.
@@ -121,8 +126,9 @@ class Config:
         Package names, filesystem paths, or project-relative glob patterns.
 
     spark : bool
-        Observe Spark driver actions lazily when Spark methods are used. Leave
-        PySpark unloaded and its JVM listener dormant until needed.
+        Observe Spark driver actions lazily when Spark methods are used.
+        Require PySpark in the existing environment when enabled. Leave PySpark
+        unloaded and its JVM listener dormant until needed.
 
     notebooks : bool
         Snapshot notebook cells and instrument available notebook integrations.
@@ -140,12 +146,13 @@ class Config:
 
     sample_rate : int | None
         Target samples per second for Scalene or Tachyon. None preserves the
-        backend default: 100 for Scalene and 1000 for Tachyon. Higher rates
+        backend default of 1000 for Scalene and Tachyon. Higher rates
         increase collection overhead. Trace ignores this setting.
+        The achieved rate can differ depending on operating-system timer
+        resolution and scheduling settings.
 
     See Also
     --------
-    - linescope:configure
     - linescope:profile
     - linescope:Session
 
@@ -153,6 +160,7 @@ class Config:
     --------
     ```pycon
     >>> from linescope.config import Config
+
     >>> Config(backend="trace").memory
     False
     ```
@@ -165,14 +173,14 @@ class Config:
     root: str | None = None
     include: tuple[str, ...] = ()
     exclude: tuple[str, ...] = ()
-    spark: bool = True
+    spark: bool = False
     notebooks: bool = True
     child_notebooks: bool = True
     display: str | DisplayMode = DisplayMode.END
     output: str | None = None
     sample_rate: int | None = None
 
-    def __post_init__(self) -> None:
+    def __post_init__(self):
         """Validate values and normalize built-in enum choices.
 
         Preserve registered custom backend names as strings.
@@ -221,15 +229,12 @@ class Config:
             raise ValueError("output must be a non-empty path")
 
 
-_overrides: dict[str, Any] = {}
-
-
 def project_config(root: str | Path | None = None) -> dict[str, Any]:
     """Read the nearest project's `[tool.linescope]` configuration.
 
     Parameters
     ----------
-    root : str | Path | None, default=None
+    root : str | [Path] | None, default=None
         Starting directory for upward discovery.
 
     Returns
@@ -263,42 +268,21 @@ def project_config(root: str | Path | None = None) -> dict[str, Any]:
 def resolve_config(**options: Any) -> Config:
     """Resolve the configuration for a new session.
 
-    Explicit options override process defaults, project settings, and package
-    defaults, in that order.
-
-    """
-    values = project_config(options.get("root", _overrides.get("root")))
-    values.update(_overrides)
-    values.update(options)
-    return Config(**values)
-
-
-def configure(**options: Any) -> Config:
-    """Set validated defaults for subsequent sessions.
-
-    Active sessions keep their existing configuration.
+    Explicit options override project settings and package defaults, in that
+    order. Read project TOML for each session without retaining overrides.
 
     Parameters
     ----------
-    **options
-        Fields accepted by [Config]. Explicit session arguments take
-        precedence.
+    **options : Any
+        Fields accepted by [Config]. An explicit `root` selects the starting
+        directory for project discovery; otherwise use the working directory.
 
     Returns
     -------
     [Config]
-        Effective configuration after applying the requested defaults.
-
-    Examples
-    --------
-    ```pycon
-    >>> from linescope import configure
-    >>> str(configure(backend="trace", display="none").backend)
-    'trace'
-    ```
+        Validated options owned by the new session.
 
     """
-    effective = resolve_config(**options)
-    normalized = asdict(effective)
-    _overrides.update({name: normalized[name] for name in options})
-    return effective
+    values = project_config(options.get("root"))
+    values.update(options)
+    return Config(**values)

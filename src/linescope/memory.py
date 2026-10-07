@@ -122,7 +122,7 @@ class ProcessMemoryCollector:
         self,
         accepts: Callable[[str], bool],
         on_source: Callable[[str], Any],
-    ) -> None:
+    ):
         """Initialize observations without installing trace hooks.
 
         Parameters
@@ -169,7 +169,7 @@ class ProcessMemoryCollector:
                 self._warnings.append(warning)
             return None
 
-    def _append(self, sample: _Sample) -> None:
+    def _append(self, sample: _Sample):
         """Append a reading and compress history while preserving extrema.
 
         Parameters
@@ -201,7 +201,7 @@ class ProcessMemoryCollector:
         self._samples = retained
         self._compressed = True
 
-    def _record(self, filename: str | None, number: int, *, boundary: bool) -> None:
+    def _record(self, filename: str | None, number: int, *, boundary: bool):
         """Update process changes and peaks for one observed interval.
 
         Parameters
@@ -235,7 +235,7 @@ class ProcessMemoryCollector:
             self._append(_Sample(perf_counter_ns() - self._started, rss, filename, number))
             self._previous = rss
 
-    def _boundary(self, filename: str, number: int) -> None:
+    def _boundary(self, filename: str, number: int):
         """Observe RAM after a completed project line interval.
 
         Parameters
@@ -249,7 +249,7 @@ class ProcessMemoryCollector:
         """
         self._record(filename, number, boundary=True)
 
-    def _sample(self) -> None:
+    def _sample(self):
         """Observe RAM during a long call at the nearest project frame.
 
         Keep source discovery on the owner thread; snapshots normalize the
@@ -265,7 +265,7 @@ class ProcessMemoryCollector:
                 frame = frame.f_back
             self._record(None, 0, boundary=False)
 
-    def _loop(self) -> None:
+    def _loop(self):
         """Sample until cleanup signals the owned stop event.
 
         Wake promptly when cleanup requests sampler shutdown.
@@ -274,7 +274,7 @@ class ProcessMemoryCollector:
         while not self._stop.wait(_INTERVAL_SECONDS):
             self._sample()
 
-    def start(self) -> None:
+    def start(self):
         """Start observations while preserving existing trace callbacks.
 
         Unwind partially installed instrumentation if startup fails.
@@ -292,7 +292,7 @@ class ProcessMemoryCollector:
             self.stop()
             raise
 
-    def stop(self) -> None:
+    def stop(self):
         """Stop sampling and restore trace callbacks, including after errors.
 
         Finalize pending project intervals before releasing the hook.
@@ -308,7 +308,7 @@ class ProcessMemoryCollector:
         finally:
             self.finish_allocations()
 
-    def stop_tracing(self) -> None:
+    def stop_tracing(self):
         """Stop RAM sampling and restore hooks before timing collector cleanup.
 
         Keep allocation tracing alive until all collectors release their frame
@@ -331,7 +331,7 @@ class ProcessMemoryCollector:
             finally:
                 self._running = False
 
-    def finish_allocations(self) -> None:
+    def finish_allocations(self):
         """Capture final allocations after all trace-frame references are freed.
 
         Release owned allocation instrumentation even when a snapshot fails.

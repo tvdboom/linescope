@@ -34,11 +34,14 @@ Some utilities or configuration options require the installation of additional
 libraries. Install all the optional dependencies with
 `uv pip install "linescope[full]"`.
 
-* **[databricks-sdk](https://github.com/databricks/databricks-sdk-py)**
 * **[ipykernel](https://github.com/ipython/ipykernel)** (>=6.29)
 * **[ipython](https://ipython.org/)** (>=8.20)
-* **[pyspark](https://spark.apache.org/docs/latest/api/python/)** (>=3.5)
 * **[scalene](https://github.com/plasma-umass/scalene)** (>=2.3,<2.4)
+
+Spark and Databricks integration reuse PySpark (>=3.5) and the Databricks SDK
+already provided by the environment. LineScope does not install these runtime
+libraries through the base package or any extra. Enable Spark profiling with
+`spark=True`; startup requires PySpark to be available.
 
 ### Development
 
@@ -96,3 +99,15 @@ required for any of its functionalities. These libraries are only necessary to
 **GPU demos**
 
 * **[torch](https://pytorch.org/)** (>=2.8,<3)
+
+The `gpu` dependency group installs the CUDA workload library. Install the
+`scalene` extra and enable `backend="scalene", gpu=True` to collect GPU metrics.
+The default Trace backend does not support device measurements.
+
+**Local Spark**
+
+* **[pyspark](https://spark.apache.org/docs/latest/api/python/)** (>=3.5)
+
+The development `spark` dependency group supplies PySpark for local integration
+tests, examples, and documentation notebooks. It is included in `dev` and needs
+a compatible Java runtime to execute Spark workloads.

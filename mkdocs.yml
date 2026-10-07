@@ -68,6 +68,7 @@ plugins:
       include_requirejs: true
       include_source: true
       ignore_h1_titles: true
+      no_prompt: true
       execute: true
       execute_ignore: ["gpu_example.ipynb"]
       allow_errors: false
@@ -126,21 +127,49 @@ nav:
       - linescope: cli/linescope.md
   - API:
       - Profiling:
-          - profile / profiler: api/profiling/profilecontroller.md
+          - profile: api/profiling/profile.md
+          - profiler: api/profiling/profiler.md
+          - ProfileController: api/profiling/profilecontroller.md
           - Session: api/profiling/session.md
       - Configuration:
           - Config: api/configuration/config.md
-          - configure: api/configuration/configure.md
       - Data models:
-          - Results: api/model/profileresult.md
-          - Measurements: api/model/linestats.md
-          - Memory and GPU measurements: api/model/memorystats.md
-          - Source snapshots: api/model/sourceunit.md
-          - Spark executions: api/model/sparkexecution.md
-          - Options and states: api/model/options.md
-      - Backend registration: api/backends/register_backend.md
+          - Results:
+              - ProfileResult: api/model/results/profileresult.md
+              - ProfileRun: api/model/results/profilerun.md
+          - Measurements:
+              - BackendCapabilities: api/model/measurements/backendcapabilities.md
+              - LineStats: api/model/measurements/linestats.md
+              - FunctionStats: api/model/measurements/functionstats.md
+          - Memory and GPU measurements:
+              - MemoryStats: api/model/memory/memorystats.md
+              - ProcessMemoryStats: api/model/memory/processmemorystats.md
+              - MemorySample: api/model/memory/memorysample.md
+              - GPUStats: api/model/memory/gpustats.md
+          - Source snapshots:
+              - SourceUnit: api/model/source/sourceunit.md
+              - SourceLocation: api/model/source/sourcelocation.md
+              - SymbolDefinition: api/model/source/symboldefinition.md
+              - SymbolRef: api/model/source/symbolref.md
+          - Spark executions:
+              - SparkExecution: api/model/spark/sparkexecution.md
+              - SparkExecutionStats: api/model/spark/sparkexecutionstats.md
+              - SparkOperator: api/model/spark/sparkoperator.md
+          - Options and states:
+              - Backend: api/model/options/backend.md
+              - DisplayMode: api/model/options/displaymode.md
+              - SessionState: api/model/options/sessionstate.md
+              - RunStatus: api/model/options/runstatus.md
+              - SourceKind: api/model/options/sourcekind.md
+              - SymbolKind: api/model/options/symbolkind.md
+              - NotebookCollection: api/model/options/notebookcollection.md
+      - Backend registration:
+          - register_backend: api/backends/register_backend.md
+          - ProfilerBackend: api/backends/profilerbackend.md
+          - RawBackendResult: api/backends/rawbackendresult.md
+          - RawLine: api/backends/rawline.md
   - Examples:
-      - Notebook Quick Start: examples/notebooks/notebook_example.ipynb
+      - Quick Start: examples/notebooks/notebook_example.ipynb
       - Local Spark: examples/notebooks/spark_example.ipynb
       - GPU workload: examples/notebooks/gpu_example.ipynb
   - Development: development.md

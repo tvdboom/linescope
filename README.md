@@ -115,31 +115,18 @@ uv pip install --upgrade "git+https://github.com/tvdboom/linescope.git@main"
   uv pip install --upgrade "linescope[notebook]"
   ```
 
-- **`spark`** installs PySpark for Spark action, plan, and task metric
-  correlation. Local Spark also needs a compatible Java runtime.
-
-  ```console
-  uv pip install --upgrade "linescope[spark]"
-  ```
-
-- **`databricks`** includes notebook support and `databricks-sdk` for workspace
-  source capture and child notebook report retrieval. It reuses the runtime's
-  bundled PySpark.
-
-  ```console
-  uv pip install --upgrade "linescope[databricks]"
-  ```
-
-- **`full`** installs all four extras. Scalene is omitted on Python 3.15;
+- **`full`** installs both extras. Scalene is omitted on Python 3.15;
   development tools and GPU demo dependencies are separate.
 
   ```console
   uv pip install --upgrade "linescope[full]"
   ```
 
-Combine individual extras with `linescope[scalene,notebook]`. In managed Spark
-or Databricks environments, reuse bundled PySpark and choose the base package,
-`notebook`, or `databricks` as needed.
+Combine individual extras with `linescope[scalene,notebook]`. Spark and
+Databricks integration use the runtime's existing PySpark and Databricks SDK;
+LineScope does not install either library. Install the base package or
+`linescope[notebook]` in those environments. Spark profiling is opt-in with
+`spark=True` or `--spark`, and requires PySpark to be available.
 
 Install the latest source with all integrations directly from Git:
 
@@ -229,7 +216,7 @@ headless use, add `display="none"` to `profile(...)` and call
 | 📓 **[Notebooks](https://tvdboom.github.io/linescope/latest/user_guide/notebooks/)** | Profile a cell or a whole notebook session. |
 | ⚡ **[Spark](https://tvdboom.github.io/linescope/latest/user_guide/spark/)** | Follow Spark actions, executed plans, and distributed metrics. |
 | 🧱 **[Databricks](https://tvdboom.github.io/linescope/latest/user_guide/notebooks/#databricks)** | Capture workspace source and correlate child notebook runs. |
-| 🎛️ **[API Reference](https://tvdboom.github.io/linescope/latest/api/configuration/configure/)** | The detailed reference for LineScope's API. |
+| 🎛️ **[API Reference](https://tvdboom.github.io/linescope/latest/api/configuration/config/)** | The detailed reference for LineScope's API. |
 | ⌨️ **[CLI](https://tvdboom.github.io/linescope/latest/cli/linescope/)** | Profile Python scripts and modules from the command line. |
 | ❔ **[FAQ](https://tvdboom.github.io/linescope/latest/faq/)** | Get answers to frequently asked questions. |
 | 🔧 **[Contributing](https://tvdboom.github.io/linescope/latest/development/)** | Read this before creating a PR. |

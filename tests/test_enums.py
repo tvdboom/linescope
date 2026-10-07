@@ -25,7 +25,7 @@ from linescope.backends.base import create_backend, register_backend
 from linescope.backends.scalene import ScaleneBackend
 from linescope.backends.tachyon import TachyonBackend
 from linescope.backends.trace import TraceBackend
-from linescope.config import configure, default_backend, resolve_config
+from linescope.config import default_backend, resolve_config
 from linescope.model import ProfileRun, SourceUnit, SparkExecution, SymbolDefinition
 from linescope.source import build_navigation
 
@@ -128,7 +128,7 @@ def test_config_normalizes_fixed_choices(use_strings):
     )
     assert config.backend is Backend.TRACE
     assert config.display is DisplayMode.CELL
-    assert config.spark is True
+    assert config.spark is False
 
 
 @pytest.mark.parametrize("enabled", [True, False])
@@ -155,14 +155,13 @@ def test_default_backend_is_trace_on_every_supported_runtime(version, monkeypatc
     assert Config().backend is Backend.TRACE
 
 
-def test_project_and_global_config_normalize_strings(tmp_path, monkeypatch):
-    """Verify project and global config normalize strings.
+def test_project_and_explicit_config_normalize_strings(tmp_path):
+    """Normalize fixed choices from TOML and explicit session arguments.
 
     Inspect normalized enum members and their serialized values without starting
     optional runtimes.
 
     """
-    monkeypatch.setattr("linescope.config._overrides", {})
     (tmp_path / "pyproject.toml").write_text(
         '[tool.linescope]\nbackend="trace"\ndisplay="none"\nspark=false\n', encoding="utf-8"
     )
@@ -170,8 +169,9 @@ def test_project_and_global_config_normalize_strings(tmp_path, monkeypatch):
     assert config.backend is Backend.TRACE
     assert config.display is DisplayMode.NONE
     assert config.spark is False
-    configure(root=str(tmp_path), display=DisplayMode.CELL)
-    assert resolve_config().display is DisplayMode.CELL
+    explicit = resolve_config(root=str(tmp_path), display=DisplayMode.CELL)
+    assert explicit.display is DisplayMode.CELL
+    assert resolve_config(root=str(tmp_path)).display is DisplayMode.NONE
 
 
 def test_session_states_and_failure_cleanup_use_enums(tmp_path):
@@ -208,7 +208,7 @@ def test_session_states_and_failure_cleanup_use_enums(tmp_path):
     assert session.result.root_run.status is RunStatus.FAILED
     assert session.result.backend is Backend.TRACE
     assert sys.gettrace() is previous_trace
-    assert session.stop() is session.result
+    assert session.stop() is None
     with pytest.raises(RuntimeError, match="only start once"):
         session.start()
     with Session(config) as next_session:

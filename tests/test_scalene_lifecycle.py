@@ -127,6 +127,12 @@ def engine(monkeypatch):
         "ScaleneSigQueue": Mock(side_effect=queues),
         "initialize_tracer": Mock(),
         "get_windows_profiler": Mock(return_value=windows),
+        "pynvml": SimpleNamespace(
+            NVML_DRIVER_WDDM=0,
+            nvmlDeviceGetCount=Mock(return_value=1),
+            nvmlDeviceGetHandleByIndex=Mock(return_value="device"),
+            nvmlDeviceGetCurrentDriverModel=Mock(return_value=1),
+        ),
     }
     modules = {
         "scalene": SimpleNamespace(__file__="/engine/scalene/__init__.py"),
@@ -436,3 +442,58 @@ def test_successful_gpu_export_filters_sources_and_detaches_results(engine):
     assert result.lines[1].gpu is None
     result.lines[0].gpu.time_ns = 0
     assert backend.result().lines[0].gpu.time_ns == 500_000_000
+
+
+@pytest.mark.parametrize("driver_models", [[1], [0], [1, 0]])
+def test_windows_gpu_memory_availability_preserves_time_samples(engine, driver_models):
+    """Suppress unavailable WDDM memory while retaining device time estimates.
+
+    Keep supported process-memory readings, including sampled zero, and avoid
+    presenting incomplete multi-device memory as a complete measurement.
+
+    """
+    nvml = engine.components["pynvml"]
+    nvml.nvmlDeviceGetCount.return_value = len(driver_models)
+    nvml.nvmlDeviceGetCurrentDriverModel.side_effect = driver_models
+    engine.components["ScaleneNVIDIAGPU"] = Mock(
+        return_value=SimpleNamespace(has_gpu=lambda: True)
+    )
+    backend = collector(gpu=True)
+    backend.start()
+    engine.stats.gpu_stats.n_gpu_samples["main.py"][2] = 1
+    engine.stats.gpu_stats.gpu_samples["main.py"][2] = 0.5
+    backend.stop()
+    result = backend.result()
+    assert backend.capabilities.gpu
+    assert result.lines[0].gpu.time_ns == 500_000_000
+    if 0 in driver_models:
+        assert result.lines[0].gpu.peak_memory_bytes is None
+        assert "Per-process GPU memory is unavailable with NVIDIA WDDM." in result.warnings
+    else:
+        assert result.lines[0].gpu.peak_memory_bytes == 5 * 1024**2
+        assert backend._gpu_memory_error is None
+
+
+def test_windows_gpu_memory_check_failure_keeps_time_available(engine):
+    """Limit an unavailable driver-model query to GPU memory diagnostics.
+
+    Continue exporting utilization-based time and leave memory unknown rather
+    than trusting the upstream default zero.
+
+    """
+    engine.components["pynvml"].nvmlDeviceGetCurrentDriverModel.side_effect = OSError(
+        "driver query unavailable"
+    )
+    engine.components["ScaleneNVIDIAGPU"] = Mock(
+        return_value=SimpleNamespace(has_gpu=lambda: True)
+    )
+    backend = collector(gpu=True)
+    backend.start()
+    engine.stats.gpu_stats.n_gpu_samples["main.py"][2] = 1
+    engine.stats.gpu_stats.gpu_samples["main.py"][2] = 0.5
+    backend.stop()
+    result = backend.result()
+    assert backend.capabilities.gpu
+    assert result.lines[0].gpu.time_ns == 500_000_000
+    assert result.lines[0].gpu.peak_memory_bytes is None
+    assert any("driver query unavailable" in warning for warning in result.warnings)

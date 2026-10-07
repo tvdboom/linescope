@@ -15,11 +15,13 @@ import warnings
 
 import pytest
 
-from linescope import Config, Session, configure, profile, profiler
+import linescope
+from linescope import Config, Session, profile, profiler
 from linescope.api import ProfileController
 from linescope.backends import RawBackendResult, RawLine, register_backend
 from linescope.backends.base import create_backend
 from linescope.backends.trace import TraceBackend
+import linescope.config as profile_config
 from linescope.config import resolve_config
 from linescope.model import (
     BackendCapabilities,
@@ -29,16 +31,6 @@ from linescope.model import (
     SparkExecution,
 )
 from tests.test_render import ReportDOM
-
-
-@pytest.fixture(autouse=True)
-def isolated_configuration(monkeypatch):
-    """Provide isolated configuration.
-
-    Keep each test independent of persistent API configuration.
-
-    """
-    monkeypatch.setattr("linescope.config._overrides", {})
 
 
 def execute(tmp_path, text, *, namespace=None, **options):
@@ -80,13 +72,13 @@ class TestConfiguration:
         monkeypatch.chdir(tmp_path)
         assert resolve_config().backend == "trace"
         assert resolve_config().memory is False
-        assert resolve_config().spark is True
+        assert resolve_config().spark is False
 
-    def test_project_global_explicit_precedence(self, tmp_path, monkeypatch):
-        """Verify project global explicit precedence.
+    def test_project_and_explicit_profile_precedence(self, tmp_path, monkeypatch):
+        """Override project defaults only for the requested profile.
 
-        Use explicit collector choices and controlled project source to inspect
-        configuration, attribution, and lifecycle state.
+        Resolve TOML from a nested working directory and keep later sessions
+        independent of explicit options passed to an earlier profile.
 
         """
         (tmp_path / "pyproject.toml").write_text(
@@ -96,9 +88,12 @@ class TestConfiguration:
         child.mkdir()
         monkeypatch.chdir(child)
         assert resolve_config().include == ("project",)
-        configure(memory=False, display="none")
-        assert resolve_config().memory is False
-        assert resolve_config(memory=True).memory is True
+        session = profile(memory=False, display="none")
+        assert session.config.memory is False
+        assert session.config.display == "none"
+        assert session.config.include == ("project",)
+        assert profile().config.memory is True
+        assert profile().config.display == "end"
         assert resolve_config(include=[]).include == ()
         assert resolve_config().root == str(tmp_path.resolve())
 
@@ -112,17 +107,30 @@ class TestConfiguration:
         (tmp_path / "pyproject.toml").write_text('[tool.linescope]\nroot="src"\n')
         assert resolve_config(root=str(tmp_path)).root == str(tmp_path)
 
-    def test_invalid_global_update_is_atomic(self):
-        """Verify invalid global update is atomic.
+    def test_invalid_profile_options_leave_project_settings_unchanged(self, tmp_path):
+        """Reject invalid session options without retaining partial overrides.
 
-        Use explicit collector choices and controlled project source to inspect
-        configuration, attribution, and lifecycle state.
+        Keep the project configuration available for the next valid profile.
 
         """
-        configure(backend="trace")
+        project = tmp_path / "pyproject.toml"
+        project.write_text('[tool.linescope]\nbackend="trace"\nmemory=true\n')
         with pytest.raises(ValueError, match="display"):
-            configure(backend="invalid", display="bad")
-        assert resolve_config().backend == "trace"
+            profile(root=tmp_path, memory=False, display="bad")
+        assert profile(root=tmp_path).config.backend == "trace"
+        assert profile(root=tmp_path).config.memory is True
+        assert project.read_text() == '[tool.linescope]\nbackend="trace"\nmemory=true\n'
+
+    def test_configuration_has_no_process_default_api(self):
+        """Expose configuration through project TOML and session arguments.
+
+        Remove both the public helper and its backing module state.
+
+        """
+        assert "configure" not in linescope.__all__
+        assert not hasattr(linescope, "configure")
+        assert not hasattr(profile_config, "configure")
+        assert not hasattr(profile_config, "_overrides")
 
     @pytest.mark.parametrize(
         ("options", "error"),
@@ -165,17 +173,15 @@ class TestConfiguration:
     def test_inline_is_only_a_show_option(self):
         """Reject display destinations in collection configuration.
 
-        Keep failed session starts and global updates free of side effects.
+        Keep failed session starts free of retained controller state.
 
         """
         controller = ProfileController()
         with pytest.raises(TypeError, match="inline"):
             controller.start(backend="trace", inline=True)
         assert controller._session is None
-        configure(display="none")
         with pytest.raises(TypeError, match="inline"):
-            configure(inline=True)
-        assert resolve_config().display == "none"
+            profile(inline=True)
 
     def test_prevalidated_config(self, tmp_path):
         """Verify prevalidated config.
@@ -391,10 +397,9 @@ class TestSession:
                 Session(backend="trace").start()
 
     def test_no_double_display_on_repeated_stop(self, tmp_path, monkeypatch):
-        """Verify no double display on repeated stop.
+        """Retain the complete result while stopping without expression output.
 
-        Use explicit collector choices and controlled project source to inspect
-        configuration, attribution, and lifecycle state.
+        Display once and preserve the finalized result across repeated calls.
 
         """
         shown = []
@@ -403,8 +408,11 @@ class TestSession:
             backend="trace", root=str(tmp_path), display="end", notebooks=False, spark=False
         )
         session.start()
-        session.stop()
-        session.stop()
+        result = session.result
+        assert session.stop() is None
+        assert session.stop() is None
+        assert session.result is result
+        assert result.root_run.elapsed_ns is not None
         assert shown == [session]
         with pytest.raises(RuntimeError, match="only start once"):
             session.start()
@@ -645,7 +653,7 @@ class TestSession:
     @pytest.mark.parametrize("environment", ["script", "terminal", "notebook"])
     def test_show_detects_environment_and_honors_override(
         self, tmp_path, monkeypatch, environment: str, *, inline: bool | None
-    ) -> None:
+    ):
         """Choose inline output only for an active notebook kernel.
 
         Honor each explicit display choice without persisting it as a session
@@ -686,7 +694,7 @@ class TestSession:
             assert not opened
             assert not displayed
         else:
-            session.show(inline=inline)
+            assert session.show(inline=inline) is None
             display_inline = environment == "notebook" if inline is None else inline
             assert len(displayed) == int(display_inline)
             assert opened == ([] if display_inline else [destination.as_uri()])
@@ -703,7 +711,7 @@ class TestSession:
         opened = []
         monkeypatch.setitem(sys.modules, "IPython", None)
         monkeypatch.setattr("webbrowser.open", lambda url, **_kwargs: opened.append(url))
-        session.show()
+        assert session.show() is None
         assert opened == [destination.as_uri()]
         with pytest.raises(RuntimeError, match="active IPython notebook"):
             session.show(inline=True)
@@ -741,7 +749,9 @@ class TestSession:
 
         with warnings.catch_warnings():
             warnings.simplefilter("error", UserWarning)
-            html = session.show(inline=inline)
+            assert session.show(inline=inline) is None
+
+        html = session.html()
 
         assert isinstance(displayed[0], IFrame)
         wrapper = ReportDOM(displayed[0]._repr_html_()).root

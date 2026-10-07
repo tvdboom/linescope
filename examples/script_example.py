@@ -158,7 +158,7 @@ def analyze(grouped: dict[str, list[Reading]]) -> list[dict[str, float | str | i
     return summaries
 
 
-def main() -> None:
+def main():
     """Run main.
 
     Run the pipeline and open one HTML report in a new browser tab.

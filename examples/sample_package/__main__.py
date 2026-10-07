@@ -8,7 +8,7 @@ Description: Run with linescope --memory -m examples.sample_package.
 from .helpers import calculate, prepare
 
 
-def main(size: int = 20_000) -> None:
+def main(size: int = 20_000):
     """Run the package's order aggregation workload.
 
     Execute a nested cross-module call.

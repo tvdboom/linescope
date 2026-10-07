@@ -25,12 +25,12 @@ def discover_root(start: str | Path | None = None) -> Path:
 
     Parameters
     ----------
-    start : str | Path | None, default=None
+    start : str | [Path] | None, default=None
         Starting path. None uses the current working directory.
 
     Returns
     -------
-    Path
+    [Path]
         Nearest directory containing `pyproject.toml`, or the starting
         directory if no project configuration is present.
 
@@ -52,7 +52,7 @@ class SourceRegistry:
 
     Parameters
     ----------
-    root : str | Path | None, default=None
+    root : str | [Path] | None, default=None
         Project root. None discovers the nearest `pyproject.toml`.
 
     include : Iterable[str], default=()
@@ -65,7 +65,7 @@ class SourceRegistry:
 
     Attributes
     ----------
-    root : Path
+    root : [Path]
         Resolved project root used for file discovery and relative rules.
 
     include : tuple[str, ...]
@@ -83,13 +83,13 @@ class SourceRegistry:
     _accepted : dict[str, bool]
         Cached project ownership decisions for runtime filenames.
 
-    _included_paths : tuple[Path, ...]
+    _included_paths : tuple[[Path], ...]
         Candidate package and filesystem paths resolved without imports.
 
-    _library_roots : tuple[Path, ...]
+    _library_roots : tuple[[Path], ...]
         Standard-library and installed-package roots excluded from capture.
 
-    _own_root : Path
+    _own_root : [Path]
         LineScope package directory excluded from project snapshots.
 
     See Also
@@ -102,6 +102,7 @@ class SourceRegistry:
     --------
     ```pycon
     from linescope.source import SourceRegistry
+
     registry = SourceRegistry(include=["my_package"])
     registry.sources
     ```
@@ -113,14 +114,14 @@ class SourceRegistry:
         root: str | Path | None = None,
         include: Iterable[str] = (),
         exclude: Iterable[str] = (),
-    ) -> None:
+    ):
         """Initialize project discovery rules and frozen snapshot storage.
 
         Resolve inclusion candidates without importing project packages.
 
         Parameters
         ----------
-        root : str | Path | None, default=None
+        root : str | [Path] | None, default=None
             Project root used for source ownership or collector setup.
 
         include : Iterable[str], default=()
@@ -157,7 +158,7 @@ class SourceRegistry:
 
         Returns
         -------
-        tuple[Path, ...]
+        tuple[[Path], ...]
             Candidate filesystem locations for inclusion rules.
 
         """
@@ -197,7 +198,7 @@ class SourceRegistry:
 
         Parameters
         ----------
-        path : Path
+        path : [Path]
             File, workspace, or import search path used by this operation.
 
         rule : str
@@ -243,7 +244,7 @@ class SourceRegistry:
 
         Parameters
         ----------
-        filename : str | Path
+        filename : str | [Path]
             Runtime code filename or a registered notebook alias.
 
         Returns
@@ -319,7 +320,7 @@ class SourceRegistry:
 
         Parameters
         ----------
-        filename : str | Path
+        filename : str | [Path]
             File observed by a profiling event, or a notebook runtime alias.
 
         Returns

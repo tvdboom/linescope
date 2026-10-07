@@ -64,8 +64,10 @@ records current-thread line events, hit counts and wall intervals, making it
 useful for small investigations, tests and portable environments. Tracing adds
 overhead and shares hooks with debuggers. Enable `memory=True` for process RAM
 and retained Python allocation changes; no native preload is needed. Python
-allocation peaks and GPU measurements are unavailable. Requesting GPU
-collection raises a clear capability error.
+allocation peaks and GPU measurements are unavailable. Requesting `gpu=True`
+emits a `RuntimeWarning` and records it in `session.result.warnings` while
+Python profiling continues. Select `backend="scalene"` to collect supported GPU
+measurements.
 
 ## Tachyon
 
@@ -124,15 +126,17 @@ with profile(backend="scalene", sample_rate=250) as session:
 ```
 
 For scripts, use `linescope --sample-rate 250 application.py`. You can also set
-`sample_rate = 250` in `[tool.linescope]` or call `configure(sample_rate=250)`.
-When omitted or set to None in Python, the defaults remain 100 samples per
-second for Scalene and 1000 for Tachyon. Trace ignores this setting.
+`sample_rate = 250` in `[tool.linescope]` or pass `sample_rate=250` to
+`profile`.
+When omitted or set to None in Python, both backends default to 1000 samples
+per second. Trace ignores this setting.
 
-This is a target rate: stack capture, workload behavior, and scheduler delays
-affect the actual number of observations. Scalene randomizes intervals on
+This is a target rate: operating-system timer resolution and scheduling
+settings, stack capture, and workload behavior affect the actual number of
+observations. Scalene randomizes intervals on
 POSIX and uses fixed intervals on Windows. Higher rates can capture more short
-lines but increase profiling overhead. The report shows the target rate and
-observed sample counts separately from hits or function calls.
+lines but increase profiling overhead. The report shows observed sample counts
+and measured samples per second separately from hits or function calls.
 
 ### Collection overhead
 

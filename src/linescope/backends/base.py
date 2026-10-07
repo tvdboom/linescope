@@ -108,12 +108,35 @@ class ProfilerBackend(Protocol):
     - linescope.backends.base:RawBackendResult
     - linescope.backends.base:register_backend
 
+    Examples
+    --------
+    Use the built-in Trace collector as a concrete protocol implementation.
+    Reject all filenames here to demonstrate the lifecycle without capturing
+    source or depending on measured timings.
+
+    ```pycon
+    from linescope.backends import ProfilerBackend
+    from linescope.backends.trace import TraceBackend
+
+    backend: ProfilerBackend = TraceBackend(
+        accepts=lambda filename: False, on_source=lambda filename: None
+    )
+    backend.start()
+    try:
+        total = sum(range(10))
+    finally:
+        backend.stop()
+
+    snapshot = backend.result()
+    (str(backend.name), backend.capabilities.hit_counts, snapshot.lines)
+    ```
+
     """
 
     name: str | Backend
     capabilities: BackendCapabilities
 
-    def start(self) -> None:
+    def start(self):
         """Begin collecting measurements.
 
         Install only the instrumentation needed by this collector.
@@ -121,7 +144,7 @@ class ProfilerBackend(Protocol):
         """
         ...
 
-    def stop(self) -> None:
+    def stop(self):
         """Stop collecting and release instrumentation.
 
         Restore hooks owned by this collector, including after workload
@@ -144,10 +167,8 @@ BackendFactory = Callable[..., ProfilerBackend]
 _factories: dict[str, BackendFactory] = {}
 
 
-def register_backend(name: str, factory: BackendFactory) -> None:
+def register_backend(name: str, factory: BackendFactory):
     """Register a collector factory without changing the rendering pipeline.
-
-    Raise `ValueError` if the name is empty or already registered.
 
     Parameters
     ----------
@@ -170,9 +191,6 @@ def create_backend(name: str | Backend, **options: Any) -> ProfilerBackend:
     """Construct a backend lazily.
 
     Import optional measurement packages only when their backend is selected.
-
-    Raise `ValueError` if the name is neither a built-in backend nor a
-    registered factory.
 
     Parameters
     ----------

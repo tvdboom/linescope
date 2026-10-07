@@ -52,7 +52,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: '3.13'
-      - run: uv sync --locked --no-default-groups --group docs --extra notebook --extra spark
+      - run: uv sync --locked --no-default-groups --group docs --group spark --extra notebook
       - run: uv run --no-sync python -m ipykernel install --sys-prefix --name python3
       - name: Deploy versioned Material documentation
         env:

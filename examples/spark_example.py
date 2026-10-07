@@ -17,7 +17,7 @@ from pyspark.sql import functions as F
 from linescope import profile
 
 
-def prepare_java() -> None:
+def prepare_java():
     """Find Java before starting the local Spark gateway.
 
     Preserve explicit Java settings. On Windows, an existing terminal may
@@ -67,7 +67,7 @@ def prepare_java() -> None:
     )
 
 
-def main() -> None:
+def main():
     """Run main.
 
     Save a driver profile with real executed plans.

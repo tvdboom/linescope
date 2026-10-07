@@ -192,7 +192,7 @@ class DatabricksIntegration:
 
     """
 
-    def __init__(self, session: Session, dbutils: DBUtils) -> None:
+    def __init__(self, session: Session, dbutils: DBUtils):
         """Initialize notebook invocation observation and patch ownership state.
 
         Resolve available notebook context without changing the workload's
@@ -216,7 +216,7 @@ class DatabricksIntegration:
         self._active = False
         self._had_instance_attribute = False
 
-    def start(self) -> None:
+    def start(self):
         """Install a reversible observer when the notebook object is writable.
 
         Capture child invocation metadata around the existing notebook call.
@@ -396,7 +396,7 @@ class DatabricksIntegration:
                 "Databricks notebook.run could not be instrumented in this environment."
             )
 
-    def stop(self) -> None:
+    def stop(self):
         """Remove this observer without overwriting a subsequent user patch.
 
         Restore the original callable only while this integration still owns

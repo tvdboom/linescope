@@ -51,14 +51,25 @@ class WorkspaceStore:
 
     """
 
-    def __init__(self) -> None:
+    def __init__(self):
         """Initialize the Databricks SDK client using runtime authentication.
 
         Keep credentials outside generated notebook source and profile
         artifacts.
 
         """
-        self.client: ApiClient = import_module("databricks.sdk").WorkspaceClient().api_client
+        try:
+            sdk = import_module("databricks.sdk")
+        except ModuleNotFoundError as error:
+            if error.name not in {"databricks", "databricks.sdk"}:
+                raise
+
+            raise ImportError(
+                "Databricks workspace access requires the Databricks SDK in the "
+                "existing runtime. Run LineScope in your Databricks environment."
+            ) from error
+
+        self.client: ApiClient = sdk.WorkspaceClient().api_client
 
     def status(self, path: str) -> dict[str, Any]:
         """Read the workspace object's language and kind.
@@ -92,7 +103,7 @@ class WorkspaceStore:
         *,
         notebook: bool = False,
         overwrite: bool = False,
-    ) -> None:
+    ):
         """Import an owned Python notebook or profile file.
 
         Refuse to overwrite objects unless updating the reserved result file.
@@ -110,7 +121,7 @@ class WorkspaceStore:
 
         self.client.do("POST", "/api/2.0/workspace/import", body=body)
 
-    def delete(self, path: str) -> None:
+    def delete(self, path: str):
         """Delete exactly one owned temporary object.
 
         Never delete directories recursively.
@@ -184,7 +195,7 @@ class PreparedChild:
 
     """
 
-    def __init__(self, session: Session, path: str, correlation_id: str, parent_id: str) -> None:
+    def __init__(self, session: Session, path: str, correlation_id: str, parent_id: str):
         """Initialize child invocation and temporary artifact ownership.
 
         Create workspace objects only when preparation is explicitly performed.
@@ -214,7 +225,7 @@ class PreparedChild:
         self.profile_path = ""
         self._owned: list[str] = []
 
-    def prepare(self) -> None:
+    def prepare(self):
         """Prepare source and automatic collection for Python notebooks.
 
         Leave unsupported languages as source-only invocations.
@@ -311,7 +322,7 @@ class PreparedChild:
 
         return result
 
-    def cleanup(self) -> None:
+    def cleanup(self):
         """Remove owned workspace objects after success or failure.
 
         Record cleanup failures without hiding the workload's outcome.
@@ -364,7 +375,7 @@ class ChildCollector:
 
     """
 
-    def __init__(self, context: dict[str, Any]) -> None:
+    def __init__(self, context: dict[str, Any]):
         """Initialize child correlation and finalization ownership.
 
         Defer instrumentation, event hooks, and notebook exit patches until
@@ -386,7 +397,7 @@ class ChildCollector:
         self._finished = False
         self._startup_failed = False
 
-    def start(self) -> None:
+    def start(self):
         """Start the configured collector in the child notebook environment.
 
         Keep the original workspace path in captured source and nested calls.
@@ -451,7 +462,7 @@ class ChildCollector:
                 self._wrapper = exit_notebook
                 setattr(self.notebook, "exit", exit_notebook)  # noqa: B010
 
-    def _post_cell(self, result: ExecutionResult) -> None:
+    def _post_cell(self, result: ExecutionResult):
         """Finalize child collection after a notebook cell execution error.
 
         Retain source snapshots and restore owned instrumentation before
@@ -466,7 +477,7 @@ class ChildCollector:
         if getattr(result, "error_before_exec", None) or getattr(result, "error_in_exec", None):
             self.finish(failed=True)
 
-    def _restore_hooks(self) -> None:
+    def _restore_hooks(self):
         """Restore owned child completion and notebook exit hooks.
 
         Retain cleanup diagnostics without replacing the workload's original
@@ -500,7 +511,7 @@ class ChildCollector:
                     f"Child exit hook cleanup failed ({type(error).__name__})."
                 )
 
-    def finish(self, *, failed: bool = False) -> None:
+    def finish(self, *, failed: bool = False):
         """Stop and export once while preserving the workload outcome.
 
         Failed or unavailable collection still carries the captured source.
@@ -517,7 +528,8 @@ class ChildCollector:
                 if failed:
                     self.session.result.root_run.status = RunStatus.FAILED
 
-                result = self.session.stop()
+                self.session.stop()
+                result = self.session.result
                 if self._startup_failed:
                     result.capabilities = UNAVAILABLE
                     result.root_run.lines.clear()

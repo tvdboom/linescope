@@ -34,7 +34,7 @@ from tests.test_render import ReportDOM, cell_values
 @pytest.mark.parametrize("spark", [False, True])
 def test_shared_columns_keep_order_and_extra_metrics(
     kind: SourceKind, backend: str, *, spark: bool
-) -> None:
+):
     """Keep shared headings stable across collectors and source integrations.
 
     Retain tracing counts, memory, GPU, and Spark navigation before the final
@@ -123,7 +123,7 @@ def test_shared_columns_keep_order_and_extra_metrics(
         *([] if sampled else ["Hits", "Avg / hit"]),
         "Mem Change",
         "Peak Mem",
-        "Estimated GPU time",
+        "GPU time",
         "GPU peak memory",
         *(["Context"] if spark else []),
     ]
@@ -158,7 +158,7 @@ def test_shared_columns_keep_order_and_extra_metrics(
         *([] if sampled else ["Hits"]),
         "Mem Change",
         "Python retained",
-        "Estimated GPU time",
+        "GPU time",
     ]
     assert [header.text() for header in compact.find_all("th")] == [
         *shared,
@@ -192,7 +192,7 @@ def test_shared_columns_keep_order_and_extra_metrics(
         "analysis_of_the_complete_notebook_example_with_a_<long>_name.ipynb",
     ],
 )
-def test_hotspot_locations_allow_content_sizing(name: str, *, sampled: bool) -> None:
+def test_hotspot_locations_allow_content_sizing(name: str, *, sampled: bool):
     """Let complete notebook locations use available table width.
 
     Keep automatic column sizing and wrapping available instead of fixing the
@@ -243,7 +243,7 @@ def test_hotspot_locations_allow_content_sizing(name: str, *, sampled: bool) -> 
 
 
 @pytest.mark.parametrize("sampled", [False, True])
-def test_overview_times_use_plain_table_text(*, sampled: bool) -> None:
+def test_overview_times_use_plain_table_text(*, sampled: bool):
     """Display overview durations with the same text style as file summaries.
 
     Keep durations in ordinary table cells so they inherit the table's text

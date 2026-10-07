@@ -145,7 +145,7 @@ def _current() -> SparkIntegration | None:
         return stack[-1] if stack else None
 
 
-def _install_class(cls: type, names: set[str], kind: _MethodKind) -> None:
+def _install_class(cls: type, names: set[str], kind: _MethodKind):
     """Wrap supported methods while retaining originals and patch ownership.
 
     Distinguish lazy transformations from actions and writer operations.
@@ -292,7 +292,7 @@ _SPECIFICATIONS = [
 _SPARK_MODULES = frozenset(module_name for module_name, *_ in _SPECIFICATIONS)
 
 
-def _install_patches() -> None:
+def _install_patches():
     # Only touch modules the workload has loaded. Installing observation must
     # never turn an unused optional dependency into a PySpark import.
     """Wrap supported classes from modules already loaded by the workload.
@@ -318,7 +318,7 @@ class _SparkLoader(Loader):
 
     """
 
-    def __init__(self, original: Any) -> None:
+    def __init__(self, original: Any):
         """Retain the owner or original loader needed by this Spark adapter.
 
         Defer query listener registration and optional JVM access until an
@@ -369,7 +369,7 @@ class _SparkLoader(Loader):
         create = getattr(self.original, "create_module", None)
         return create(spec) if create is not None else None
 
-    def exec_module(self, module: ModuleType) -> None:
+    def exec_module(self, module: ModuleType):
         """Execute an imported module through its original loader.
 
         Restore loader metadata and record optional patch failures without
@@ -484,7 +484,7 @@ class _QueryListener:
 
         implements: ClassVar[list[str]] = ["org.apache.spark.sql.util.QueryExecutionListener"]
 
-    def __init__(self, integration: SparkIntegration) -> None:
+    def __init__(self, integration: SparkIntegration):
         """Retain the owner or original loader needed by this Spark adapter.
 
         Defer query listener registration and optional JVM access until an
@@ -498,7 +498,7 @@ class _QueryListener:
         """
         self.integration = integration
 
-    def onSuccess(self, name: str, query: Any, duration: int) -> None:
+    def onSuccess(self, name: str, query: Any, duration: int):
         """Forward a successful JVM query callback to the owning integration.
 
         Preserve Spark's query duration separately from driver action waiting.
@@ -517,7 +517,7 @@ class _QueryListener:
         """
         self.integration._query_finished(str(name), query, int(duration), RunStatus.SUCCESS)
 
-    def onFailure(self, name: str, query: Any, error: Any) -> None:
+    def onFailure(self, name: str, query: Any, error: Any):
         """Forward failed JVM query callbacks without error details.
 
         Mark the action failed while keeping unavailable timing unknown.
@@ -610,12 +610,13 @@ class SparkIntegration:
 
     Examples
     --------
-    [Session] lifecycle normally installs the adapter automatically. Explicit
+    [Session] lifecycle installs the adapter when `spark=True`. Explicit
     construction is useful for integrations with another Spark frontend.
 
     ```pycon
     >>> from linescope import Session
     >>> from linescope.spark import SparkIntegration
+
     >>> session = Session(backend="trace", display="none")
     >>> integration = SparkIntegration(session)
     >>> integration.session is session
@@ -624,7 +625,7 @@ class SparkIntegration:
 
     """
 
-    def __init__(self, session: Any, spark: Any = None) -> None:
+    def __init__(self, session: Any, spark: Any = None):
         """Retain the owner or original loader needed by this Spark adapter.
 
         Defer query listener registration and optional JVM access until an
@@ -653,7 +654,7 @@ class SparkIntegration:
         self._concurrent_queries = False
         self._lock = threading.RLock()
 
-    def _warning(self, error: Exception) -> None:
+    def _warning(self, error: Exception):
         """Record one diagnostic for unavailable optional Spark metadata.
 
         Include the error type without leaking workload exception details.
@@ -699,7 +700,7 @@ class SparkIntegration:
 
         return self.spark
 
-    def _start_listener(self) -> None:
+    def _start_listener(self):
         """Register the optional JVM listener when an observed action needs it.
 
         Record unavailable metadata honestly and retain callback cleanup
@@ -727,7 +728,7 @@ class SparkIntegration:
         except Exception as error:  # noqa: BLE001
             self._warning(error)
 
-    def start(self) -> None:
+    def start(self):
         """Arm reversible observation without loading PySpark or its listener.
 
         Observe existing action methods on the owning thread without forcing
@@ -753,7 +754,7 @@ class SparkIntegration:
             self.stop()
             raise
 
-    def stop(self) -> None:
+    def stop(self):
         """Drain available query events and restore observer-owned methods.
 
         Keep workload results intact while detaching the optional JVM
@@ -835,7 +836,7 @@ class SparkIntegration:
         parent: Any,
         args: Any,
         location: SourceLocation | None,
-    ) -> None:
+    ):
         """Retain lazy DataFrame lineage and writer ownership.
 
         Keep source references available for a later observed action.
@@ -901,7 +902,7 @@ class SparkIntegration:
 
     def _query_finished(
         self, name: str, query: Any, duration: int | None, status: str | RunStatus
-    ) -> None:
+    ):
         """Match a JVM completion callback to one pending observed action.
 
         Prefer its actual query plan and reject ambiguous concurrent matches.
@@ -1016,6 +1017,7 @@ class SparkIntegration:
         ```pycon
         >>> from linescope import Session
         >>> from linescope.spark import SparkIntegration
+
         >>> integration = SparkIntegration(Session(backend="trace"))
         >>> integration.record_action(object(), "example", lambda: 42)
         42

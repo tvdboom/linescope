@@ -14,11 +14,11 @@ pytest.importorskip("mkdocs")
 pytest.importorskip("regex")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from docs_sources.scripts import render
 from docs_sources.scripts.autodocs import (
     CUSTOM_URLS,
     AutoDocs,
     custom_autorefs,
-    render,
     types_conversion,
 )
 from docs_sources.scripts.autorun import execute
@@ -76,6 +76,52 @@ def test_autorun_accepts_numpydoc_console_examples():
     assert blocks[0][-1] == "10"
 
 
+@pytest.mark.parametrize("prompted", [False, True])
+def test_autorun_preserves_blank_lines_and_separates_imports(*, prompted: bool):
+    """Keep import groups and example steps separated in rendered transcripts.
+
+    Parameters
+    ----------
+    prompted : bool
+        Whether to supply ordinary Python or a console transcript.
+
+    """
+    lines = [
+        "from math import factorial",
+        "from pathlib import Path",
+        "",
+        "value = factorial(3)",
+        "",
+        "value",
+    ]
+    if prompted:
+        lines = [f">>> {line}" if line else "" for line in lines]
+        lines.append("6")
+    blocks, _ = execute("\n".join(lines))
+    assert blocks == [
+        [
+            ">>> from math import factorial",
+            ">>> from pathlib import Path",
+            "",
+            ">>> value = factorial(3)",
+            "",
+            ">>> value",
+            "6",
+        ]
+    ]
+
+
+def test_autorun_separates_imports_when_source_omits_the_blank_line():
+    """Insert an import separator without exposing hidden example statements.
+
+    Keep adjacent visible imports together while hiding implementation-only
+    setup and retaining the blank line before the actual example.
+
+    """
+    blocks, _ = execute("import math\nimport sys\nhidden = 3  # hide\nmath.factorial(hidden)\n")
+    assert blocks == [[">>> import math", ">>> import sys", "", ">>> math.factorial(hidden)", "6"]]
+
+
 def test_api_signature_links_to_src_layout():
     """Verify api signature links to src layout.
 
@@ -83,9 +129,9 @@ def test_api_signature_links_to_src_layout():
     resulting links, tables, or captured example output.
 
     """
-    rendered = AutoDocs.get_obj("linescope.config:configure").get_signature()
+    rendered = AutoDocs.get_obj("linescope.config:Config").get_signature()
     assert "blob/main/src/linescope/config.py#L" in rendered
-    assert "configure" in rendered
+    assert "Config" in rendered
 
 
 def test_cli_reference_documents_command_and_options():
@@ -114,61 +160,6 @@ def test_directive_inside_a_fence_stays_literal():
     """
     source = "```text\n:: missing.module:example\n    :: signature\n```"
     assert render(source) == source
-
-
-def test_example_directive_includes_current_source_without_executing(tmp_path, monkeypatch):
-    """Verify example directive includes current source without executing.
-
-    Render trusted documentation with the repository hooks and inspect the
-    resulting links, tables, or captured example output.
-
-    """
-    from docs_sources.scripts import examples
-    from docs_sources.scripts import render as render_page
-
-    monkeypatch.setattr(examples, "EXAMPLES_DIR", tmp_path)
-    example = tmp_path / "workload.py"
-    source = "marker = ':: missing.module:example'\nraise RuntimeError('must not execute')\n"
-    example.write_text(source, encoding="utf-8")
-    assert render_page(":: example: workload.py") == f"```python\n{source}```"
-
-    example.write_text("updated = 42\n", encoding="utf-8")
-    assert render_page("    :: example: workload.py") == (
-        "    ```python\n    updated = 42\n    ```"
-    )
-
-
-@pytest.mark.parametrize(
-    ("filename", "error"), [("missing.py", FileNotFoundError), ("../outside.py", ValueError)]
-)
-def test_example_directive_rejects_missing_or_external_files(
-    tmp_path, monkeypatch, filename, error
-):
-    """Verify example directive rejects missing or external files.
-
-    Render trusted documentation with the repository hooks and inspect the
-    resulting links, tables, or captured example output.
-
-    """
-    from docs_sources.scripts import examples
-    from docs_sources.scripts import render as render_page
-
-    monkeypatch.setattr(examples, "EXAMPLES_DIR", tmp_path)
-    with pytest.raises(error):
-        render_page(f":: example: {filename}")
-
-
-def test_example_directive_inside_a_fence_stays_literal():
-    """Verify example directive inside a fence stays literal.
-
-    Render trusted documentation with the repository hooks and inspect the
-    resulting links, tables, or captured example output.
-
-    """
-    from docs_sources.scripts import render as render_page
-
-    source = "```text\n:: example: missing.py\n```"
-    assert render_page(source) == source
 
 
 def test_dataclass_fields_render_descriptions_and_fallback_metadata(monkeypatch):
@@ -204,28 +195,45 @@ def test_example_fence_is_separated_from_following_method_table():
     assert "```\n\n<table" in rendered
 
 
-def test_callable_controller_resolves_to_its_documented_class():
-    """Verify callable controller resolves to its documented class.
+@pytest.mark.parametrize("name", ["profile", "profiler"])
+def test_callable_controller_keeps_its_exported_name(name):
+    """Generate named callable references from their call and class docstrings.
 
-    Render trusted documentation with the repository hooks and inspect the
-    resulting links, tables, or captured example output.
+    Retain instance parameters and returns along with class attributes,
+    source links, and method anchors.
 
     """
-    controller = AutoDocs.get_obj("linescope:profile")
-    assert controller.name == "ProfileController"
-    assert "configure" in AutoDocs.get_obj("linescope:Session").get_see_also()
+    controller = AutoDocs.get_obj(f"linescope:{name}")
+    assert controller.name == name
+    signature = controller.get_signature()
+    assert "<em>callable instance</em>" in signature
+    assert f"{name}</strong>(**options)" in signature
+    assert "blob/main/src/linescope/api.py#L" in signature
+    assert "**options" in controller.get_block("Parameters")
+    assert "[Session]" in controller.get_block("Returns")
+    assert "result : [ProfileResult]" in controller.get_block("Attributes")
+    assert f"#{name}-start" in controller.get_methods({"include": ["start"]})
+    assert "Config" in AutoDocs.get_obj("linescope:Session").get_see_also()
 
 
-def test_method_reference_keeps_its_parent_anchor():
+@pytest.mark.parametrize(
+    ("reference", "parent", "method_name"),
+    [
+        ("linescope.api:Session.stop", "session", "stop"),
+        ("linescope:profile.start", "profile", "start"),
+        ("linescope:profiler.stop", "profiler", "stop"),
+    ],
+)
+def test_method_reference_keeps_its_parent_anchor(reference, parent, method_name):
     """Verify method reference keeps its parent anchor.
 
     Render trusted documentation with the repository hooks and inspect the
     resulting links, tables, or captured example output.
 
     """
-    method = AutoDocs.get_obj("linescope.api:Session.stop")
-    assert method._parent_anchor == "session-"
-    assert "#session-stop" in method.get_signature()
+    method = AutoDocs.get_obj(reference)
+    assert method._parent_anchor == f"{parent}-"
+    assert f"#{parent}-{method_name}" in method.get_signature()
 
 
 def test_nested_type_references_leave_container_syntax_intact():
@@ -241,6 +249,7 @@ def test_nested_type_references_leave_container_syntax_intact():
         "dict[str, list[[SourceLocation][sourcelocation]]] | [ProfileResult][profileresult]"
     )
     assert types_conversion("list[linescope.model.SourceLocation]") == ("list[[SourceLocation]]")
+    assert types_conversion("pathlib.Path | None") == "[Path] | None"
     assert custom_autorefs("Callable[[str], bool]") == "Callable[[str], bool]"
 
 
@@ -254,6 +263,7 @@ def test_nested_type_references_leave_container_syntax_intact():
         "DBUtils.notebook",
         "ApiClient",
         "ExecutionInfo",
+        "Path",
     ],
 )
 def test_external_classes_link_to_their_official_reference(name):
@@ -332,6 +342,106 @@ def test_methods_render_related_objects_without_error_sections():
     assert 'info "See Also"' in rendered
     assert "[stop][session-stop]" in rendered
     assert "Raises" not in rendered
+
+
+def test_method_overview_renders_summary_references_as_links():
+    """Resolve API references inside method summary table cells.
+
+    Exercise Markdown's HTML-table handling so transformed reference text
+    becomes a link rather than appearing literally in the built page.
+
+    """
+    from bs4 import BeautifulSoup
+    from markdown import Markdown
+    from mkdocs_autorefs import AutorefsExtension
+
+    source = render(
+        ":: linescope.api:ProfileController\n"
+        "    :: methods:\n"
+        "        toc_only: true\n"
+        "        include: [start]\n"
+    )
+    html = Markdown(extensions=["md_in_html", AutorefsExtension()]).convert(source)
+    page = BeautifulSoup(html, "html.parser")
+    reference = page.select_one('td autoref[identifier="config"]')
+    assert reference is not None
+    assert reference.get_text() == "Config"
+    assert "[Config][config]" not in page.get_text()
+
+
+@pytest.mark.parametrize("config", [{}, {"include": ["__call__", "start", "stop"]}])
+def test_method_overview_omits_magic_methods(config: dict):
+    """Hide magic methods in automatic and explicitly selected method lists.
+
+    Keep ordinary lifecycle methods available in the overview and detail
+    blocks even when an include list names the callable protocol method.
+
+    Parameters
+    ----------
+    config : dict
+        Method selection options passed to the documentation renderer.
+
+    """
+    source = AutoDocs.get_obj("linescope.api:ProfileController").get_methods(config)
+    assert "__call__" not in source
+    assert "profilecontroller-call" not in source
+    assert "#profilecontroller-start" in source
+    assert "#profilecontroller-stop" in source
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "expected_output"),
+    [
+        ("configuration/config.md", "False"),
+        ("profiling/profile.md", "(45, 'stopped', 'trace')"),
+        ("profiling/profiler.md", "(45, 'stopped', 'trace')"),
+        ("profiling/profilecontroller.md", "(45, 'stopped', 'trace')"),
+        ("profiling/session.md", "'stopped'"),
+        ("backends/profilerbackend.md", "('trace', True, [])"),
+    ],
+)
+def test_api_classes_display_executable_examples(relative_path: str, expected_output: str):
+    """Display working examples for API entry points and non-model classes.
+
+    Execute the actual page through its Markdown renderer and verify a
+    copyable transcript appears beneath its Example heading. Profiling
+    examples must restore tracing and Python's output hooks.
+
+    Parameters
+    ----------
+    relative_path : str
+        API page path relative to the documentation API directory.
+
+    expected_output : str
+        Deterministic expression output from that page's example.
+
+    """
+    from bs4 import BeautifulSoup
+    from markdown import Markdown
+
+    from docs_sources.scripts.autorun import formatter
+
+    trace, stdout, displayhook = sys.gettrace(), sys.stdout, sys.displayhook
+    path = Path(__file__).resolve().parents[1] / "docs_sources" / "api" / relative_path
+    source = render(path.read_text(encoding="utf-8"))
+    markdown = Markdown(
+        extensions=["admonition", "md_in_html", "pymdownx.superfences", "pymdownx.highlight"],
+        extension_configs={
+            "pymdownx.superfences": {
+                "custom_fences": [{"name": "pycon", "class": "pycon", "format": formatter}]
+            }
+        },
+    )
+    page = BeautifulSoup(markdown.convert(source), "html.parser")
+    heading = page.find("h2", string="Example")
+    assert heading is not None
+    code = heading.find_next("code")
+    assert code is not None
+    assert ">>> " in code.get_text()
+    assert expected_output in code.get_text()
+    assert sys.gettrace() is trace
+    assert sys.stdout is stdout
+    assert sys.displayhook is displayhook
 
 
 def test_default_factory_is_validated_using_its_documented_expression():

@@ -651,7 +651,7 @@ def test_child_process_ram_is_not_added_to_parent():
         (
             "notebook",
             "/Workspace/notebook_example.ipynb · cell 2",
-            "notebook_example.ipynb · cell 2:2",
+            "notebook_example.ipynb · cell 1:2",
         ),
     ],
 )

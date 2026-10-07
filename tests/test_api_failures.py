@@ -123,7 +123,7 @@ def test_extension_entry_points_and_controller_show_delegate(monkeypatch):
     unload.assert_called_once_with(shell)
     controller = ProfileController()
     controller._session = SimpleNamespace(show=Mock(return_value="report"))
-    assert controller.show(inline=True) == "report"
+    assert controller.show(inline=True) is None
     controller._session.show.assert_called_once_with(inline=True)
 
 
@@ -163,6 +163,7 @@ def test_controller_retains_result_and_releases_hooks_after_display_failure(monk
     assert controller.result is session.result
     assert controller.result.root_run.elapsed_ns is not None
     assert controller.stop() is None
+    assert session.stop() is None
     show.assert_called_once_with()
     collector.stop.assert_called_once_with()
     with Session(display="none", spark=False, notebooks=False):

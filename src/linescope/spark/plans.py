@@ -42,6 +42,7 @@ def parse_plan(plan: Any, *, max_nodes: int = 1000) -> list[SparkOperator]:
     --------
     ```pycon
     >>> from linescope.spark import parse_plan
+
     >>> parse_plan(None)
     []
     ```
@@ -120,7 +121,7 @@ def parse_plan(plan: Any, *, max_nodes: int = 1000) -> list[SparkOperator]:
     return [root] if root is not None else []
 
 
-def capture_query(execution: SparkExecution, query: Any, *, actual: bool = True) -> None:
+def capture_query(execution: SparkExecution, query: Any, *, actual: bool = True):
     """Populate an execution from an observed JVM query execution.
 
     Parameters
@@ -148,6 +149,7 @@ def capture_query(execution: SparkExecution, query: Any, *, actual: bool = True)
     ```pycon
     >>> from linescope.model import SparkExecution
     >>> from linescope.spark import capture_query
+
     >>> execution = SparkExecution("example")
     >>> capture_query(execution, None)
     >>> execution.executed_plan is None

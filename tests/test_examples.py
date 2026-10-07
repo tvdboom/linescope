@@ -24,6 +24,39 @@ from linescope.source import build_navigation
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _copy_example_project(tmp_path: Path, script: str, report: str) -> Path:
+    """Stage an example with its project-level profiling settings.
+
+    Keep generated reports and TOML defaults inside the test's owned directory.
+
+    Parameters
+    ----------
+    tmp_path : [Path]
+        Isolated project directory supplied by pytest.
+
+    script : str
+        Runnable example filename copied into the isolated project.
+
+    report : str
+        Project-relative HTML destination used by automatic report display.
+
+    Returns
+    -------
+    [Path]
+        Staged script with any required sample package beside it.
+
+    """
+    script_path = tmp_path / script
+    shutil.copyfile(REPO_ROOT / "examples" / script, script_path)
+    if script == "package_example.py":
+        shutil.copytree(REPO_ROOT / "examples/sample_package", tmp_path / "sample_package")
+    (tmp_path / "pyproject.toml").write_text(
+        f'[tool.linescope]\nbackend = "trace"\noutput = {json.dumps(report)}\n',
+        encoding="utf-8",
+    )
+    return script_path
+
+
 @pytest.mark.parametrize(
     ("script", "report"),
     [
@@ -42,9 +75,9 @@ def test_examples_save_reports_with_trace_and_controlled_memory(
     contents, configuration, or resource cleanup.
 
     """
+    script_path = _copy_example_project(tmp_path, script, report)
     launcher = (
         "import pathlib, runpy, sys, webbrowser\n"
-        "from linescope import configure\n"
         "import linescope.memory as memory_module\n"
         "class DemoMemoryCollector:\n"
         "    def __init__(self, *args): pass\n"
@@ -56,7 +89,6 @@ def test_examples_save_reports_with_trace_and_controlled_memory(
         "    def snapshot(self): return {}, [], [], False\n"
         "memory_module.ProcessMemoryCollector = DemoMemoryCollector\n"
         "sys.path.insert(0, str(pathlib.Path(sys.argv[1]).parent))\n"
-        "configure(backend='trace', output=sys.argv[2])\n"
         "webbrowser.open = lambda *args, **kwargs: True\n"
         "runpy.run_path(sys.argv[1], run_name='__main__')\n"
         "assert 'linescope.backends.scalene' not in sys.modules\n"
@@ -66,8 +98,7 @@ def test_examples_save_reports_with_trace_and_controlled_memory(
             sys.executable,
             "-c",
             launcher,
-            str(REPO_ROOT / "examples" / script),
-            str(tmp_path / report),
+            str(script_path),
         ],
         cwd=tmp_path,
         capture_output=True,
@@ -100,15 +131,14 @@ def test_demos_run_with_trace_and_memory(tmp_path, script, report):
     contents, configuration, or resource cleanup.
 
     """
+    script_path = _copy_example_project(tmp_path, script, report)
     source = rf"""
 import ast, json, os, pathlib, re, runpy, sys, webbrowser
-from linescope import configure
 os.chdir({str(tmp_path)!r})
-configure(backend="trace", output={str(tmp_path / report)!r})
 webbrowser.open = lambda *args, **kwargs: True
-sys.path.insert(0, {str(REPO_ROOT / "examples")!r})
+sys.path.insert(0, {str(tmp_path)!r})
 previous_trace = sys.gettrace()
-runpy.run_path({str(REPO_ROOT / "examples" / script)!r}, run_name='__main__')
+runpy.run_path({str(script_path)!r}, run_name='__main__')
 assert sys.gettrace() is previous_trace
 assert 'linescope.backends.scalene' not in sys.modules
 html = pathlib.Path({report!r}).read_text(encoding='utf-8')
@@ -123,7 +153,7 @@ rows = [
     for attributes in [dict(re.findall(r'([a-z-]+)="([^"]*)"', raw_attributes))]
 ]
 timed_lines = {{int(number) for number, duration, _, _ in rows if duration and int(duration) > 0}}
-functions = ast.parse(pathlib.Path({str(REPO_ROOT / "examples" / script)!r}).read_text())
+functions = ast.parse(pathlib.Path({str(script_path)!r}).read_text())
 timed_functions = [
     node.name for node in functions.body
     if isinstance(node, ast.FunctionDef)

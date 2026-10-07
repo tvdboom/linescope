@@ -69,7 +69,7 @@ def test_kernel_session_names_every_report_location(
     server_context: tuple[Path, dict[str, str]],
     monkeypatch: pytest.MonkeyPatch,
     mocker: MockerFixture,
-) -> None:
+):
     """Carry a kernel-resolved filename through every report location.
 
     Resolve the notebook without namespace or environment filename metadata.
@@ -159,7 +159,7 @@ def test_kernel_session_names_every_report_location(
 )
 def test_unavailable_or_ambiguous_sessions_do_not_guess(
     server_context: tuple[Path, dict[str, str]], mocker: MockerFixture, payload: bytes
-) -> None:
+):
     """Leave notebook identity unavailable for invalid or ambiguous sessions.
 
     Parameters
@@ -182,7 +182,7 @@ def test_unavailable_or_ambiguous_sessions_do_not_guess(
 
 def test_restricted_server_does_not_interrupt_collection(
     server_context: tuple[Path, dict[str, str]], mocker: MockerFixture
-) -> None:
+):
     """Keep notebook capture usable when the local server rejects requests.
 
     Parameters
@@ -204,7 +204,7 @@ def test_restricted_server_does_not_interrupt_collection(
 @pytest.mark.parametrize("url", ["https://remote.example/", "file:///tmp/", "malformed"])
 def test_runtime_lookup_uses_only_local_servers(
     server_context: tuple[Path, dict[str, str]], mocker: MockerFixture, url: str
-) -> None:
+):
     """Keep server authentication confined to local Jupyter runtime endpoints.
 
     Parameters
@@ -230,7 +230,7 @@ def test_runtime_lookup_uses_only_local_servers(
 @pytest.mark.parametrize("multiple", [False, True])
 def test_nbconvert_identity_uses_launcher_input_and_working_directory(
     tmp_path: Path, mocker: MockerFixture, *, multiple: bool
-) -> None:
+):
     """Resolve batch notebook input without guessing from the kernel directory.
 
     Parameters
@@ -263,7 +263,7 @@ def test_nbconvert_identity_uses_launcher_input_and_working_directory(
 
 def test_non_kernel_shell_and_unavailable_process_keep_identity_unknown(
     mocker: MockerFixture,
-) -> None:
+):
     """Avoid starting kernels or failing collection for unavailable owners.
 
     Parameters
@@ -280,9 +280,7 @@ def test_non_kernel_shell_and_unavailable_process_keep_identity_unknown(
     assert _executed_notebook_path() is None
 
 
-def test_batch_kernel_without_server_uses_execution_owner(
-    mocker: MockerFixture, tmp_path: Path
-) -> None:
+def test_batch_kernel_without_server_uses_execution_owner(mocker: MockerFixture, tmp_path: Path):
     """Resolve batch kernels whose temporary connection names lack a server ID.
 
     Parameters

@@ -72,7 +72,7 @@ def notebook_profile() -> ProfileResult:
 @pytest.mark.parametrize("sampled", [False, True])
 def test_notebook_overviews_group_cells_and_sum_metrics(
     notebook_profile: ProfileResult, *, sampled: bool
-) -> None:
+):
     """List each notebook once and retain its complete cell source in order.
 
     Parameters
@@ -140,7 +140,7 @@ def test_notebook_overviews_group_cells_and_sum_metrics(
 
 
 @pytest.mark.parametrize("captured", [False, True])
-def test_files_keeps_distinct_invocations_and_unavailable_waits(*, captured: bool) -> None:
+def test_files_keeps_distinct_invocations_and_unavailable_waits(*, captured: bool):
     """Keep child details reachable from Files with or without captured source.
 
     List repeated invocations separately while sharing their source snapshot.
@@ -205,7 +205,7 @@ def test_files_keeps_distinct_invocations_and_unavailable_waits(*, captured: boo
     assert not document.find_all("a", href="#notebooks")
 
 
-def test_links_reach_exact_lines_in_later_cells(notebook_profile: ProfileResult) -> None:
+def test_links_reach_exact_lines_in_later_cells(notebook_profile: ProfileResult):
     """Keep function, Spark, memory, and child links valid in grouped source.
 
     Parameters
@@ -261,7 +261,7 @@ def test_links_reach_exact_lines_in_later_cells(notebook_profile: ProfileResult)
 )
 def test_notebook_filename_labels_keep_cell_links_and_full_snapshot_paths(
     path: str, filename: str
-) -> None:
+):
     """Show only notebook filenames across reports on either path platform.
 
     Keep cell and line context on exact source links, safely escape filenames,
@@ -307,7 +307,7 @@ def test_notebook_filename_labels_keep_cell_links_and_full_snapshot_paths(
 
 def test_notebooks_with_the_same_filename_keep_separate_groups(
     notebook_profile: ProfileResult,
-) -> None:
+):
     """Use canonical notebook paths even when cell display labels collide.
 
     Parameters
@@ -336,7 +336,7 @@ def test_notebooks_with_the_same_filename_keep_separate_groups(
 
 def test_grouped_cells_keep_their_own_collector_capabilities(
     notebook_profile: ProfileResult,
-) -> None:
+):
     """Show supported columns without fabricating metrics for other cells.
 
     Parameters
@@ -386,7 +386,7 @@ def test_grouped_cells_keep_their_own_collector_capabilities(
     assert cell_values(last)[3:7] == ["—", "—", "+1.0 KB", "2.0 KB"]
 
 
-def test_revised_cells_keep_both_snapshots(notebook_profile: ProfileResult) -> None:
+def test_revised_cells_keep_both_snapshots(notebook_profile: ProfileResult):
     """Retain changed cell text and distinguish its captured revisions.
 
     Parameters
@@ -408,8 +408,75 @@ def test_revised_cells_keep_both_snapshots(notebook_profile: ProfileResult) -> N
     assert source_rows(page)[-1].find_all("td", css="source-code")[0].text() == "updated = 1"
 
 
+def test_cell_numbers_follow_capture_order_and_match_source_links():
+    """Number captured cells from one across headings and linked report views.
+
+    Reproduce a session starting in execution three before capturing definitions
+    from execution two. Keep revisions, independent notebook numbering, source
+    anchors, and the original snapshots intact.
+
+    """
+    path = "/Workspace/report.ipynb"
+    cells = [
+        SourceUnit(
+            f"notebook://{path}#cell-{number}", f"{path} · cell {number}", source, "notebook"
+        )
+        for number, source in (
+            (3, "session = profile.start()"),
+            (2, "def build():\n    return 1"),
+            (14, "value = build()"),
+        )
+    ]
+    helper = SourceUnit("helper", "/project/helper.py", "value = 2")
+    other = SourceUnit(
+        "notebook:///Other/report.ipynb#cell-20",
+        "/Other/report.ipynb · cell 20",
+        "other = 1",
+        "notebook",
+    )
+    revised = replace(cells[0], id=cells[0].id + "-123456789abc", source="updated = 1")
+    location = SourceLocation(cells[2].id, 1)
+    run = ProfileRun(
+        lines=[LineStats(location, 1000, hits=1, ram=ProcessMemoryStats(delta_bytes=100))],
+        functions=[FunctionStats(cells[1].id, "build", 1, 1000, 1)],
+        memory_samples=[MemorySample(0, 1000, location)],
+        spark_executions=[SparkExecution("action", location=location)],
+    )
+    profile = ProfileResult(
+        run,
+        {unit.id: unit for unit in (cells[0], helper, cells[1], other, cells[2], revised)},
+        "trace",
+        BackendCapabilities(hit_counts=True, memory=True),
+    )
+    original = deepcopy(profile)
+    document = ReportDOM(render_html(profile)).root
+    pages = document.find_all("section", css="source-page")
+    assert [heading.text() for heading in pages[0].find_all("tr", css="source-cell-heading")] == [
+        "Cell 1 · snapshot 1",
+        "Cell 2",
+        "Cell 3",
+        "Cell 1 · snapshot 2",
+    ]
+    assert [heading.text() for heading in pages[2].find_all("tr", css="source-cell-heading")] == [
+        "Cell 1"
+    ]
+    assert [
+        source_rows(body)[0].find_all("td", css="source-code")[0].text()
+        for body in pages[0].find_all("tbody")
+    ] == [unit.source.splitlines()[0] for unit in (*cells, revised)]
+    row_ids = {row.attributes["id"] for row in source_rows(pages[0])}
+    for page_id, number in (("overview", 3), ("functions", 2), ("memory", 3), ("spark", 3)):
+        page = document.find_all("section", id=page_id)[0]
+        links = [link for link in page.find_all("a") if "report.ipynb · cell" in link.text()]
+        assert links
+        for link in links:
+            assert link.text() == f"report.ipynb · cell {number}:1"
+            assert link.attributes["href"][1:] in row_ids
+    assert profile == original
+
+
 @pytest.mark.parametrize("source", ["", "%sql\nselect 1", 'value = "</script><img onerror=bad>"'])
-def test_notebook_grouping_escapes_paths_and_preserves_magic_or_empty_cells(source: str) -> None:
+def test_notebook_grouping_escapes_paths_and_preserves_magic_or_empty_cells(source: str):
     """Preserve inert source and path characters across grouped cell boundaries.
 
     Parameters
@@ -447,7 +514,7 @@ def test_notebook_grouping_escapes_paths_and_preserves_magic_or_empty_cells(sour
                 "notebook://interactive#cell-8",
             ],
             ["interactive · cell front-end-id", "interactive"],
-            ["Cell front-end-id", "Cell 8"],
+            ["Cell 1", "Cell 2"],
         ),
         (
             [
@@ -466,7 +533,7 @@ def test_notebook_grouping_escapes_paths_and_preserves_magic_or_empty_cells(sour
 )
 def test_interactive_and_unsplit_notebook_snapshots_share_their_source_view(
     identities: list[str], paths: list[str], labels: list[str]
-) -> None:
+):
     """Group frontend cell labels and unsplit notebook snapshots conservatively.
 
     Parameters

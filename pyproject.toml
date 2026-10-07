@@ -30,12 +30,11 @@ dependencies = [
 [project.optional-dependencies]
 scalene = ["scalene>=2.3,<2.4; python_version < '3.15'"]
 notebook = ["ipython>=8.20", "ipykernel>=6.29"]
-databricks = ["linescope[notebook]", "databricks-sdk"]
-spark = ["pyspark>=3.5"]
-full = ["linescope[scalene,notebook,spark,databricks]"]
+full = ["linescope[scalene,notebook]"]
 
 [dependency-groups]
 demo = ["jupyterlab>=4.4,<5", "nbconvert>=7.16,<8"]
+spark = ["pyspark>=3.5"]
 gpu = [
     "torch>=2.8,<3; python_version < '3.15' and (sys_platform == 'linux' or sys_platform == 'win32')",
 ]
@@ -44,6 +43,7 @@ dev = [
     {include-group = "docs"},
     {include-group = "lint"},
     {include-group = "pre-commit"},
+    {include-group = "spark"},
     {include-group = "test"},
     {include-group = "tox"},
     {include-group = "utils"},

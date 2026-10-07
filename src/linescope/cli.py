@@ -45,16 +45,20 @@ from linescope.enums import DisplayMode, SessionState
     default=None,
     help="Track process RAM and retained Python allocations separately.",
 )
-@click.option("--gpu/--no-gpu", default=None, help="Collect Scalene GPU metrics.")
+@click.option(
+    "--gpu/--no-gpu",
+    default=None,
+    help="Collect GPU metrics with --backend scalene. Trace warns and continues without them.",
+)
 @click.option(
     "--sample-rate",
     type=click.IntRange(min=1),
-    help="Target samples per second: Scalene defaults to 100; Tachyon to 1000. Trace ignores it.",
+    help="Target samples per second: Scalene and Tachyon default to 1000. Trace ignores it.",
 )
 @click.option(
     "--spark/--no-spark",
     default=None,
-    help="Observe Spark driver actions lazily; enabled by default.",
+    help="Observe Spark driver actions lazily; requires existing PySpark. Disabled by default.",
 )
 @click.option(
     "--notebooks/--no-notebooks", default=None, help="Capture notebook source; enabled by default."
@@ -91,7 +95,7 @@ def main(
     output: str | None,
     module: bool,
     target: tuple[str, ...],
-) -> None:
+):
     """Profile your Python source, line by line.
 
     Place LineScope options before the script path or `-m MODULE`; subsequent
@@ -117,11 +121,14 @@ def main(
         retained Python allocation tracking.
 
     --gpu/--no-gpu : bool | None, default=None
-        Enable or disable Scalene GPU metrics.
+        Enable or disable Scalene GPU metrics. Trace warns and continues
+        Python profiling without GPU measurements.
 
     --sample-rate : int | None, default=None
         Target samples per second for Scalene or Tachyon. Use the backend
         default when omitted. Trace ignores this setting.
+        The achieved rate can differ depending on operating-system timer
+        resolution and scheduling settings.
 
     --spark/--no-spark : bool | None, default=None
         Enable or disable lazy Spark action observation. Enabled by default.

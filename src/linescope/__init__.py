@@ -8,7 +8,7 @@ actions.
 
 from linescope.api import ProfileController, Session, profile, profiler
 from linescope.backends import register_backend
-from linescope.config import Config, configure
+from linescope.config import Config
 from linescope.enums import (
     Backend,
     DisplayMode,
@@ -54,7 +54,6 @@ __all__ = [
     "SourceKind",
     "SymbolKind",
     "__version__",
-    "configure",
     "load_ipython_extension",
     "profile",
     "profiler",

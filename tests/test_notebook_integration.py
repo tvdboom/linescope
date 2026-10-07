@@ -20,7 +20,8 @@ from linescope.notebooks.ipython import (
     unload_ipython_extension,
 )
 from linescope.notebooks.remote import INTERNAL_CELL
-from tests.test_render import ReportDOM
+from linescope.render import render_html
+from tests.test_render import ReportDOM, source_rows
 
 
 @pytest.fixture
@@ -118,11 +119,29 @@ def test_multi_cell_session_captures_sources_hits_and_one_final_display(
     )
 
 
-def test_controller_stop_displays_only_html_and_retains_result(ipython_shell, monkeypatch):
+@pytest.mark.parametrize("stop_expression", ["profile.stop()", "session.stop()"])
+@pytest.mark.parametrize("display", ["end", "none"])
+def test_stop_displays_only_html_and_retains_result(
+    ipython_shell, monkeypatch, stop_expression, display
+):
     """Suppress expression output when stopping a notebook-wide session.
 
     Display the configured report once, retain programmatic result access,
     and release notebook callbacks before repeated stop calls.
+
+    Parameters
+    ----------
+    ipython_shell : [InteractiveShell]
+        Isolated notebook shell owning execution history and hooks.
+
+    monkeypatch : pytest.MonkeyPatch
+        Reversible controller and display replacements.
+
+    stop_expression : str
+        Controller or session call executed as the cell's final expression.
+
+    display : str
+        Display mode controlling whether the stop call emits a report.
 
     """
     from IPython.display import IFrame
@@ -133,26 +152,88 @@ def test_controller_stop_displays_only_html_and_retains_result(ipython_shell, mo
     monkeypatch.setattr("IPython.display.display", displayed.append)
     previous_trace = sys.gettrace()
     started = ipython_shell.run_cell(
-        "from linescope import profile\nsession = profile.start(backend='trace', spark=False)",
+        "from linescope import profile\n"
+        f"session = profile.start(backend='trace', spark=False, display='{display}')",
         store_history=True,
     )
     assert started.error_in_exec is None
     ipython_shell.run_cell("stop_answer = 42", store_history=True)
-    stopped = ipython_shell.run_cell("profile.stop()", store_history=True)
+    stopped = ipython_shell.run_cell(stop_expression, store_history=True)
     session = ipython_shell.user_ns["session"]
     assert stopped.error_in_exec is None
     assert stopped.result is None
-    assert len(displayed) == 1
-    assert isinstance(displayed[0], IFrame)
+    assert len(displayed) == (1 if display == "end" else 0)
+    if displayed:
+        assert isinstance(displayed[0], IFrame)
     assert controller.result is session.result
+    assert controller.result.root_run.elapsed_ns is not None
+    source = next(
+        unit for unit in controller.result.sources.values() if unit.source == "stop_answer = 42"
+    )
+    assert any(
+        line.location.source_id == source.id and line.hits == 1
+        for line in controller.result.root_run.lines
+    )
     assert sys.gettrace() is previous_trace
     assert not any(
         isinstance(getattr(callback, "__self__", None), NotebookIntegration)
         for callback in ipython_shell.events.callbacks["post_run_cell"]
     )
-    repeated = ipython_shell.run_cell("profile.stop()", store_history=True)
+    repeated = ipython_shell.run_cell(stop_expression, store_history=True)
     assert repeated.error_in_exec is None
     assert repeated.result is None
+    assert len(displayed) == (1 if display == "end" else 0)
+
+
+@pytest.mark.parametrize(
+    "show_expression", ["session.show(inline=True)", "profile.show(inline=True)"]
+)
+def test_show_displays_only_html_without_expression_output(
+    ipython_shell, monkeypatch, show_expression
+):
+    """Display a report without echoing its HTML string in a notebook cell.
+
+    Execute direct session and controller calls as final expressions and
+    retain separate access to the result and standalone HTML.
+
+    Parameters
+    ----------
+    ipython_shell : [InteractiveShell]
+        Isolated notebook shell owning execution history and hooks.
+
+    monkeypatch : pytest.MonkeyPatch
+        Reversible controller and display replacements.
+
+    show_expression : str
+        Session or controller call displaying the report inline.
+
+    """
+    from IPython.display import IFrame
+
+    controller = ProfileController()
+    monkeypatch.setattr("linescope.profile", controller)
+    displayed = []
+    monkeypatch.setattr("IPython.display.display", displayed.append)
+    started = ipython_shell.run_cell(
+        "from linescope import profile\n"
+        "session = profile.start(backend='trace', spark=False, display='none')",
+        store_history=True,
+    )
+    assert started.error_in_exec is None
+    ipython_shell.run_cell("show_answer = 42", store_history=True)
+    ipython_shell.run_cell("profile.stop()", store_history=True)
+    session = ipython_shell.user_ns["session"]
+    result = session.result
+    assert displayed == []
+
+    shown = ipython_shell.run_cell(show_expression, store_history=True)
+
+    assert shown.error_in_exec is None
+    assert shown.result is None
+    assert len(displayed) == 1
+    assert isinstance(displayed[0], IFrame)
+    assert session.result is controller.result is result
+    assert "show_answer = 42" in ReportDOM(session.html()).root.text()
     assert len(displayed) == 1
 
 
@@ -444,6 +525,13 @@ def test_previous_cell_function_and_method_get_measurements_and_navigation(ipyth
         for call in links
         if call.name in {"earlier", "PreviousProcessor", "transform"}
     )
+    document = ReportDOM(render_html(session.result)).root
+    page = document.find_all("section", css="source-page")[0]
+    assert [heading.text() for heading in page.find_all("tr", css="source-cell-heading")] == [
+        "Cell 1",
+        "Cell 2",
+    ]
+    assert source_rows(page)[0].find_all("td", css="source-code")[0].text() == body.splitlines()[0]
 
 
 @pytest.fixture

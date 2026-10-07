@@ -30,3 +30,4 @@ total = sum(values)
 
 # COMMAND ----------
 profile.stop()
+result = profile.result

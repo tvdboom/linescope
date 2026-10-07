@@ -15,6 +15,9 @@
     const page = target && (target.classList.contains('page') ? target : target.closest('.page'));
     const selected = page || document.getElementById('overview');
     pages.forEach(item => { item.hidden = item !== selected; });
+    // Keep source headers fixed; report summaries scroll with the document.
+    document.body.classList.toggle('source-view', selected.classList.contains('source-page'));
+    window.scrollTo(0, 0);
     document.querySelectorAll('.source-row.selected').forEach(row => {
       row.classList.remove('selected');
       row.closest('.source-scroll').style.removeProperty('--source-tail-space');
@@ -44,7 +47,6 @@
       target.scrollIntoView({ block: 'start' });
       target.querySelector('summary').focus({ preventScroll: true });
     }
-    window.scrollTo(0, 0);
     const group = selected.id.startsWith('source-') || selected.id.startsWith('run-') ? 'files' : selected.id.startsWith('spark-') ? 'spark' : selected.id;
     navigation.forEach(item => {
       if (item.getAttribute('href') === '#' + group) item.setAttribute('aria-current', 'page');
@@ -135,31 +137,12 @@
       });
     });
   });
-  document.querySelectorAll('.spark-order').forEach(button => {
-    button.addEventListener('click', () => {
-      const section = button.closest('.spark-cost-section');
-      const body = section.querySelector('tbody');
-      const rows = Array.from(body.querySelectorAll('tr'));
-      const order = button.dataset.order;
-      rows.sort((left, right) => {
-        const leftValue = left.dataset[order];
-        const rightValue = right.dataset[order];
-        // An unavailable counter must stay below measured zeroes.
-        if (leftValue === '' || rightValue === '') {
-          return (leftValue === '') - (rightValue === '');
-        }
-        return Number(rightValue) - Number(leftValue);
-      });
-      rows.forEach(row => body.appendChild(row));
-      section.querySelectorAll('.spark-order').forEach(control => {
-        control.setAttribute('aria-pressed', String(control === button));
-      });
-      section.querySelector('.table-scroll').scrollTop = 0;
-    });
-  });
-  document.getElementById('spark-action-select')?.addEventListener('change', event => {
-    document.querySelectorAll('.spark-action-overview').forEach(panel => {
-      panel.hidden = panel.dataset.action !== event.target.value;
+  document.querySelectorAll('.spark-action-summary tbody tr').forEach(row => {
+    row.addEventListener('click', event => {
+      if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+      // Source links keep their own destination; selecting text must not navigate.
+      if (event.target.closest('a, button') || window.getSelection()?.toString()) return;
+      row.querySelector('.spark-action-link').click();
     });
   });
   document.querySelectorAll('.memory-chart').forEach(chart => {

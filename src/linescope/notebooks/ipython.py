@@ -151,6 +151,7 @@ class NotebookIntegration:
     ```pycon
     >>> from linescope import Session
     >>> from linescope.notebooks import NotebookIntegration
+
     >>> session = Session(backend="trace", display="none")
     >>> notebook = NotebookIntegration(session)
     >>> source = notebook.capture("answer = 42", cell_id="example")
@@ -165,7 +166,7 @@ class NotebookIntegration:
         session: Session,
         shell: InteractiveShell | None = None,
         dbutils: DBUtils | None = None,
-    ) -> None:
+    ):
         """Initialize cell capture, compiler alias, and notebook observer state.
 
         Use supplied shell context or detect an available IPython shell.
@@ -250,6 +251,7 @@ class NotebookIntegration:
         ```pycon
         >>> from linescope import Session
         >>> from linescope.notebooks import NotebookIntegration
+
         >>> notebook = NotebookIntegration(Session(backend="trace"))
         >>> source = notebook.capture("answer = 42", cell_id="demo")
         >>> source.source
@@ -287,7 +289,7 @@ class NotebookIntegration:
         self._inline_references(unit)
         return unit
 
-    def _inline_references(self, unit: SourceUnit) -> None:
+    def _inline_references(self, unit: SourceUnit):
         """Attach inline `%run` references found in a captured cell.
 
         Keep their execution owned by the parent rather than fabricating child
@@ -338,7 +340,7 @@ class NotebookIntegration:
             )
             self.session.add_child_run(child, SourceLocation(unit.id, line_number))
 
-    def _pre_run_cell(self, info: ExecutionInfo) -> None:
+    def _pre_run_cell(self, info: ExecutionInfo):
         """Remember raw cell metadata before execution.
 
         Capture source directly when compiler alias observation is unavailable.
@@ -367,7 +369,7 @@ class NotebookIntegration:
         if self._compiler_wrapper is None and not raw.startswith(INTERNAL_CELL):
             self._cell_source = self.capture(raw, cell_id=getattr(info, "cell_id", None))
 
-    def _begin_cell(self) -> None:
+    def _begin_cell(self):
         """Snapshot cumulative measurements before timing a new cell.
 
         Exclude time waiting between cells and summary rendering from elapsed
@@ -396,7 +398,7 @@ class NotebookIntegration:
         )
         self._cell_started = perf_counter_ns()
 
-    def _observe_compiler(self) -> None:
+    def _observe_compiler(self):
         """Install a reversible observer around the shell's compiler cache.
 
         Preserve the original cache behavior and correlate runtime filenames
@@ -471,7 +473,7 @@ class NotebookIntegration:
                 "Notebook compiler aliases unavailable in this shell."
             )
 
-    def _capture_current_cell(self) -> None:
+    def _capture_current_cell(self):
         """Capture the currently executing notebook cell from cached source.
 
         Release inspected frame references after walking the active stack.
@@ -564,7 +566,7 @@ class NotebookIntegration:
 
         return None
 
-    def _capture_existing_definitions(self) -> None:
+    def _capture_existing_definitions(self):
         # Functions defined before start() retain their compiler filename. Read
         # only cached notebook sources; never invoke user properties or imports.
         """Capture cached notebook source for existing definitions.
@@ -602,7 +604,7 @@ class NotebookIntegration:
             if source:
                 self.capture(source, cell_id=identity, filename=filename)
 
-    def _post_run_cell(self, result: ExecutionResult) -> None:
+    def _post_run_cell(self, result: ExecutionResult):
         """Display a live report or compact results for the completed cell.
 
         Leave ordinary notebook-wide collection to display once at stop. Keep
@@ -664,7 +666,7 @@ class NotebookIntegration:
                     f"Notebook cell summary unavailable ({type(error).__name__})."
                 )
 
-    def start(self) -> None:
+    def start(self):
         """Register cell hooks and optional Databricks invocation observation.
 
         Capture source at execution time so reports remain usable after cells
@@ -700,7 +702,7 @@ class NotebookIntegration:
         if self.databricks:
             self.databricks.start()
 
-    def stop(self) -> None:
+    def stop(self):
         """Unregister only hooks owned by this session.
 
         Release compiler and cell callbacks without removing unrelated
@@ -735,7 +737,7 @@ class NotebookIntegration:
             self.databricks.stop()
 
 
-def load_ipython_extension(shell: InteractiveShell) -> None:
+def load_ipython_extension(shell: InteractiveShell):
     """Register `%%profile` and `%%linescope` cell magics.
 
     Parameters
@@ -746,7 +748,7 @@ def load_ipython_extension(shell: InteractiveShell) -> None:
     """
     previous = getattr(shell, "_linescope_magic_previous", None)
 
-    def profile_magic(line: str, cell: str) -> None:
+    def profile_magic(line: str, cell: str):
         """Run a cell inside a profiling scope using parsed magic options.
 
         Preserve the shell namespace and release session instrumentation after
@@ -815,7 +817,7 @@ def load_ipython_extension(shell: InteractiveShell) -> None:
     setattr(shell, "_linescope_magic_installed", profile_magic)  # noqa: B010
 
 
-def unload_ipython_extension(shell: InteractiveShell) -> None:
+def unload_ipython_extension(shell: InteractiveShell):
     """Restore cell magics that existed before loading the extension.
 
     Release the registrations saved by the matching load operation.
