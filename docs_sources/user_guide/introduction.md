@@ -1,21 +1,8 @@
 # Introduction
 
-LineScope combines measurements and source context. A backend records timing or
-allocation information, then LineScope discovers project-owned sources,
-snapshots them, resolves local symbols, correlates integrations, and writes an
-HTML report.
-
-## Three kinds of information
-
-**Measured** values come from the backend or runtime. **Derived** values, such
-as a function summary, aggregate measurements. **References** explain
-relationships, such as a source line participating in a Spark plan. A reference
-is not a claim that Spark spent an exact amount of wall time on that
-transformation.
-
-Missing hits, memory, or plan metrics remain unavailable. In particular, a
-sample count is not an execution count. A very fast line may receive no samples
-while still having executed.
+LineScope profiles Python code and presents the measurements alongside captured
+source in an HTML report. Start with a block of code, a script, or a notebook
+session, then use the report to find expensive lines and follow their context.
 
 ## Profile Python
 
@@ -28,11 +15,9 @@ with profile(backend="trace") as session:
     run_pipeline()
 ```
 
-Collection stops and the final report is displayed when the block exits. Cleanup
-also runs when the profiled code raises an exception; the original exception
-remains visible.
-
-Choose the collection engine using the [backend guide](backends.md).
+The report displays when the block exits. If the code fails, LineScope stops
+collection and restores its hooks while preserving the original exception.
+Trace is the default; see [Backends](backends.md) to choose another collector.
 
 ### Explicit start and stop
 
@@ -42,32 +27,39 @@ from linescope import profile
 session = profile.start(backend="trace", display="none")
 run_pipeline()
 profile.stop()
-result = profile.result
+result = session.result
 session.save("pipeline.html")
 ```
 
-`profiler` is an alias for the same convenient controller. Keep a reference to a
-session when working with several runs. `profile.stop()` and `session.stop()`
-return None, so a notebook displays only the configured report. Retrieve the
-complete normalized result through `profile.result` or `session.result` after
-stopping collection, including source snapshots, measurements, the run tree,
-capabilities, and diagnostics.
+Use this form when collection spans several steps or notebook cells. Keep the
+session reference to inspect an earlier run after starting another.
+`profile.result` also exposes the latest result; `profiler` is an alias for
+`profile`. See [Session](../api/profiling/session.md) for the full API.
 
 ### Headless execution
 
-Set `display="none"` to collect without opening a browser or rendering notebook
-output, then call `session.save(...)` to write the report. The saved HTML embeds
-its source snapshots and assets. It can be opened later without the original
-project files or a running server.
+Set `display="none"` to collect without displaying a report, then use
+`session.save(...)` to write it. Saved reports work offline and include their
+source snapshots.
 
 ### Scripts and packages
 
-The CLI can run a script or module and forward arguments to it. For package
-work, run from the project root and include your package explicitly when useful:
+Run from your project root and pass a script or module to the CLI. Arguments
+after the target are forwarded to it:
 
 ```console
 linescope --backend trace --include mypackage -m mypackage.job --input data.csv
 ```
 
-See [CLI options](../cli/linescope.md) for argument ordering and output
-behavior.
+See [CLI options](../cli/linescope.md) for output and scope settings, or
+[Notebooks](notebooks.md) to profile cells.
+
+## Read the results
+
+Start with **Overview**, then follow a hotspot to its source. Sampling counts
+are observations, not execution counts; fast lines can run without receiving
+samples. A dash means a measurement is unavailable.
+
+Spark links explain which transformations participate in an action. They do not
+assign the action's wall time to each transformation. See [Reports](reports.md)
+for column definitions and navigation.

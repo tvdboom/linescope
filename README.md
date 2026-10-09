@@ -1,9 +1,9 @@
 <div align="center">
-<a href="#" draggable="false" style="pointer-events: none; user-select: none;"><img src="https://raw.githubusercontent.com/tvdboom/linescope/main/images/logo.png" alt="LineScope logo" width="280" draggable="false" style="pointer-events: none; user-select: none;" /></a>
+<a href="#" draggable="false" style="pointer-events: none; user-select: none;"><img src="https://raw.githubusercontent.com/tvdboom/linescope/master/images/logo.png" alt="LineScope logo" width="280" draggable="false" style="pointer-events: none; user-select: none;" /></a>
 
 ## Your code. In the spotlight.
 
-### A refreshingly simple source profiler for Python and Spark.
+### A refreshingly simple source profiler for Python and Spark
 </div>
 
 <br>
@@ -13,24 +13,24 @@
 
 | **General Information** | |
 | --- | --- |
-| **Repository** | [![Project Status: Active](https://www.repostatus.org/badges/latest/active.svg)](https://www.repostatus.org/#active) [![License: MIT](https://img.shields.io/github/license/tvdboom/linescope)](https://opensource.org/licenses/MIT) [![Downloads](https://static.pepy.tech/badge/linescope)](https://pepy.tech/project/linescope) [![PyPI version](https://img.shields.io/pypi/v/linescope)](https://pypi.org/project/linescope/) |
-| **Build** | [![Publish](https://github.com/tvdboom/linescope/actions/workflows/publish.yml/badge.svg)](https://github.com/tvdboom/linescope/actions/workflows/publish.yml) [![Linting and tests](https://github.com/tvdboom/linescope/actions/workflows/test.yml/badge.svg)](https://github.com/tvdboom/linescope/actions/workflows/test.yml) [![codecov](https://codecov.io/gh/tvdboom/linescope/branch/main/graph/badge.svg)](https://codecov.io/gh/tvdboom/linescope) |
+| **Repository** | [![Project Status: Active](https://www.repostatus.org/badges/latest/active.svg)](https://www.repostatus.org/#active) [![License: MIT](https://img.shields.io/github/license/tvdboom/linescope)](https://opensource.org/licenses/MIT) [![Downloads](https://img.shields.io/pepy/dt/linescope)](https://pepy.tech/project/linescope) [![PyPI version](https://img.shields.io/pypi/v/linescope)](https://pypi.org/project/linescope/) |
+| **Build** | [![Publish](https://github.com/tvdboom/linescope/actions/workflows/publish.yml/badge.svg)](https://github.com/tvdboom/linescope/actions/workflows/publish.yml) [![Linting and tests](https://github.com/tvdboom/linescope/actions/workflows/test.yml/badge.svg)](https://github.com/tvdboom/linescope/actions/workflows/test.yml) [![codecov](https://codecov.io/gh/tvdboom/linescope/branch/master/graph/badge.svg)](https://codecov.io/gh/tvdboom/linescope) |
 | **Code** | [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14%20%7C%203.15-blue?logo=python)](https://www.python.org) [![uv-managed](https://img.shields.io/badge/uv-managed-blueviolet)](https://docs.astral.sh/uv/) [![PEP8](https://img.shields.io/badge/code%20style-pep8-orange.svg)](https://www.python.org/dev/peps/pep-0008/) [![ruff](https://custom-icon-badges.demolab.com/badge/Ruff-261230.svg?logo=ruff-logo)](https://docs.astral.sh/ruff/) [![ty](https://custom-icon-badges.demolab.com/badge/ty-261230.svg?logo=ty-astral-logo)](https://docs.astral.sh/ty/) |
 
 <br>
 
 <table>
 <tr>
-<td><img src="https://raw.githubusercontent.com/tvdboom/linescope/main/images/report.jpg" alt="LineScope overview with the most expensive source lines" width="100%" /></td>
-<td><img src="https://raw.githubusercontent.com/tvdboom/linescope/main/images/source.jpg" alt="LineScope full-source heatmap with clickable function calls" width="100%" /></td>
+<td><img src="https://raw.githubusercontent.com/tvdboom/linescope/master/images/report.jpg" alt="LineScope overview with the most expensive source lines" width="100%" /></td>
+<td><img src="https://raw.githubusercontent.com/tvdboom/linescope/master/images/source.jpg" alt="LineScope full-source heatmap with clickable function calls" width="100%" /></td>
 </tr>
 <tr>
-<td><img src="https://raw.githubusercontent.com/tvdboom/linescope/main/images/functions.jpg" alt="LineScope function timings and source links" width="100%" /></td>
-<td><img src="https://raw.githubusercontent.com/tvdboom/linescope/main/images/notebooks.jpg" alt="LineScope notebook session with captured cells" width="100%" /></td>
+<td><img src="https://raw.githubusercontent.com/tvdboom/linescope/master/images/functions.jpg" alt="LineScope function timings and source links" width="100%" /></td>
+<td><img src="https://raw.githubusercontent.com/tvdboom/linescope/master/images/notebooks.jpg" alt="LineScope notebook session with captured cells" width="100%" /></td>
 </tr>
 <tr>
-<td><img src="https://raw.githubusercontent.com/tvdboom/linescope/main/images/spark.jpg" alt="LineScope Spark actions and operator costs" width="100%" /></td>
-<td><img src="https://raw.githubusercontent.com/tvdboom/linescope/main/images/files.jpg" alt="LineScope project source files and measured timings" width="100%" /></td>
+<td><img src="https://raw.githubusercontent.com/tvdboom/linescope/master/images/spark.jpg" alt="LineScope Spark actions and operator costs" width="100%" /></td>
+<td><img src="https://raw.githubusercontent.com/tvdboom/linescope/master/images/files.jpg" alt="LineScope project source files and measured timings" width="100%" /></td>
 </tr>
 </table>
 
