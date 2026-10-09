@@ -221,7 +221,9 @@ class ProcessMemoryCollector:
             previous = self._previous
             if filename is not None and number > 0:
                 key = (filename, number)
-                stats = self._lines.setdefault(key, ProcessMemoryStats())
+                stats = self._lines.get(key)
+                if stats is None:
+                    stats = self._lines[key] = ProcessMemoryStats()
                 if rss is None or previous is None:
                     self._unknown_deltas.add(key)
                 if key not in self._unknown_deltas and rss is not None and previous is not None:

@@ -322,7 +322,9 @@ class TraceBackend:
             if self.on_interval is not None:
                 self.on_interval(state.filename, state.line)
             key = (state.filename, state.line)
-            value = self._lines.setdefault(key, RawLine(*key, wall_time_ns=0, hits=0))
+            value = self._lines.get(key)
+            if value is None:
+                value = self._lines[key] = RawLine(*key, wall_time_ns=0, hits=0)
             value.wall_time_ns = (value.wall_time_ns or 0) + max(0, now - state.started)
 
         state.started = now
@@ -404,7 +406,9 @@ class TraceBackend:
         if event == "line":
             state.line = frame.f_lineno
             line_key = (state.filename, state.line)
-            value = self._lines.setdefault(line_key, RawLine(*line_key, wall_time_ns=0, hits=0))
+            value = self._lines.get(line_key)
+            if value is None:
+                value = self._lines[line_key] = RawLine(*line_key, wall_time_ns=0, hits=0)
             value.hits = (value.hits or 0) + 1
         elif event == "return":
             # Generator yields also emit return; suspension must never accrue time.

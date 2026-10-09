@@ -91,7 +91,7 @@ with profile(display="none") as session:
 session.save("linescope.html")
 ```
 
-See [reports] for source navigation and report controls.
+See [reports](user_guide/reports.md) for source navigation and report controls.
 
 ### From the CLI
 

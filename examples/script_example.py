@@ -165,8 +165,8 @@ def main():
 
     """
     with profile(memory=True, root=str(Path(__file__).parent), spark=False):
-        # Keep line-by-line RAM collection practical while retaining repeated work.
-        source = generate_csv(stations=8, minutes=300)
+        # Cover full rolling windows and repeated outliers with per-line RAM reads.
+        source = generate_csv(stations=4, minutes=120)
         readings = load_readings(source)
         analyze(group_readings(readings))
 

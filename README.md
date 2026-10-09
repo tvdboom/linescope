@@ -188,9 +188,8 @@ profile:
 ```python
 from linescope import profile
 
-if __name__ == "__main__":
-    with profile(backend="trace", output="linescope.html") as session:
-        main()
+with profile(backend="trace", output="linescope.html") as session:
+    main()
 ```
 
 Run the script as usual:

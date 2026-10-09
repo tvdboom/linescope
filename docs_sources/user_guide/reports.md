@@ -72,6 +72,10 @@ This example comes from the repository's `examples/script_example.py`. Times
 depend on the machine, backend, and workload; the screenshot illustrates the
 report rather than a benchmark.
 
+The script processes four stations over 120 minutes so line-by-line memory
+collection stays practical. It includes complete 24-minute rolling windows
+and repeated temperature outliers in both implementations.
+
 ## The main views
 
 | View | Question it answers |

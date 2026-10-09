@@ -13,6 +13,8 @@ import runpy
 import shutil
 import subprocess
 import sys
+import threading
+import tracemalloc
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -133,13 +135,16 @@ def test_demos_run_with_trace_and_memory(tmp_path, script, report):
     """
     script_path = _copy_example_project(tmp_path, script, report)
     source = rf"""
-import ast, json, os, pathlib, re, runpy, sys, webbrowser
+import ast, json, os, pathlib, re, runpy, sys, threading, tracemalloc, webbrowser
 os.chdir({str(tmp_path)!r})
 webbrowser.open = lambda *args, **kwargs: True
 sys.path.insert(0, {str(tmp_path)!r})
 previous_trace = sys.gettrace()
+previous_memory_trace = tracemalloc.is_tracing()
 runpy.run_path({str(script_path)!r}, run_name='__main__')
 assert sys.gettrace() is previous_trace
+assert tracemalloc.is_tracing() is previous_memory_trace
+assert not any(thread.name == 'linescope-ram' for thread in threading.enumerate())
 assert 'linescope.backends.scalene' not in sys.modules
 html = pathlib.Path({report!r}).read_text(encoding='utf-8')
 raw_rows = re.findall(
@@ -194,7 +199,71 @@ print(json.dumps({{
     else:
         assert result["memory_values"]
     if script == "script_example.py":
-        assert {"generate_csv", "load_readings", "rolling_slow"} <= set(result["timed_functions"])
+        assert {
+            "generate_csv",
+            "load_readings",
+            "group_readings",
+            "rolling_slow",
+            "rolling_fast",
+            "analyze",
+        } <= set(result["timed_functions"])
+
+
+def test_script_demo_restores_memory_collection_after_workload_error(monkeypatch, tmp_path):
+    """Release time and memory collectors when the script pipeline fails.
+
+    Keep allocation tracing and RAM sampler ownership intact, then allow a
+    subsequent session to start after cleanup.
+
+    """
+    demo = runpy.run_path(str(REPO_ROOT / "examples/script_example.py"))
+    sessions = []
+    previous_trace = sys.gettrace()
+    previous_memory_trace = tracemalloc.is_tracing()
+    monkeypatch.chdir(tmp_path)
+
+    def collect(**options) -> Session:
+        """Retain the example's real memory collector in a controlled session.
+
+        Parameters
+        ----------
+        **options : Any
+            Profiling options supplied by the script example.
+
+        Returns
+        -------
+        [Session]
+            Owned session with deterministic tracing and no display.
+
+        """
+        assert options["memory"] is True
+        options.update(backend="trace", display="none", notebooks=False)
+        session = Session(**options)
+        sessions.append(session)
+        return session
+
+    def fail_readings(_source: str):
+        """Fail after the profiled pipeline has generated its sensor records.
+
+        Parameters
+        ----------
+        _source : str
+            Generated CSV retained until error cleanup finishes.
+
+        """
+        raise RuntimeError("Script workload failed")
+
+    demo["main"].__globals__["profile"] = collect
+    demo["main"].__globals__["load_readings"] = fail_readings
+    with pytest.raises(RuntimeError, match="Script workload failed"):
+        demo["main"]()
+    assert sessions[0].state is SessionState.STOPPED
+    assert sys.gettrace() is previous_trace
+    assert tracemalloc.is_tracing() is previous_memory_trace
+    assert not any(thread.name == "linescope-ram" for thread in threading.enumerate())
+    assert not (tmp_path / "linescope.html").exists()
+    with Session(backend="trace", memory=True, display="none", notebooks=False, spark=False):
+        pass
 
 
 @pytest.fixture

@@ -128,6 +128,10 @@ uv sync --locked --all-extras --all-groups
 This installs LineScope in editable mode together with its optional
 integrations and development dependency groups.
 
+Use uv 0.11.13 or newer from the 0.11 or 0.12 series. The uv version range
+in `pyproject.toml` keeps local and CI commands compatible with the bundled
+build backend. GitHub Actions reads this range when installing uv.
+
 ### 3. Install pre-commit hooks
 
 ```console
