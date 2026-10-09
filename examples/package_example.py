@@ -26,8 +26,8 @@ def main():
         spark=False,
         display="none",
     ) as session:
-        # Repeated scans expose costs without making per-line RAM collection excessive.
-        run_package(size=2_000)
+        # Keep repeated scans practical with per-line RAM reads on older Python versions.
+        run_package(size=400)
 
     report = session.save("package.html")
     print(f"Report: {report}")
