@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block htmltitle %}
+  <title>{{ config.site_name }}{% if page.title and page.title != config.site_name %} - {{ page.title }}{% endif %}</title>
+{% endblock %}
+
+{% block outdated %}
+  You're not viewing the latest version.
+  <a href="{{ '../' ~ base_url }}"><strong>Go to the latest documentation.</strong></a>
+{% endblock %}
+
+{% block content %}
+{% if page.nb_url %}
+  <a href="{{ page.nb_url }}" title="Download notebook" class="md-content__button md-icon">
+    {% include ".icons/material/download.svg" %}
+  </a>
+{% elif page.meta.notebook %}
+  <a href="{{ page.meta.notebook | url }}" title="Download notebook" class="md-content__button md-icon">
+    {% include ".icons/material/download.svg" %}
+  </a>
+{% endif %}
+{{ super() }}
+{% endblock %}
