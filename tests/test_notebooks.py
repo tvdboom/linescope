@@ -97,14 +97,15 @@ class Registry:
         self.sources = {}
         self.aliases = {}
 
-    def register(self, source, filename=None):
+    def register(self, source, filename=None, *, deferred=False):
         """Record a source snapshot or shell callback for later assertions.
 
         Retain the exact source or callback identity supplied by the
         integration.
 
         """
-        self.sources[source.id] = source
+        if not deferred:
+            self.sources[source.id] = source
         if filename:
             self.aliases[filename] = source
         return source

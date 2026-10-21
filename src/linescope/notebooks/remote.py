@@ -152,6 +152,7 @@ def notebook_sources(path: str, source: str) -> list[SourceUnit]:
                 path if index == 1 else f"{path} · cell {index}",
                 text,
                 SourceKind.NOTEBOOK,
+                cell_number=index,
             )
         )
 
@@ -420,7 +421,6 @@ class ChildCollector:
         run.parent_id = self.context["parent_id"]
         run.metadata["correlation_id"] = self.context["correlation_id"]
         run.name = self.context["path"]
-        run.source = self.session._notebook_sources[0]
         self.session.start()
 
         if self.shell is not None:
@@ -530,6 +530,10 @@ class ChildCollector:
 
                 self.session.stop()
                 result = self.session.result
+                result.root_run.source = next(
+                    (unit for unit in result.sources.values() if unit.kind == SourceKind.NOTEBOOK),
+                    None,
+                )
                 if self._startup_failed:
                     result.capabilities = UNAVAILABLE
                     result.root_run.lines.clear()

@@ -55,7 +55,7 @@ def test_gpu_view_ranks_device_work_and_links_snapshotted_source():
         card.find_all("span")[0].text(): card.find_all("strong")[0].text()
         for card in overview.find_all("div", css="stat")
     }
-    assert cards["Elapsed wall time"] == "3.00 s"
+    assert cards["Elapsed wall time"] == "3 s"
     assert "Attributed GPU time" not in cards
     assert "GPU peak memory" not in cards
     assert overview.find_all("a", href="#gpu")
@@ -194,7 +194,7 @@ def test_gpu_view_includes_supported_child_runs_only():
     assert document.find_all("section", id="gpu")
     assert "500.00 ms" in document.find_all("section", id="gpu")[0].text()
     overview = document.find_all("section", id="overview")[0]
-    assert "1.00 s" in overview.text()
+    assert "1 s" in overview.text()
     assert "Attributed GPU time" not in overview.text()
     assert "GPU peak memory" not in overview.text()
 

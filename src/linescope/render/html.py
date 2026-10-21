@@ -19,6 +19,7 @@ from itertools import pairwise
 import keyword
 from math import isfinite, log1p
 from pathlib import Path, PurePath
+import re
 import tokenize
 from typing import Any
 
@@ -159,6 +160,33 @@ def _time(value: int | None) -> str:
         return f"{value / 1_000_000:,.2f} ms"
 
     return f"{value / 1_000_000_000:,.2f} s"
+
+
+def _elapsed_time(value: int) -> str:
+    """Format elapsed wall time with minutes for runs lasting a minute or more.
+
+    Preserve smaller time units for shorter runs. Round to hundredths before
+    splitting minutes and seconds so a rounded remainder cannot reach sixty.
+    Omit a `.00` fractional part when the displayed value is whole.
+
+    Parameters
+    ----------
+    value : int
+        Main profiling run's elapsed wall time in nanoseconds.
+
+    Returns
+    -------
+    str
+        Duration with `m` and `s` suffixes from one minute onward, or the
+        ordinary time-unit format for shorter runs.
+
+    """
+    if value < 60_000_000_000:
+        return _time(value).replace(".00 ", " ")
+
+    minutes, hundredths = divmod(round(value / 10_000_000), 6000)
+    seconds = f"{hundredths / 100:.2f}".removesuffix(".00")
+    return f"{minutes}m {seconds}s"
 
 
 def _total(values: list[int | None]) -> int | None:
@@ -1582,7 +1610,7 @@ def _notebook_path(unit: SourceUnit) -> str:
         path, separator, fragment = identity.rpartition("#")
         return path if separator and fragment.startswith(("cell-", "snapshot-")) else identity
 
-    return unit.path.rsplit(" · cell ", 1)[0]
+    return re.split(r" · (?:cell |execution )", unit.path, maxsplit=1)[0]
 
 
 def _source_name(unit: SourceUnit, *, include_cell: bool = True) -> str:
@@ -1610,17 +1638,21 @@ def _source_name(unit: SourceUnit, *, include_cell: bool = True) -> str:
     path = _notebook_path(unit) if notebook else unit.path
     name = PurePath(path.replace("\\", "/")).name
     if notebook and include_cell:
-        _, separator, cell = unit.path.rpartition(" · cell ")
-        if separator:
-            name += f" · cell {cell}"
+        if unit.cell_number is not None:
+            name += f" · cell {unit.cell_number}"
+        else:
+            label = unit.path.partition(" · ")[2]
+            if label:
+                name += f" · {label}"
     return name
 
 
 def _source_groups(sources: list[SourceUnit]) -> list[list[SourceUnit]]:
     """Group notebook cells while retaining independent Python snapshots.
 
-    Keep notebooks and their cells in capture order. Group only presentation;
-    measurements and navigation continue to use each snapshot's identity.
+    Keep notebook groups in capture order and sort known cell positions into
+    notebook order. Unknown positions retain capture order after known cells.
+    Measurements and navigation continue to use each snapshot's identity.
 
     Parameters
     ----------
@@ -1637,15 +1669,37 @@ def _source_groups(sources: list[SourceUnit]) -> list[list[SourceUnit]]:
     for unit in sources:
         identity = _notebook_path(unit) if unit.kind == SourceKind.NOTEBOOK else unit.id
         groups.setdefault((SourceKind(unit.kind), identity), []).append(unit)
+    for (kind, _identity), units in groups.items():
+        if kind == SourceKind.NOTEBOOK:
+            units.sort(key=lambda unit: (_cell_number(unit) is None, _cell_number(unit) or 0))
     return list(groups.values())
+
+
+def _cell_number(unit: SourceUnit) -> int | None:
+    """Read a notebook position without interpreting execution counts as cells.
+
+    Parameters
+    ----------
+    unit : [SourceUnit]
+        Snapshot with explicit metadata or a legacy numeric cell label.
+
+    Returns
+    -------
+    int | None
+        One-based notebook position, or None when it is unavailable.
+
+    """
+    if unit.cell_number is not None:
+        return unit.cell_number
+    match = re.search(r" · cell (\d+)$", unit.path)
+    return int(match.group(1)) if match else None
 
 
 def _cell_label(unit: SourceUnit, position: int) -> str:
     """Read a captured cell label without exposing its source digest.
 
-    Use frontend IDs or execution counts to recognize revisions before
-    assigning report numbers. Use the capture position for snapshots without
-    a cell identity.
+    Preserve known notebook positions. Label executions and opaque frontend
+    identifiers explicitly when notebook positions are unavailable.
 
     Parameters
     ----------
@@ -1661,6 +1715,11 @@ def _cell_label(unit: SourceUnit, position: int) -> str:
         Cell label or a label for an unsplit notebook snapshot.
 
     """
+    if unit.cell_number is not None:
+        return f"Cell {unit.cell_number}"
+    _, separator, execution = unit.path.rpartition(" · execution ")
+    if separator:
+        return f"Execution {execution}"
     _, separator, label = unit.path.rpartition(" · cell ")
     if separator:
         return f"Cell {label}"
@@ -1678,11 +1737,10 @@ def _cell_label(unit: SourceUnit, position: int) -> str:
 
 
 def _display_sources(sources: list[SourceUnit]) -> list[SourceUnit]:
-    """Copy source labels with notebook cells numbered in capture order.
+    """Copy concise filename labels while preserving notebook cell identities.
 
-    Start each notebook at one, retaining a cell's number across revised
-    snapshots. Keep original identities and source text for exact navigation
-    and measurements without mutating the collected result.
+    Keep original positions, execution labels, identities, and source text for
+    exact navigation without mutating the collected result.
 
     Parameters
     ----------
@@ -1692,22 +1750,10 @@ def _display_sources(sources: list[SourceUnit]) -> list[SourceUnit]:
     Returns
     -------
     list[[SourceUnit]]
-        Snapshots with filename labels and consecutive notebook cell numbers.
+        Snapshots with filename labels and original notebook cell positions.
 
     """
-    notebook_cells: dict[str, dict[str, int]] = {}
-    display = []
-    for unit in sources:
-        label = _source_name(unit)
-        if unit.kind == SourceKind.NOTEBOOK and (
-            " · cell " in unit.path or unit.id.rpartition("#")[2].startswith("cell-")
-        ):
-            cells = notebook_cells.setdefault(_notebook_path(unit), {})
-            identity = _cell_label(unit, len(cells) + 1)
-            number = cells.setdefault(identity, len(cells) + 1)
-            label = f"{_source_name(unit, include_cell=False)} · cell {number}"
-        display.append(replace(unit, path=label))
-    return display
+    return [replace(unit, path=_source_name(unit)) for unit in sources]
 
 
 def _source_page(
@@ -1919,7 +1965,7 @@ def _source_page(
             label = labels[index]
             revisions[label] = revisions.get(label, 0) + 1
             if label_counts[label] > 1:
-                label += f" · snapshot {revisions[label]}"
+                label += f" · version {revisions[label]}"
             heading = (
                 f'<tr class="source-cell-heading"><th scope="rowgroup" colspan="{columns}">'
                 f"{escape(label)}</th></tr>"
@@ -2641,7 +2687,7 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
 
     intro = f"Follow the work from a source line to its {' or '.join(contexts)}."
     cards = [
-        ("Elapsed wall time", _time(result.root_run.elapsed_ns)),
+        ("Elapsed wall time", _elapsed_time(result.root_run.elapsed_ns)),
         ("Source snapshots", str(len(source_groups))),
         ("Functions", str(len(functions))),
         (

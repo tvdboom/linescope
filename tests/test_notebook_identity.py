@@ -105,7 +105,7 @@ def test_kernel_session_names_every_report_location(
     unit = notebook.capture("def build():\n    return 42\nvalue = build()", cell_id="demo")
     expected = str(Path(server["root_dir"]) / "example.ipynb")
     assert notebook.path == expected
-    assert unit.path == f"{expected} · cell demo"
+    assert unit.path == f"{expected} · cell ID demo"
     call = request.call_args
     assert call.args[0].full_url == "http://localhost:8888/prefix/api/sessions"
     assert call.args[0].get_header("Authorization") == "token private-server-token"
@@ -139,8 +139,8 @@ def test_kernel_session_names_every_report_location(
     assert [
         row.find_all("td")[0].attributes["title"]
         for row in summary.find_all("tbody")[0].find_all("tr")
-    ] == [f"example.ipynb · cell demo:{number}" for number in (1, 2, 3)]
-    assert unit.path == f"{expected} · cell demo"
+    ] == [f"example.ipynb · cell ID demo:{number}" for number in (1, 2, 3)]
+    assert unit.path == f"{expected} · cell ID demo"
 
 
 @pytest.mark.parametrize(

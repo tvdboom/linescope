@@ -400,16 +400,16 @@ def test_revised_cells_keep_both_snapshots(notebook_profile: ProfileResult):
     notebook_profile.sources[revised.id] = revised
     page = ReportDOM(render_html(notebook_profile)).root.find_all("section", css="source-page")[0]
     assert [heading.text() for heading in page.find_all("tr", css="source-cell-heading")] == [
-        "Cell 1 · snapshot 1",
+        "Cell 1 · version 1",
+        "Cell 1 · version 2",
         "Cell 2",
         "Cell 3",
-        "Cell 1 · snapshot 2",
     ]
-    assert source_rows(page)[-1].find_all("td", css="source-code")[0].text() == "updated = 1"
+    assert source_rows(page)[2].find_all("td", css="source-code")[0].text() == "updated = 1"
 
 
-def test_cell_numbers_follow_capture_order_and_match_source_links():
-    """Number captured cells from one across headings and linked report views.
+def test_cell_numbers_follow_notebook_order_and_match_source_links():
+    """Preserve original cell numbers across headings and linked report views.
 
     Reproduce a session starting in execution three before capturing definitions
     from execution two. Keep revisions, independent notebook numbering, source
@@ -452,20 +452,20 @@ def test_cell_numbers_follow_capture_order_and_match_source_links():
     document = ReportDOM(render_html(profile)).root
     pages = document.find_all("section", css="source-page")
     assert [heading.text() for heading in pages[0].find_all("tr", css="source-cell-heading")] == [
-        "Cell 1 · snapshot 1",
         "Cell 2",
-        "Cell 3",
-        "Cell 1 · snapshot 2",
+        "Cell 3 · version 1",
+        "Cell 3 · version 2",
+        "Cell 14",
     ]
     assert [heading.text() for heading in pages[2].find_all("tr", css="source-cell-heading")] == [
-        "Cell 1"
+        "Cell 20"
     ]
     assert [
         source_rows(body)[0].find_all("td", css="source-code")[0].text()
         for body in pages[0].find_all("tbody")
-    ] == [unit.source.splitlines()[0] for unit in (*cells, revised)]
+    ] == [unit.source.splitlines()[0] for unit in (cells[1], cells[0], revised, cells[2])]
     row_ids = {row.attributes["id"] for row in source_rows(pages[0])}
-    for page_id, number in (("overview", 3), ("functions", 2), ("memory", 3), ("spark", 3)):
+    for page_id, number in (("overview", 14), ("functions", 2), ("memory", 14), ("spark", 14)):
         page = document.find_all("section", id=page_id)[0]
         links = [link for link in page.find_all("a") if "report.ipynb · cell" in link.text()]
         assert links
@@ -514,7 +514,7 @@ def test_notebook_grouping_escapes_paths_and_preserves_magic_or_empty_cells(sour
                 "notebook://interactive#cell-8",
             ],
             ["interactive · cell front-end-id", "interactive"],
-            ["Cell 1", "Cell 2"],
+            ["Cell front-end-id", "Cell 8"],
         ),
         (
             [

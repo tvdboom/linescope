@@ -24,7 +24,12 @@ from linescope.enums import DisplayMode, RunStatus, SourceKind
 from linescope.model import ProfileRun, SourceLocation, SourceUnit
 from linescope.notebooks.databricks import DatabricksIntegration, resolve_notebook_path
 from linescope.notebooks.identity import _kernel_notebook_path
-from linescope.notebooks.remote import INTERNAL_CELL
+from linescope.notebooks.remote import INTERNAL_CELL, WorkspaceStore, notebook_sources
+from linescope.notebooks.sources import (
+    local_notebook_sources,
+    profile_cell_source,
+    python_magic_source,
+)
 
 if TYPE_CHECKING:
     from databricks.sdk.runtime.dbutils_stub import dbutils as DBUtils
@@ -103,8 +108,8 @@ class NotebookIntegration:
     _snapshots : list[[SourceUnit]]
         Precaptured notebook cells available for runtime alias reuse.
 
-    _used_snapshots : set[str]
-        Precaptured snapshot identifiers already matched to runtime cells.
+    _known_cells : dict[str, [SourceUnit]]
+        Runtime cell identities matched to original notebook positions.
 
     _active : bool
         Whether source capture hooks are currently installed.
@@ -206,7 +211,7 @@ class NotebookIntegration:
             self.databricks.path = self.path
 
         self._snapshots: list[SourceUnit] = getattr(session, "_notebook_sources", [])
-        self._used_snapshots: set[str] = set()
+        self._known_cells: dict[str, SourceUnit] = {}
         self._active = False
         self._registered: list[
             tuple[str, Callable[[ExecutionInfo], None] | Callable[[ExecutionResult], None]]
@@ -220,6 +225,28 @@ class NotebookIntegration:
         self._cell_started = 0
         self._cell_source: SourceUnit | None = None
         self._cell_execution_count: int | None = None
+        self._load_positions()
+
+    def _load_positions(self):
+        """Load notebook positions without exposing unexecuted cells.
+
+        Workspace export uses the existing runtime authentication. Restricted
+        or unavailable metadata leaves positions unknown and keeps profiling
+        usable without leaking exception details into reports.
+
+        """
+        if self._snapshots or self.path == "interactive":
+            return
+        try:
+            if self.databricks and self.databricks.path:
+                source = WorkspaceStore().read(self.path, "SOURCE").decode("utf-8")
+                self._snapshots = notebook_sources(self.path, source)
+            elif self.path.lower().endswith(".ipynb"):
+                self._snapshots = local_notebook_sources(self.path)
+        except Exception as error:  # noqa: BLE001
+            self.session.result.warnings.append(
+                f"Notebook cell positions unavailable ({type(error).__name__})."
+            )
 
     def capture(
         self,
@@ -227,6 +254,7 @@ class NotebookIntegration:
         *,
         cell_id: str | None = None,
         filename: str | None = None,
+        deferred: bool = False,
     ) -> SourceUnit:
         """Snapshot a cell and register its compiler filename as an alias.
 
@@ -240,6 +268,10 @@ class NotebookIntegration:
 
         filename : str | None, default=None
             Python compiler filename used for line attribution.
+
+        deferred : bool, default=False
+            Register ownership for an old definition without including its
+            cell until a collector observes execution.
 
         Returns
         -------
@@ -259,24 +291,45 @@ class NotebookIntegration:
         ```
 
         """
-        matching = [
-            unit for unit in self._snapshots if unit.source.rstrip("\n") == source.rstrip("\n")
+        identity_matches = [
+            unit for unit in self._snapshots if cell_id and unit.cell_id == cell_id
         ]
-        unit = next((unit for unit in matching if unit.id not in self._used_snapshots), None)
-
-        if unit is None and matching:
-            unit = matching[0]
+        matching = identity_matches or [
+            unit
+            for unit in self._snapshots
+            if profile_cell_source(unit.source).rstrip("\n") == source.rstrip("\n")
+        ]
+        original = self._known_cells.get(cell_id) if cell_id else None
+        if len(matching) == 1:
+            original = matching[0]
+        unit = (
+            original if original and original.source.rstrip("\n") == source.rstrip("\n") else None
+        )
 
         if unit is None:
             digest = hashlib.sha256(source.encode()).hexdigest()[:12]
             identity = cell_id or str(getattr(self.shell, "execution_count", 1))
+            number = original.cell_number if original else None
+            label = (
+                f"cell {number}"
+                if number is not None
+                else f"execution {identity}"
+                if identity.isdecimal()
+                else f"cell ID {identity}"
+            )
             source_id = f"notebook://{self.path}#cell-{identity}-{digest}"
             unit = SourceUnit(
-                source_id, f"{self.path} · cell {identity}", source, SourceKind.NOTEBOOK
+                source_id,
+                f"{self.path} · {label}",
+                source,
+                SourceKind.NOTEBOOK,
+                cell_number=number,
+                cell_id=original.cell_id if original else cell_id,
             )
 
-        self._used_snapshots.add(unit.id)
-        self.session.registry.register(unit, filename=filename)
+        if cell_id:
+            self._known_cells[cell_id] = unit
+        unit = self.session.registry.register(unit, filename=filename, deferred=deferred)
 
         if filename is not None and filename not in linecache.cache:
             linecache.cache[filename] = (
@@ -286,7 +339,8 @@ class NotebookIntegration:
                 filename,
             )
 
-        self._inline_references(unit)
+        if not deferred:
+            self._inline_references(unit)
         return unit
 
     def _inline_references(self, unit: SourceUnit):
@@ -366,7 +420,11 @@ class NotebookIntegration:
 
             self._begin_cell()
 
-        if self._compiler_wrapper is None and not raw.startswith(INTERNAL_CELL):
+        if (
+            self._compiler_wrapper is None
+            and not raw.startswith(INTERNAL_CELL)
+            and python_magic_source(raw) is None
+        ):
             self._cell_source = self.capture(raw, cell_id=getattr(info, "cell_id", None))
 
     def _begin_cell(self):
@@ -446,6 +504,10 @@ class NotebookIntegration:
                     int(identity) if identity is not None and identity.isdecimal() else number
                 )
                 raw = raw_code if raw_code is not None else transformed_code
+                # Databricks compiles a Python dispatch wrapper separately
+                # from its body. Only the body owns user source line numbers.
+                if python_magic_source(raw) is not None:
+                    return filename
                 info = self._cell_info
                 cell_id = (
                     getattr(info, "cell_id", None)
@@ -480,6 +542,12 @@ class NotebookIntegration:
 
         """
         history = getattr(getattr(self.shell, "history_manager", None), "input_hist_raw", [])
+        get_parent = getattr(self.shell, "get_parent", None)
+        parent = get_parent() if callable(get_parent) else {}
+        metadata = parent.get("metadata", {}) if isinstance(parent, dict) else {}
+        request_id = metadata.get("cellId") if isinstance(metadata, dict) else None
+        content = parent.get("content", {}) if isinstance(parent, dict) else {}
+        request_source = content.get("code") if isinstance(content, dict) else None
         frame = inspect.currentframe()
 
         try:
@@ -495,10 +563,27 @@ class NotebookIntegration:
                         if filename.startswith("<ipython-input-")
                         else (cached or raw)
                     )
+                    body = python_magic_source(source)
+                    if body is not None:
+                        source = body
+                        filename = None
+                    # The profiling magic already registered its Python body;
+                    # the outer dispatch cell is shell-generated scaffolding.
+                    if source.startswith(("%%profile", "%%linescope")):
+                        return
 
                     if source and not source.startswith(INTERNAL_CELL):
+                        current_request = isinstance(request_source, str) and profile_cell_source(
+                            request_source
+                        ).rstrip("\n") == source.rstrip("\n")
                         self._cell_source = self.capture(
-                            source, cell_id=identity, filename=filename
+                            source,
+                            cell_id=(
+                                request_id
+                                if current_request and isinstance(request_id, str)
+                                else identity
+                            ),
+                            filename=filename,
                         )
                         return
 
@@ -602,7 +687,7 @@ class NotebookIntegration:
             source = "".join(linecache.getlines(filename))
 
             if source:
-                self.capture(source, cell_id=identity, filename=filename)
+                self.capture(source, cell_id=identity, filename=filename, deferred=True)
 
     def _post_run_cell(self, result: ExecutionResult):
         """Display a live report or compact results for the completed cell.
@@ -622,6 +707,27 @@ class NotebookIntegration:
         if not self._active:
             return
 
+        if self._cell_source is None:
+            raw = getattr(self._cell_info, "raw_cell", None)
+            if (
+                isinstance(raw, str)
+                and not raw.startswith(INTERNAL_CELL)
+                and python_magic_source(raw) is None
+            ):
+                execution = getattr(result, "execution_count", None)
+                try:
+                    self._cell_source = self.capture(
+                        raw,
+                        cell_id=(
+                            getattr(self._cell_info, "cell_id", None)
+                            or (str(execution) if execution is not None else None)
+                        ),
+                    )
+                except Exception as error:  # noqa: BLE001
+                    self.session.result.warnings.append(
+                        f"Notebook source metadata unavailable ({type(error).__name__})."
+                    )
+
         if self.session.config.display == DisplayMode.CELL:
             self.session.show()
         elif self.session.config.display == DisplayMode.CELL_SUMMARY and self._cell_started:
@@ -638,12 +744,6 @@ class NotebookIntegration:
                 from linescope.render.cell import render_cell_summary
 
                 self.session._refresh()
-                if self._cell_source is None:
-                    raw = getattr(self._cell_info, "raw_cell", None)
-                    if isinstance(raw, str) and not raw.startswith(INTERNAL_CELL):
-                        self._cell_source = self.capture(
-                            raw, cell_id=getattr(self._cell_info, "cell_id", None)
-                        )
                 failed = (
                     getattr(result, "error_before_exec", None) is not None
                     or getattr(result, "error_in_exec", None) is not None
@@ -677,10 +777,6 @@ class NotebookIntegration:
             return
 
         self._active = True
-
-        for unit in self._snapshots:
-            self.session.registry.register(unit)
-            self._inline_references(unit)
 
         if self.shell is not None:
             if self.session.config.display == DisplayMode.CELL_SUMMARY:

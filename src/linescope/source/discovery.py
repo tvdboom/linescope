@@ -80,6 +80,10 @@ class SourceRegistry:
     _aliases : dict[str, str]
         Runtime notebook filenames mapped to stable snapshot identifiers.
 
+    _pending : dict[str, [SourceUnit]]
+        Cached definition cells awaiting their first observed execution.
+        Ownership aliases are active, but reports exclude these snapshots.
+
     _accepted : dict[str, bool]
         Cached project ownership decisions for runtime filenames.
 
@@ -136,6 +140,7 @@ class SourceRegistry:
         self.exclude = tuple(exclude)
         self.sources: dict[str, SourceUnit] = {}
         self._aliases: dict[str, str] = {}
+        self._pending: dict[str, SourceUnit] = {}
         self._accepted: dict[str, bool] = {}
         self._included_paths = self._package_paths(self.include)
         self._library_roots = tuple(
@@ -333,7 +338,10 @@ class SourceRegistry:
         name = str(filename)
 
         if name in self._aliases:
-            return self.sources[self._aliases[name]]
+            source_id = self._aliases[name]
+            if source_id not in self.sources and source_id in self._pending:
+                self.register(self._pending.pop(source_id))
+            return self.sources[source_id]
 
         if name in self.sources:
             return self.sources[name]
@@ -393,7 +401,9 @@ class SourceRegistry:
         )
         return self.register(unit, filename)
 
-    def register(self, unit: SourceUnit, filename: str | None = None) -> SourceUnit:
+    def register(
+        self, unit: SourceUnit, filename: str | None = None, *, deferred: bool = False
+    ) -> SourceUnit:
         """Register a captured source unit and an optional runtime alias.
 
         Parameters
@@ -404,21 +414,28 @@ class SourceRegistry:
         filename : str | None, default=None
             Runtime code filename associated with the source unit.
 
+        deferred : bool, default=False
+            Keep a definition cell out of reports until a collector observes
+            its runtime alias. Existing captured snapshots remain visible.
+
         Returns
         -------
         [SourceUnit]
             Registered first snapshot.
 
         """
-        if unit.id not in self.sources:
+        if deferred and unit.id not in self.sources:
+            self._pending.setdefault(unit.id, unit)
+        elif unit.id not in self.sources:
             self.sources[unit.id] = unit
+            self._pending.pop(unit.id, None)
 
         self._aliases[unit.id] = unit.id
 
         if filename:
             self._aliases[filename] = unit.id
 
-        return self.sources[unit.id]
+        return self.sources[unit.id] if unit.id in self.sources else self._pending[unit.id]
 
     def snapshot_cell(self, filename: str, path: str | None = None) -> SourceUnit | None:
         """Capture a cached IPython cell without interpreting its contents.
@@ -438,7 +455,7 @@ class SourceRegistry:
 
         """
         if filename in self._aliases:
-            return self.sources[self._aliases[filename]]
+            return self.snapshot(filename)
 
         source = "".join(linecache.getlines(filename))
 

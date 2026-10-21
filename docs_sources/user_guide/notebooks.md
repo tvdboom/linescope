@@ -47,10 +47,21 @@ Reports display inline automatically. To open one in a browser, call
 `session.show(inline=False)`. The `inline` option belongs to `show()`, rather
 than session configuration.
 
-Captured cells are numbered from **Cell 1** in capture order, independently of
-kernel execution counts. Reports preserve revised snapshots and link to exact
-cells and lines. If the notebook's identity is unavailable or ambiguous, its
-label is `interactive`.
+Reports show cells executed during collection in their original notebook order,
+using the notebook's one-based cell positions, including markdown cells in the
+count. Earlier definition cells appear when their functions or methods are
+called during collection. Unexecuted cells and generated magic wrappers stay
+out of the source view; each included cell retains its full executed source.
+
+Positions come from the saved Jupyter notebook or Databricks workspace export.
+Save Jupyter edits before starting collection. When positions are unavailable
+or source matches multiple cells, reports use **Execution N** or the frontend
+cell ID rather than guessing a notebook position. If the notebook's identity
+is unavailable or ambiguous, its label is `interactive`.
+
+Rerunning unchanged source accumulates measurements in the same cell. If a
+cell's source changes, **version 1**, **version 2**, and later versions preserve
+the source that actually ran, with exact links to each version's lines.
 
 ### Debug cell by cell
 

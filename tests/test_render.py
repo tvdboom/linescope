@@ -1226,6 +1226,58 @@ class TestReportNavigation:
         assert "foo()" in functions.text()
         assert "bar()" in functions.text()
 
+    @pytest.mark.parametrize(
+        ("elapsed_ns", "expected"),
+        [
+            (0, "0 µs"),
+            (500_000, "500.0 µs"),
+            (1_000_000, "1 ms"),
+            (12_340_000, "12.34 ms"),
+            (3_000_000_000, "3 s"),
+            (3_500_000_000, "3.50 s"),
+            (59_990_000_000, "59.99 s"),
+            (60_000_000_000, "1m 0s"),
+            (61_234_000_000, "1m 1.23s"),
+            (119_999_000_000, "2m 0s"),
+            (292_000_000_000, "4m 52s"),
+            (292_004_000_000, "4m 52s"),
+            (292_100_000_000, "4m 52.10s"),
+            (292_126_000_000, "4m 52.13s"),
+            (3_600_000_000_000, "60m 0s"),
+        ],
+    )
+    def test_overview_formats_elapsed_wall_time(
+        self,
+        result: ProfileResult,
+        elapsed_ns: int,
+        expected: str,
+    ):
+        """Display elapsed minutes and round remaining seconds to two decimals.
+
+        Preserve smaller time units and carry rounded seconds into the next
+        minute instead of showing a sixty-second remainder. Use lowercase
+        suffixes and omit `.00` while retaining nonzero fractional digits.
+
+        Parameters
+        ----------
+        result : [ProfileResult]
+            Normalized report fixture whose main elapsed time is replaced.
+
+        elapsed_ns : int
+            Fixed elapsed wall time in nanoseconds to display.
+
+        expected : str
+            Visible duration expected in the overview's elapsed-time card.
+
+        """
+        result.root_run.elapsed_ns = elapsed_ns
+        overview = parse(result).find_all("section", id="overview")[0]
+        cards = {
+            card.find_all("span")[0].text(): card.find_all("strong")[0].text()
+            for card in overview.find_all("div", css="stat")
+        }
+        assert cards["Elapsed wall time"] == expected
+
     @pytest.mark.parametrize("notebook_context", ["none", "snapshot", "child"])
     @pytest.mark.parametrize("spark_context", ["none", "root", "nested"])
     def test_optional_views_follow_captured_context(self, result, notebook_context, spark_context):

@@ -96,7 +96,7 @@ def test_multi_cell_session_captures_sources_hits_and_one_final_display(
     cells = [unit for unit in session.result.sources.values() if unit.kind == "notebook"]
     assert any("answer = 6 * 7" in unit.source for unit in cells)
     source = next(unit for unit in cells if "answer = 6 * 7" in unit.source)
-    assert all(unit.path.startswith(f"{path} · cell ") for unit in cells)
+    assert all(unit.path.startswith(f"{path} · execution ") for unit in cells)
     document = ReportDOM(session.html()).root
     notebook_rows = document.find_all("section", id="files")[0].find_all(
         "tr", **{"data-kind": "Notebook"}
@@ -419,7 +419,12 @@ def test_real_cell_magic_profiles_full_source_and_preserves_namespace(
         if unit.source.startswith("# complete source")
     ]
     assert len(sources) == 1
-    assert sources[0].path == f"interactive · cell {execution_count}"
+    assert sources[0].path == f"interactive · execution {execution_count}"
+    assert not any(
+        "run_cell_magic" in unit.source
+        for unit in session.result.sources.values()
+        if unit.kind == "notebook"
+    )
     assert ipython_shell.execution_count == execution_count + store_history
     assert ipython_shell.compile.cache == original_cache
     assert any(
@@ -476,7 +481,7 @@ def test_cell_magic_failed_workload_still_restores_session(
     source = next(
         source for source in shown[0].result.sources.values() if source.source.startswith("raise")
     )
-    assert source.path == f"{notebook_path or 'interactive'} · cell {execution_count}"
+    assert source.path == f"{notebook_path or 'interactive'} · execution {execution_count}"
     assert any(
         line.location.source_id == source.id and line.location.line == 1 and line.hits
         for line in shown[0].result.root_run.lines
@@ -502,7 +507,7 @@ def test_previous_cell_function_and_method_get_measurements_and_navigation(ipyth
         "    def transform(self, value):\n"
         "        return value * 2\n"
     )
-    ipython_shell.run_cell(definition, store_history=True)
+    defined = ipython_shell.run_cell(definition, store_history=True)
     body = (
         "from linescope import profile\n"
         "with profile(backend='trace', spark=False, display='none') as session:\n"
@@ -528,8 +533,8 @@ def test_previous_cell_function_and_method_get_measurements_and_navigation(ipyth
     document = ReportDOM(render_html(session.result)).root
     page = document.find_all("section", css="source-page")[0]
     assert [heading.text() for heading in page.find_all("tr", css="source-cell-heading")] == [
-        "Cell 1",
-        "Cell 2",
+        f"Execution {result.execution_count}",
+        f"Execution {defined.execution_count}",
     ]
     assert source_rows(page)[0].find_all("td", css="source-code")[0].text() == body.splitlines()[0]
 
@@ -593,13 +598,14 @@ def test_compact_cells_include_called_definitions_without_previous_cell_costs(
     fragments.clear()
     snapshots.clear()
     session = ipython_shell.user_ns["session"]
-    helper = next(
-        source for source in session.registry.sources.values() if source.source == definition
-    )
+    assert all(source.source != definition for source in session.registry.sources.values())
     workload = "for _ in range(3):\n    compact_helper()"
     for _ in range(2):
         result = ipython_shell.run_cell(workload, store_history=True, cell_id="repeated")
         assert result.error_in_exec is None
+        helper = next(
+            source for source in session.registry.sources.values() if source.source == definition
+        )
         table = ReportDOM(fragments[-1]).root.find_all("table")[0]
         assert table.attributes["aria-label"].startswith(
             f"LineScope cell {result.execution_count}:"

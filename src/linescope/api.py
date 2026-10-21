@@ -94,7 +94,8 @@ class Session:
         Original workspace path supplied for generated child notebooks.
 
     _notebook_sources : list[[SourceUnit]]
-        Precaptured child cells reused by notebook source capture.
+        Private child notebook-position index reused by source capture.
+        Cells enter report sources only when execution is observed.
 
     launch_root : [Path]
         Working directory at construction, used for report navigation.

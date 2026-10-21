@@ -337,8 +337,9 @@ class DatabricksIntegration:
                     child.metadata["collection"] = NotebookCollection.SOURCE_ONLY
                     child.metadata["child_source_ids"] = [unit.id for unit in prepared.sources]
 
-                    for unit in prepared.sources:
-                        self.session.registry.register(unit)
+                    if not prepared.instrumented:
+                        for unit in prepared.sources:
+                            self.session.registry.register(unit)
 
             call_args, call_kwargs = args, kwargs
 
@@ -379,6 +380,8 @@ class DatabricksIntegration:
                             self.session.result.symbols[:] = merged.symbols
                             self.session.result.warnings[:] = merged.warnings
                     except Exception as error:  # noqa: BLE001
+                        for unit in prepared.sources:
+                            self.session.registry.register(unit)
                         self.session.result.warnings.append(
                             f"Child profile unavailable for {path} ({type(error).__name__});"
                             " captured source and parent wait are retained."

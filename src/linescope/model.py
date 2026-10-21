@@ -132,6 +132,14 @@ class SourceUnit:
     kind : str | [SourceKind]
         Source category normalized to [SourceKind] at construction.
 
+    cell_number : int | None
+        One-based position in the original notebook, counting all cell types.
+        None means the frontend did not expose an unambiguous position.
+
+    cell_id : str | None
+        Frontend notebook cell identifier, when available. Retain this identity
+        across edits without treating execution counts as notebook positions.
+
     See Also
     --------
     - linescope.model:ProfileResult
@@ -144,6 +152,8 @@ class SourceUnit:
     path: str
     source: str
     kind: str | SourceKind = SourceKind.PYTHON
+    cell_number: int | None = None
+    cell_id: str | None = None
 
     def __post_init__(self):
         """Normalize the source kind to its enum member.

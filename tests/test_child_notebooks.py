@@ -355,7 +355,8 @@ def test_collector_captures_real_child_lines_and_restores_hooks(tmp_path, store,
         assert result.root_run.status == ("failed" if failed else "success")
         assert result.root_run.parent_id == "parent"
         assert result.root_run.metadata["correlation_id"] == "invocation"
-        assert cells[2].id in result.sources
+        assert cells[2].id not in result.sources
+        assert "unused = 99" not in render_html(result)
         assert any(
             line.location.source_id == cells[0].id and line.location.line == 2 and line.hits == 1
             for line in result.root_run.lines

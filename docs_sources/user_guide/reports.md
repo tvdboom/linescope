@@ -59,6 +59,10 @@ across workers. Thread coverage depends on the
 [backend](backends.md#profiling-scope); separate worker processes are not
 profiled automatically.
 
+From one minute onward, the overview shows elapsed wall time in minutes and
+seconds with lowercase suffixes: 292 seconds appears as `4m 52s`. Fractional
+seconds use two decimal places, such as `4m 52.13s`; `.00` is omitted.
+
 Spark reports keep driver waits separate from cumulative task metrics, which
 can overlap. See [Spark timing](spark.md#worker-scope-and-overall-time).
 
@@ -109,10 +113,17 @@ The report includes project files and captured notebook cells, selected through
 [configuration](configuration.md). Third-party internals stay outside the source
 browser, but their cost can contribute to the calling project line.
 
-Each notebook appears once in **Files**, with cells in capture order and line
-numbers restarting in each cell. Source links target the exact cell and line.
-If a cell changes during collection, its revisions remain available. Cells
-outside collection are not reconstructed.
+Each notebook appears once in **Files**, with executed cells in notebook order
+and their original cell numbers. Line numbers restart in each cell. Unknown
+notebook positions use execution or frontend ID labels. Unexecuted cells and
+generated magic wrappers are omitted. Earlier definition cells appear when
+their code executes during collection.
+
+Source links target the exact cell and line. If a cell changes during
+collection, its executed revisions remain available as **version 1**,
+**version 2**, and so on. Source-only child notebook fallbacks can include the
+exported notebook when execution observation is unavailable; their metrics
+remain unavailable.
 
 ## Source navigation
 
