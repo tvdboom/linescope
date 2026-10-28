@@ -16,6 +16,7 @@ from click.testing import CliRunner
 import pytest
 
 from linescope import cli
+from tests.test_render import ReportDOM
 
 
 @pytest.fixture
@@ -72,8 +73,9 @@ def test_trace_gpu_option_warns_and_saves_python_report(runner, tmp_path):
     assert result.exit_code == 0, result.output
     assert "workload completed" in result.stdout
     html = report.read_text(encoding="utf-8")
-    assert "GPU time" not in html
-    assert "GPU peak memory" not in html
+    visible_report = ReportDOM(html).root.find_all("main")[0].text()
+    assert "GPU time" not in visible_report
+    assert "GPU peak memory" not in visible_report
 
 
 class TestCommandParsing:

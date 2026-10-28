@@ -500,7 +500,11 @@ def test_notebook_grouping_escapes_paths_and_preserves_magic_or_empty_cells(sour
     assert [row.find_all("td", css="source-code")[0].text() for row in source_rows(second)] == (
         source.splitlines() or [" "]
     )
-    assert len(document.find_all("script")) == 1
+    assert [script.attributes for script in document.find_all("script")] == [
+        {},
+        {},
+        {"id": "linescope-ai-context", "type": "application/json"},
+    ]
     assert len(document.find_all("img")) == 1
     assert all(not key.startswith("on") for node in document.find_all() for key in node.attributes)
 

@@ -77,6 +77,28 @@ from linescope.enums import DisplayMode, SessionState
     help="Save a report explicitly; otherwise open a temporary report.",
 )
 @click.option("--module", "-m", is_flag=True, help="Run TARGET as a Python module.")
+@click.option(
+    "--serve",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Open a saved report in the local viewer with optional AI suggestions.",
+)
+@click.option(
+    "--port", type=click.IntRange(0, 65535), default=0, help="Viewer port; 0 selects a free port."
+)
+@click.option(
+    "--open-browser/--no-open-browser", default=True, help="Open the local report viewer."
+)
+@click.option(
+    "--ai-agent",
+    type=click.Choice(["codex", "claude", "copilot"]),
+    help="Local agent preset for --serve.",
+)
+@click.option("--ai-command", help="Custom agent executable; receives the prompt on stdin.")
+@click.option(
+    "--ai-arg",
+    multiple=True,
+    help="Literal custom agent argument; repeatable, e.g. --ai-arg=--flag.",
+)
 @click.argument("target", nargs=-1, type=click.UNPROCESSED)
 @click.pass_context
 def main(
@@ -94,6 +116,12 @@ def main(
     display: str | None,
     output: str | None,
     module: bool,
+    serve: Path | None,
+    port: int,
+    open_browser: bool,
+    ai_agent: str | None,
+    ai_command: str | None,
+    ai_arg: tuple[str, ...],
     target: tuple[str, ...],
 ):
     """Profile your Python source, line by line.
@@ -148,6 +176,26 @@ def main(
     --module, -m : bool, default=False
         Execute the target as an importable module instead of a script.
 
+    --serve : pathlib.Path | None, default=None
+        Serve an existing report on loopback for optional AI suggestions.
+
+    --port : int, default=0
+        Local viewer port. Zero selects an available port automatically.
+
+    --open-browser/--no-open-browser : bool, default=True
+        Open the viewer URL automatically when serving a report.
+
+    --ai-agent : str | None, default=None
+        Use the installed `codex`, `claude`, or `copilot` command. Existing
+        authentication works when no request-specific key is supplied.
+
+    --ai-command : str | None, default=None
+        Custom native executable reading a prompt from stdin and writing its
+        suggestion to stdout. The executable owns its permission policy.
+
+    --ai-arg : tuple[str, ...], default=()
+        Literal arguments for a custom executable, without shell expansion.
+
     target : tuple[str, ...]
         Script path or module name followed by its arguments.
 
@@ -159,9 +207,50 @@ def main(
     linescope --backend scalene --gpu application.py
     linescope --backend trace -m application.worker --rows 50000
     linescope --backend trace --display none -o report.html application.py
+    linescope --serve report.html --ai-agent codex
     ```
 
     """
+    if serve is not None:
+        if target or module:
+            raise click.UsageError("--serve cannot be combined with a profiling target", ctx)
+        if any(
+            ctx.get_parameter_source(name) == click.core.ParameterSource.COMMANDLINE
+            for name in (
+                "backend",
+                "include",
+                "exclude",
+                "memory",
+                "gpu",
+                "sample_rate",
+                "spark",
+                "notebooks",
+                "root",
+                "display",
+                "output",
+            )
+        ):
+            raise click.UsageError("--serve cannot be combined with profiling options", ctx)
+        if ai_agent and ai_command:
+            raise click.UsageError("choose either --ai-agent or --ai-command", ctx)
+        if ai_arg and not ai_command:
+            raise click.UsageError("--ai-arg requires --ai-command", ctx)
+
+        from linescope.ai.agents import agent_command
+        from linescope.ai.server import serve_report
+
+        command = (
+            agent_command(ai_agent) if ai_agent else (ai_command, *ai_arg) if ai_command else ()
+        )
+        try:
+            serve_report(serve, port=port, open_browser=open_browser, agent_command=command)
+        except (OSError, ValueError) as error:
+            raise click.ClickException(str(error)) from error
+        return
+
+    if ai_agent or ai_command or ai_arg or port or not open_browser:
+        raise click.UsageError("viewer and AI options require --serve REPORT.html", ctx)
+
     if not target:
         message = "-m requires a module name" if module else "provide a script or -m MODULE"
         raise click.UsageError(message, ctx)

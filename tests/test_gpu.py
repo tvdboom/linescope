@@ -25,6 +25,7 @@ from linescope.model import (
     SourceUnit,
 )
 from linescope.render import render_html
+from tests.test_render import ReportDOM
 from tests.test_scalene import payload, run_probe
 
 
@@ -111,8 +112,9 @@ def test_gpu_report_columns_and_filename_labels(tmp_path):
     assert 'class="path-title">worker.py</h1>' in html
     assert "jobs/worker.py" not in html
     assert str(tmp_path) not in html
-    assert "GPU time" in html
-    assert "GPU peak memory" in html
+    visible_report = ReportDOM(html).root.find_all("main")[0].text()
+    assert "GPU time" in visible_report
+    assert "GPU peak memory" in visible_report
     assert "4.1 KB" in html
     assert "Offline report" not in html
     assert "snapshotted at collection" not in html
@@ -176,8 +178,9 @@ def test_trace_gpu_request_warns_and_preserves_python_profiling(
     assert sys.gettrace() is previous_trace
     assert sys.getprofile() is previous_profile
     report = render_html(session.result, root=tmp_path)
-    assert "GPU time" not in report
-    assert "GPU peak memory" not in report
+    visible_report = ReportDOM(report).root.find_all("main")[0].text()
+    assert "GPU time" not in visible_report
+    assert "GPU peak memory" not in visible_report
     with Session(backend="trace", display="none", notebooks=False, spark=False):
         pass
 

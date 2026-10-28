@@ -16,6 +16,7 @@ from html import escape, unescape
 from importlib.resources import files
 from io import StringIO
 from itertools import pairwise
+import json
 import keyword
 from math import isfinite, log1p
 from pathlib import Path, PurePath
@@ -23,6 +24,8 @@ import re
 import tokenize
 from typing import Any
 
+from linescope.ai.connections import browser_connections
+from linescope.ai.context import build_context
 from linescope.enums import Backend, NotebookCollection, SourceKind
 from linescope.model import (
     BackendCapabilities,
@@ -1756,6 +1759,60 @@ def _display_sources(sources: list[SourceUnit]) -> list[SourceUnit]:
     return [replace(unit, path=_source_name(unit)) for unit in sources]
 
 
+def _ai_icon() -> str:
+    """Draw the shared AI action mark without adding copyable source text.
+
+    Buttons supply their own accessible names; this decorative SVG is the
+    same in the report header and beside each captured source line.
+
+    Returns
+    -------
+    str
+        Inline sparkle icon inheriting its button's foreground color.
+
+    """
+    return (
+        '<svg class="ai-icon" viewBox="0 0 24 24" width="20" height="20"'
+        ' fill="none" stroke="currentColor" stroke-width="1.7"'
+        ' stroke-linecap="round" stroke-linejoin="round"'
+        ' aria-hidden="true" focusable="false">'
+        '<path d="m10 4 2.4 6.6L19 13l-6.6 2.4L10 22l-2.4-6.6L1 13l6.6-2.4Z"/>'
+        '<path d="m19 1 1.1 2.9L23 5l-2.9 1.1L19 9l-1.1-2.9L15 5l2.9-1.1Z"/>'
+        "</svg>"
+    )
+
+
+def _ai_button(unit: SourceUnit, line: int) -> str:
+    """Attach a suggestion action to an exact captured source line.
+
+    Keep the button text empty so table text and source copies retain only
+    the captured code. The shared icon supplies its visual mark and its
+    accessible name describes the action independently.
+
+    Parameters
+    ----------
+    unit : [SourceUnit]
+        Snapshot supplying the immutable source identity and display label.
+
+    line : int
+        One-based line within this snapshot, including notebook cell lines.
+
+    Returns
+    -------
+    str
+        Escaped button markup, revealed by row hover or keyboard focus.
+
+    """
+    label = f"{_source_name(unit)}:{line}"
+    return (
+        '<button type="button" class="ai-line-button"'
+        f' data-ai-source="{_key("source", unit.id)}" data-ai-line="{line}"'
+        f' data-ai-label="{escape(label, quote=True)}"'
+        f' aria-label="Ask AI to improve {escape(label, quote=True)}"'
+        f' title="Ask AI to improve this line">{_ai_icon()}</button>'
+    )
+
+
 def _source_page(
     units: list[SourceUnit],
     data: dict[tuple[str, int], LineStats],
@@ -1919,7 +1976,7 @@ def _source_page(
             f'<td class="metric">{_time(duration)}</td>{sample_cell}'
             f"{hit_cells}{memory_cells}{gpu_cells}{context_cell}<td"
             f' class="source-code"><code>{_code(text, spans[unit.id].get(number, []), stats)}'
-            f"</code></td></tr>"
+            f"</code>{_ai_button(unit, number)}</td></tr>"
         )
 
     memory_head = (
@@ -2614,9 +2671,9 @@ def _gpu_page(
 def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str:
     """Render an offline report without exposing backend-specific structures.
 
-    Source and metadata are escaped. The document performs no network
-    requests. Unknown values use an em dash; sampled estimates never invent
-    hit counts.
+    Source and metadata are escaped. AI requests require explicit opt-in
+    through the local viewer; ordinary reports perform no network requests.
+    Unknown values use an em dash; sampled estimates never invent hit counts.
 
     Parameters
     ----------
@@ -2748,7 +2805,12 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
                     f'">{escape(label)}</a>'
                 ),
                 *([_count(line.samples)] if sampled else []),
-                f"<code>{escape(source_line)}</code>",
+                f"<code>{escape(source_line)}</code>"
+                + (
+                    _ai_button(unit, line.location.line)
+                    if unit and 0 < line.location.line <= len(unit.source.splitlines())
+                    else ""
+                ),
             ]
         )
         hot_values.append(
@@ -3130,6 +3192,23 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
     )
     css = files("linescope.render").joinpath("assets/styles.css").read_text(encoding="utf-8")
     javascript = files("linescope.render").joinpath("assets/app.js").read_text(encoding="utf-8")
+    ai_javascript = "\n".join(
+        files("linescope.render").joinpath(f"assets/{name}").read_text(encoding="utf-8")
+        for name in ("ai-context.js", "ai-transport.js", "ai.js")
+    )
+    ai_dialogs = files("linescope.render").joinpath("assets/ai.html").read_text(encoding="utf-8")
+    ai_catalog = escape(json.dumps(browser_connections(), separators=(",", ":")), quote=True)
+    ai_payload = build_context(result)
+    ai_payload["source_anchors"] = {
+        _key("source", identity): identity for identity in ai_payload["sources"]
+    }
+    ai_context = (
+        json.dumps(ai_payload, ensure_ascii=True, separators=(",", ":"))
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+        .replace("/", "\\u002f")
+    )
     logo = b64encode(files("linescope.render").joinpath("assets/icon.svg").read_bytes()).decode(
         "ascii"
     )
@@ -3163,12 +3242,16 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
         )
     )
 
+    # Standalone API requests need connect-src permission. The transport only
+    # accepts HTTP for loopback hosts; the viewer adds a self-only CSP header.
     return (
         f"""<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta"""
         f""" name="viewport" content="width=device-width, initial-scale=1"><meta"""
         f""" http-equiv="Content-Security-Policy" content="default-src 'none'; style-src"""
         f""" 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; font-src 'none';"""
-        f""" base-uri 'none'; form-action 'none'"><title>LineScope · Source profile"""
+        f""" connect-src 'self' https: http:; base-uri 'none'; form-action 'none'">"""
+        f'<meta name="linescope-ai-catalog" content="{ai_catalog}">'
+        "<title>LineScope · Source profile"
         '</title><link rel="icon" type="image/svg+xml" sizes="any"'
         f""" href="data:image/svg+xml;base64,{logo}"><style>{css}</style></head>\n"""
         f"""<body><a class="skip-link\""""
@@ -3181,8 +3264,14 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
         f""" id="source-search" type="search" placeholder="Find a source…\""""
         f""" autocomplete="off">{source_nav or '<p class="muted">No source captured</p>'}"""
         f"""</div></aside><div class="workspace"><header class="topbar"><div"""
-        f' class="header-details">{header_details}</div><button id="theme-toggle"'
+        f' class="header-details">{header_details}</div><button id="ai-settings-toggle"'
+        ' type="button" aria-label="Configure AI suggestions" aria-haspopup="dialog"'
+        ' data-ai-ready="false" title="Configure AI suggestions">'
+        f'{_ai_icon()}</button><button id="theme-toggle"'
         f' type="button" aria-label="Switch color theme">◐</button></header><main id="main"'
-        f""" tabindex="-1">{"".join(pages)}</main></div><script>{javascript}</script>"""
+        f""" tabindex="-1">{"".join(pages)}</main></div>{ai_dialogs}"""
+        f"""<script>{javascript}</script><script>{ai_javascript}</script>"""
+        '<script id="linescope-ai-context" type="application/json">'
+        f"{ai_context}</script>"
         f"""</body></html>"""
     )

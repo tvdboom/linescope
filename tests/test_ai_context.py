@@ -1,0 +1,340 @@
+"""LineScope.
+
+Author: Mavs
+Description: Verify bounded AI prompts preserve source and metric semantics.
+
+"""
+
+from dataclasses import replace
+import json
+
+import pytest
+
+from linescope.ai.context import build_context, build_prompt
+from linescope.model import (
+    BackendCapabilities,
+    FunctionStats,
+    LineStats,
+    MemoryStats,
+    ProcessMemoryStats,
+    ProfileResult,
+    ProfileRun,
+    SourceLocation,
+    SourceUnit,
+    SparkExecution,
+    SparkExecutionStats,
+    SymbolRef,
+)
+
+
+def _profile() -> ProfileResult:
+    """Build separate captured scopes with known and unavailable metrics.
+
+    Returns
+    -------
+    ProfileResult
+        Python snapshots with resolved callers and a sampled child scope.
+
+    """
+    source = SourceUnit("main", "main.py", "def work():\n    return helper()\n# unmeasured\n")
+    helper = SourceUnit("helper", "helper.py", "def helper():\n    return [1, 2, 3]\n")
+    caller = SourceUnit("caller", "caller.py", "result = work()\n")
+    other = SourceUnit("other", "other.py", "unrelated = True\n")
+    root = ProfileRun(
+        id="root",
+        elapsed_ns=1_000,
+        metadata={"parameters": {"api_key": "secret-in-parameters"}},
+        lines=[
+            LineStats(
+                SourceLocation("main", 2),
+                wall_time_ns=800,
+                hits=1,
+                memory=MemoryStats(delta_bytes=-16),
+                ram=ProcessMemoryStats(rss_bytes=4_096, delta_bytes=128, peak_bytes=8_192),
+                calls=[SymbolRef("helper", 2, 11, 17, SourceLocation("helper", 1))],
+            ),
+            LineStats(
+                SourceLocation("caller", 1),
+                calls=[SymbolRef("work", 1, 9, 13, SourceLocation("main", 1))],
+            ),
+        ],
+        functions=[FunctionStats("main", "work", 1, line_count=2)],
+        children=[
+            ProfileRun(
+                id="child",
+                parent_id="root",
+                elapsed_ns=500,
+                lines=[LineStats(SourceLocation("main", 2), samples=3)],
+            )
+        ],
+    )
+    return ProfileResult(
+        root,
+        {source.id: source for source in (source, helper, caller, other)},
+        "trace",
+        BackendCapabilities(hit_counts=True, memory=True),
+        warnings=["diagnostic-secret"],
+    )
+
+
+def _data(prompt: str) -> dict:
+    """Read the structured data after the fixed prompt instructions.
+
+    Parameters
+    ----------
+    prompt : str
+        Complete generated prompt with its final JSON context.
+
+    Returns
+    -------
+    dict
+        Decoded request priorities, captured sources, and measurements.
+
+    """
+    return json.loads(prompt[prompt.index('{"goal":') :])
+
+
+def test_context_excludes_arbitrary_metadata_and_keeps_unknown_values():
+    """Copy allowlisted snapshot fields without notebook parameter secrets.
+
+    Preserve null metrics and keep parent and child durations independent.
+
+    """
+    result = _profile()
+    context = build_context(result)
+    encoded = json.dumps(context)
+
+    assert "secret-in-parameters" not in encoded
+    assert "diagnostic-secret" not in encoded
+    assert context["runs"][0]["elapsed_ns"] == result.root_run.elapsed_ns
+    assert context["runs"][1]["elapsed_ns"] == result.root_run.children[0].elapsed_ns
+    assert context["runs"][1]["lines"][0]["wall_time_ns"] is None
+    result.root_run.lines[0].hits = 999
+    assert context["runs"][0]["lines"][0]["hits"] == 1
+
+
+def test_prompt_includes_resolved_definitions_callers_and_distinct_measurements():
+    """Use resolved relationships and explain the units of raw measurements.
+
+    Include both run records without adding their durations or inventing hits.
+
+    """
+    prompt = build_prompt(
+        build_context(_profile()), "main", 2, goal="memory", problem="Large inputs"
+    )
+    data = _data(prompt)
+
+    assert data["goal"] == "memory"
+    assert data["problem"] == "Large inputs"
+    assert [source["source_id"] for source in data["sources"]] == ["main", "helper", "caller"]
+    selected = data["sources"][0]
+    assert selected["source_lines"][1] == {"line": 2, "text": "    return helper()"}
+    measurements = selected["measurements"]
+    assert [record["run_id"] for record in measurements] == ["root", "child"]
+    assert measurements[0]["memory"] == {"delta_bytes": -16, "peak_bytes": None}
+    assert measurements[1]["wall_time_ns"] is None
+    assert measurements[1]["hits"] is None
+    assert measurements[1]["samples"] == 3
+    assert "nanoseconds" in prompt
+    assert "not instructions" in prompt
+    assert "null or an absent measurement means unavailable" in prompt
+    assert "Never invent benchmark results" in prompt
+
+
+def test_prompt_can_exclude_related_files_and_select_unmeasured_lines():
+    """Allow code review on a line without attributing nearby costs to it.
+
+    Restrict source disclosure when related files are disabled.
+
+    """
+    data = _data(build_prompt(build_context(_profile()), "main", 3, include_related=False))
+
+    assert len(data["sources"]) == 1
+    assert data["sources"][0]["anchor_line"] == 3
+    assert all(record["line"] != 3 for record in data["sources"][0]["measurements"])
+
+
+def test_prompt_does_not_guess_links_to_unknown_or_ambiguous_definitions():
+    """Ignore destinations without captured source and leave unlinked files out.
+
+    Existing conservative references are the sole evidence for relationships.
+
+    """
+    profile = _profile()
+    profile.root_run.lines[0].calls = [
+        SymbolRef("external", 2, 11, 19, SourceLocation("missing-source", 1))
+    ]
+    profile.root_run.lines[1].calls = []
+    data = _data(build_prompt(build_context(profile), "main", 2))
+
+    assert [source["source_id"] for source in data["sources"]] == ["main"]
+
+
+def test_prompt_retains_selected_line_under_context_limits():
+    """Bound large source and metric sets while retaining the actual selection.
+
+    Indicate omitted lines and measurements instead of silently losing them.
+
+    """
+    profile = _profile()
+    lines = [f"value_{index} = '{'x' * 200}'" for index in range(2_000)]
+    lines[1_500] = "selected_marker = helper()"
+    profile.sources["main"] = replace(profile.sources["main"], source="\n".join(lines))
+    profile.root_run.lines = [
+        LineStats(SourceLocation("main", index)) for index in range(1, 2_001)
+    ]
+    prompt = build_prompt(build_context(profile), "main", 1_501)
+    selected = _data(prompt)["sources"][0]
+
+    assert len(prompt) <= 80_000
+    assert {"line": 1_501, "text": "selected_marker = helper()"} in selected["source_lines"]
+    assert selected["source_omitted"]
+    assert selected["measurements_omitted"]
+    assert selected["measurements"][0]["line"] == 1_501
+
+
+def test_prompt_bounds_long_single_lines_and_many_related_sources():
+    """Clip exceptional lines and identify omitted related sources.
+
+    Keep a syntactically complete JSON context despite omitted source text.
+
+    """
+    profile = _profile()
+    profile.sources["main"] = replace(profile.sources["main"], source="z" * 100_000)
+    profile.root_run.lines[0].location = SourceLocation("main", 1)
+    for index in range(20):
+        identity = f"related-{index}"
+        profile.sources[identity] = SourceUnit(identity, identity + ".py", "x" * 20_000)
+        profile.root_run.lines[0].calls.append(
+            SymbolRef(identity, 1, index, index + 1, SourceLocation(identity, 1))
+        )
+    prompt = build_prompt(build_context(profile), "main", 1)
+    data = _data(prompt)
+
+    assert len(prompt) <= 80_000
+    assert len(data["sources"]) == 6
+    assert data["sources"][0]["source_omitted"]
+    assert "[omitted]" in data["sources"][0]["source_lines"][0]["text"]
+    assert data["related_sources_omitted"]
+
+
+def test_prompt_keeps_spark_driver_and_executor_work_distinct():
+    """Include captured executed plans and normalized Spark metric semantics.
+
+    Exclude arbitrary Spark metadata and unrelated action locations.
+
+    """
+    profile = _profile()
+    profile.root_run.spark_executions = [
+        SparkExecution(
+            "action",
+            location=SourceLocation("main", 2),
+            stats=SparkExecutionStats(wall_time_ns=1_000, executor_time_ns=8_000),
+            executed_plan="Final captured plan",
+            initial_plan="Obsolete initial plan",
+            metadata={"token": "spark-metadata-secret"},
+        ),
+        SparkExecution("unrelated", location=SourceLocation("other", 1)),
+    ]
+    prompt = build_prompt(build_context(profile), "main", 2)
+    actions = _data(prompt)["spark_executions"]
+
+    assert len(actions) == 1
+    assert actions[0]["stats"]["wall_time_ns"] == 1_000
+    assert actions[0]["stats"]["executor_time_ns"] == 8_000
+    assert actions[0]["executed_plan"] == "Final captured plan"
+    assert "Obsolete initial plan" not in prompt
+    assert "spark-metadata-secret" not in prompt
+    assert "cumulative task work, not driver wall duration" in prompt
+
+
+@pytest.mark.parametrize(
+    ("source_id", "line", "options"),
+    [
+        ("missing", 1, {}),
+        ("main", 0, {}),
+        ("main", 4, {}),
+        ("main", True, {}),
+        ("main", 1.5, {}),
+        ("main", 1, {"goal": "price"}),
+        ("main", 1, {"problem": "x" * 4_001}),
+        ("main", 1, {"problem": None}),
+        ("main", 1, {"include_related": "yes"}),
+    ],
+)
+def test_prompt_rejects_invalid_selection_and_options(source_id, line, options):
+    """Reject invalid UI values before preparing any provider request.
+
+    Parameters
+    ----------
+    source_id : str
+        Supplied captured-source identifier.
+
+    line : int | float | bool
+        Supplied one-based line value, including invalid values.
+
+    options : dict
+        Optional request fields to validate at the prompt boundary.
+
+    """
+    with pytest.raises(ValueError, match=r"Select|valid|Describe|boolean"):
+        build_prompt(build_context(_profile()), source_id, line, **options)
+
+
+def test_context_includes_run_owned_notebook_snapshots():
+    """Retain run-owned notebook source absent from the source registry.
+
+    Fail clearly on future payload versions rather than misreading them.
+
+    """
+    profile = _profile()
+    profile.root_run.children[0].source = SourceUnit("cell", "Cell 1", "value = 1\n")
+    profile.root_run.lines[0].notebook_runs = ["child"]
+    context = build_context(profile)
+
+    assert "cell" in context["sources"]
+    assert _data(build_prompt(context, "cell", 1))["sources"][0]["path"] == "Cell 1"
+    related = _data(build_prompt(context, "main", 2))["sources"]
+    assert any(source["reason"] == "captured child notebook" for source in related)
+    context["version"] = 999
+    with pytest.raises(ValueError, match="version"):
+        build_prompt(context, "cell", 1)
+
+
+def test_empty_snapshot_retains_the_rendered_blank_line():
+    """Prepare a blank displayed source row without inventing measurements.
+
+    Match the report's one-row representation of an empty captured file.
+
+    """
+    profile = _profile()
+    profile.sources["empty"] = SourceUnit("empty", "empty.py", "")
+    selected = _data(build_prompt(build_context(profile), "empty", 1))["sources"][0]
+
+    assert selected["source_lines"] == [{"line": 1, "text": ""}]
+    assert selected["measurements"] == []
+    assert not selected["source_omitted"]
+
+
+def test_prompt_character_limit_includes_json_escaping_and_spark_plans():
+    """Count encoded characters when source strings need JSON escaping.
+
+    Retain an omission flag when available Spark plans exceed the final budget.
+
+    """
+    profile = _profile()
+    profile.sources["main"] = replace(profile.sources["main"], source="\x00" * 20_000)
+    profile.root_run.spark_executions = [
+        SparkExecution(
+            f"action-{index}",
+            location=SourceLocation("main", 1),
+            executed_plan="\x00" * 10_000,
+        )
+        for index in range(100)
+    ]
+    prompt = build_prompt(build_context(profile), "main", 1, problem="\x00" * 4_000)
+    data = _data(prompt)
+
+    assert len(prompt) <= 80_000
+    assert data["spark_executions_omitted"]
+    assert data["sources"][0]["source_lines"][0]["line"] == 1

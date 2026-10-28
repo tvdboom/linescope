@@ -30,6 +30,144 @@ Use **Heatmap by** to highlight **Time** or, with memory collection enabled,
 positive **Mem Growth**. Select **None** to turn it off. Sorting and heatmaps
 work independently.
 
+## AI suggestions
+
+AI suggestions work directly from a saved report in your browser. Hover over
+a line in the overview or a source file to reveal its AI icon. The icon is
+also available through keyboard focus and on touch screens. If a provider is
+not configured yet, selecting the icon opens settings. The header's AI icon
+opens the same settings at any time.
+
+```console
+linescope --backend trace --memory --display none -o report.html application.py
+```
+
+Open the saved `report.html` in your browser. The optional local viewer also
+supports native agents and credentials from environment variables:
+
+```console
+linescope --serve report.html
+```
+
+Choose a **Model provider**, model, and credential, then save settings.
+Suggestions become ready automatically when the required settings are
+present. Every provider uses this same flow, with no preferred vendor. The
+viewer selects the sole configured provider, or the agent explicitly chosen
+at startup. When several API providers are configured, choose which one to
+use. APIs also require a model.
+
+Select a line's AI icon, choose runtime, memory, or both, and describe the
+workload or constraints. Review the generated context, then select
+**Generate suggestion**. The answer appears inside the report; LineScope does
+not apply changes or run the suggested code.
+
+### Choose a model provider
+
+Saved reports offer **Claude**, **OpenAI**, and **Custom API** in the
+**Model provider** menu. A local agent also appears when it is configured in
+the viewer. Credentials belong to the selected provider; changing providers
+clears a credential entered for the previous provider.
+
+Claude and OpenAI include their endpoint presets; no URL is required. Enter
+an available model ID and API key. Claude uses the Anthropic Messages API;
+OpenAI uses the Responses API with storage disabled.
+
+Only **Custom API** asks for a URL. Use a service, remote agent, or local model
+server that accepts the Chat Completions request and response format.
+Supply its complete Chat Completions endpoint, such as
+`http://127.0.0.1:11434/v1/chat/completions`, and an installed model ID.
+Authentication can be omitted for local services that do not require it;
+otherwise enter a key. Remote endpoints require HTTPS. These APIs use the
+same model, credential, and suggestion controls as configured local agents.
+
+Saved reports send requests directly from the browser to the selected API.
+The provider must allow requests from that browser origin through CORS. If it
+blocks the request, open the optional local viewer with
+`linescope --serve report.html`; the viewer makes the API request instead.
+The viewer can also use `ANTHROPIC_API_KEY` for Claude, `OPENAI_API_KEY` for
+OpenAI, or `LINESCOPE_AI_API_KEY` for a custom API when the credential field
+is blank. A standalone HTML file cannot read your environment variables.
+
+### Configure an agent
+
+Local Claude Code, Codex, Copilot, and custom command adapters require the
+optional viewer because a saved HTML file cannot start processes. Install
+the agent's native CLI and choose it when starting the viewer:
+
+```console
+linescope --serve report.html --ai-agent claude
+linescope --serve report.html --ai-agent codex
+linescope --serve report.html --ai-agent copilot
+```
+
+The chosen agent appears in **Model provider** and is selected automatically.
+Use its existing login or enter a credential in AI settings. Request keys
+are passed only in the child process environment: `ANTHROPIC_API_KEY` for
+Claude, `CODEX_API_KEY` for Codex, and `COPILOT_GITHUB_TOKEN` for Copilot. You
+can also set that variable before starting the viewer. A blank credential
+preserves existing authentication. The optional **Model** field overrides the
+agent's model for that request; leaving it blank keeps the agent's own choice.
+
+Claude runs without tools, customizations, or saved sessions. Codex uses an
+ephemeral read-only session with execution tools disabled. Copilot also runs
+with tools disabled. These presets receive the assembled prompt and return
+their suggestions directly to the report without editing the project.
+
+For another agent, configure an executable that reads a UTF-8 prompt from
+stdin and writes its suggestion as UTF-8 text to stdout:
+
+```console
+linescope --serve report.html --ai-command my-agent --ai-arg=--noninteractive
+```
+
+Repeat `--ai-arg` for each literal argument. Commands run without shell
+expansion in a temporary directory, using the captured report context.
+Use absolute paths for any script or configuration arguments, since relative
+arguments are resolved inside that temporary directory.
+The **Custom agent** provider uses the same credential and model fields.
+A supplied credential becomes `LINESCOPE_AI_API_KEY` in the child environment;
+a supplied model becomes `LINESCOPE_AI_MODEL`. Neither changes the parent
+environment or the configured command's arguments. A command adapter can
+connect agents with a different SDK or protocol through the viewer. The
+adapter controls its own authentication and permissions; configure it to
+return suggestions without editing files and to clean up any detached child
+processes it starts. On Windows, use a native executable or a Python wrapper
+instead of a `.cmd` or `.bat` launcher. Agent requests time out after three
+minutes, and temporary input and output are removed.
+
+### Context and privacy
+
+Prompts include captured source around the selected line, relevant resolved
+project relationships, and the available line measurements. They distinguish
+unknown values from zero, sampled observations from traced hits, retained
+Python allocations from process memory, and driver wall time from cumulative
+Spark task costs. Context is bounded, with omissions identified in the prompt.
+Suggestions ask for evidence, a small proposed change, tradeoffs, and a
+validation plan rather than invented performance gains.
+
+Only **Generate suggestion** sends context to the selected provider or agent.
+Reports contain source snapshots; inspect the preview for sensitive source
+before sending it. Arbitrary notebook parameter metadata is excluded from AI
+context. API keys entered in either a saved report or the viewer stay in the
+current tab's memory and request. They are never embedded in the saved report
+or browser storage, and must be entered again after reopening the report.
+Local agents retain their own authentication and history policies.
+
+The viewer binds only to `127.0.0.1` and protects requests with a temporary
+session token. Stop it with `Ctrl+C`; use `--no-open-browser` to print the URL
+without launching a browser, or `--port` to select a local port. Ordinary saved
+reports continue to work offline. Older reports need to be regenerated to
+include the captured AI context.
+
+Provider references: [Claude CLI reference][claude],
+[Codex noninteractive mode][codex-exec], [Copilot CLI reference][copilot],
+and [OpenAI text generation][openai-text].
+
+[claude]: https://code.claude.com/docs/en/cli-reference
+[openai-text]: https://developers.openai.com/api/docs/guides/text
+[codex-exec]: https://learn.chatgpt.com/docs/non-interactive-mode
+[copilot]: https://docs.github.com/en/copilot/reference/cli-command-reference
+
 ## Report header
 
 The header shows the run status, backend, and collection method. Select a value

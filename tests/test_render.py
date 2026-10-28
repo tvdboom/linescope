@@ -1135,7 +1135,11 @@ class TestSourceReport:
         document = parse(empty)
         assert "No source captured" in document.text()
         assert document.find_all("section", id="overview")
-        assert len(document.find_all("script")) == 1
+        assert [script.attributes for script in document.find_all("script")] == [
+            {},
+            {},
+            {"id": "linescope-ai-context", "type": "application/json"},
+        ]
 
 
 class TestReportNavigation:
@@ -2660,7 +2664,11 @@ class TestReportSafety:
         ]
         result.warnings = [hostile]
         document = parse(result)
-        assert len(document.find_all("script")) == 1
+        assert [script.attributes for script in document.find_all("script")] == [
+            {},
+            {},
+            {"id": "linescope-ai-context", "type": "application/json"},
+        ]
         images = document.find_all("img")
         assert len(images) == 1
         assert images[0].attributes["class"] == "brand-mark"
@@ -2693,7 +2701,11 @@ class TestReportSafety:
         """
         document = parse(result)
         assert len(document.find_all("style")) == 1
-        assert len(document.find_all("script")) == 1
+        assert [script.attributes for script in document.find_all("script")] == [
+            {},
+            {},
+            {"id": "linescope-ai-context", "type": "application/json"},
+        ]
         favicon = document.find_all("head")[0].find_all("link", rel="icon")[0]
         assert document.find_all("link") == [favicon]
         assert favicon.attributes["type"] == "image/svg+xml"

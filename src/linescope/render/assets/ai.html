@@ -1,0 +1,26 @@
+<dialog id="ai-settings" class="ai-dialog" aria-labelledby="ai-settings-title">
+  <form id="ai-settings-form" autocomplete="off">
+    <div class="ai-dialog-heading"><h2 id="ai-settings-title">AI suggestions</h2><button type="button" class="ai-close" data-ai-close="ai-settings" aria-label="Close AI settings">×</button></div>
+    <p class="muted">Find performance and memory improvements in this profile.</p>
+    <label for="ai-provider">Model provider</label>
+    <select id="ai-provider"><option value="" selected>Choose a provider</option></select>
+    <label for="ai-model">Model</label><input id="ai-model" type="text" maxlength="200" placeholder="Model available to your provider" spellcheck="false">
+    <div id="ai-api-fields" hidden>
+      <label for="ai-endpoint">Endpoint</label><input id="ai-endpoint" type="url" maxlength="2000" placeholder="Full URL supplied by your provider" spellcheck="false">
+    </div>
+    <label for="ai-key">Credential</label><input id="ai-key" type="password" autocomplete="off" spellcheck="false" placeholder="API key">
+    <p id="ai-settings-status" class="ai-status" role="status" aria-live="polite"></p>
+    <div class="ai-actions"><button type="submit" class="ai-primary">Save settings</button><button type="button" data-ai-close="ai-settings">Cancel</button></div>
+  </form>
+</dialog>
+<dialog id="ai-suggestion" class="ai-dialog ai-suggestion-dialog" aria-labelledby="ai-suggestion-title">
+  <div class="ai-dialog-heading"><h2 id="ai-suggestion-title">Improve this line</h2><button type="button" class="ai-close" data-ai-close="ai-suggestion" aria-label="Close suggestion">×</button></div>
+  <p id="ai-target" class="ai-target"></p>
+  <label for="ai-goal">Optimization goal</label><select id="ai-goal"><option value="both">Performance and memory</option><option value="time">Performance</option><option value="memory">Memory usage</option></select>
+  <label for="ai-problem">Problem and constraints</label><textarea id="ai-problem" rows="3" maxlength="4000" placeholder="Describe the workload, what feels slow, memory limits, and behavior to preserve."></textarea>
+  <label class="ai-check"><input id="ai-related" type="checkbox" checked> Include relevant captured project files</label>
+  <details id="ai-preview-details"><summary>Context sent to the AI</summary><p class="ai-field-help muted">Captured source and measured costs are included below. Remove anything you do not want to share before generating.</p><label for="ai-prompt">Request preview</label><textarea id="ai-prompt" rows="12" spellcheck="false"></textarea></details>
+  <p id="ai-suggestion-status" class="ai-status" role="status" aria-live="polite"></p>
+  <div class="ai-actions"><button type="button" id="ai-refresh">Update context</button><button type="button" id="ai-generate" class="ai-primary" disabled>Generate suggestion</button><button type="button" id="ai-cancel" hidden>Cancel request</button></div>
+  <section id="ai-answer-section" hidden aria-labelledby="ai-answer-title"><h3 id="ai-answer-title">Suggested improvement</h3><p class="ai-field-help muted">Review the proposal and rerun profiling to verify its effect.</p><pre id="ai-answer" tabindex="0"></pre></section>
+</dialog>
