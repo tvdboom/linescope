@@ -1,5 +1,4 @@
 # Session
----------
 
 :: linescope.api:Session
     :: signature

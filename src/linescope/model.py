@@ -452,7 +452,8 @@ class FunctionStats:
         Sum of known visible line costs, excluding nested definitions.
 
     calls : int | None
-        Exact invocation count, or None when unsupported by the collector.
+        Exact invocation count, or None when unsupported or when collection
+        started inside an already active invocation.
 
     samples : int | None
         Collected sampling observations, or None when unsupported; never exact

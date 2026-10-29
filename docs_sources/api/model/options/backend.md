@@ -1,7 +1,7 @@
 # Backend
 
-Import `Backend` from `linescope` to select a built-in collector. Registered
-custom collectors continue to use their own string names.
+Import from `linescope` to select a built-in collector. Custom collectors use
+registered string names.
 
 :: linescope.enums:Backend
     :: signature

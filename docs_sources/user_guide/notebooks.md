@@ -1,12 +1,9 @@
 # Notebooks
 
-Profile one cell with the IPython extension or several cells with the
-start/stop API. Captured cells and imported project code appear in the same
-report.
-
 ## Jupyter notebooks
 
-Install the `notebook` extra and load the extension:
+Install `linescope[notebook]` in the kernel's environment, then load the
+extension:
 
 ```python
 %load_ext linescope
@@ -15,145 +12,111 @@ Install the `notebook` extra and load the extension:
 ### Profile one cell
 
 ```python
-%%profile --backend trace
+%%profile
 
-values = list(range(100_000))
-total = sum(value * value for value in values)
+total = sum(value * value for value in range(100_000))
 ```
 
-The report displays inline when the cell finishes and retains the source as it
-was executed.
+The report displays inline when the cell finishes.
 
 ### Profile several cells
 
 ```python
 from linescope import profile
 
-session = profile.start(backend="trace", display="end")
+session = profile.start(display="end")
 ```
 
-Run the cells you want to investigate, then stop in another cell:
+Run your cells, then stop in another cell:
 
 ```python
 profile.stop()
-result = session.result
 ```
 
-The default `display="end"` shows one report at stop. Use `display="cell"` for
-live cumulative reports, or `display="none"` and
-`session.save("notebook.html")` to save without displaying.
+| Display mode | Output |
+| --- | --- |
+| `end` | One report at stop; the default |
+| `cell` | A cumulative report after each cell |
+| `cell-summary` | Each cell's own compact summary |
+| `none` | No automatic display |
 
-Reports display inline automatically. To open one in a browser, call
-`session.show(inline=False)`. The `inline` option belongs to `show()`, rather
-than session configuration.
+Save with `session.save("notebook.html")`. Use `session.show(inline=False)` to
+open a browser; `inline` is an option of `show()`, not session configuration.
 
-Reports show cells executed during collection in their original notebook order,
-using the notebook's one-based cell positions, including markdown cells in the
-count. Earlier definition cells appear when their functions or methods are
-called during collection. Unexecuted cells and generated magic wrappers stay
-out of the source view; each included cell retains its full executed source.
+Reports keep executed cells in notebook order. Earlier definition cells appear
+when their code runs during collection. Cell positions count from one, including
+markdown cells. Save notebook edits before profiling so positions can be found.
+Ambiguous positions use execution numbers or cell IDs; unknown notebooks use
+`interactive`.
 
-Positions come from the saved Jupyter notebook or Databricks workspace export.
-Save Jupyter edits before starting collection. When positions are unavailable
-or source matches multiple cells, reports use **Execution N** or the frontend
-cell ID rather than guessing a notebook position. If the notebook's identity
-is unavailable or ambiguous, its label is `interactive`.
-
-Rerunning unchanged source accumulates measurements in the same cell. If a
-cell's source changes, **version 1**, **version 2**, and later versions preserve
-the source that actually ran, with exact links to each version's lines.
+Rerunning unchanged source accumulates its measurements. Edited cells keep
+separate source versions with their own line links.
 
 ### Debug cell by cell
 
-Use compact summaries to inspect each cell as you run it:
-
 ```python
-from linescope import profile
-
-session = profile.start(backend="trace", display="cell-summary")
+session = profile.start(display="cell-summary")
 ```
 
-Each summary shows that cell's measurements and called project code. Blank
-lines, docstrings, and comments are omitted while original line numbers remain.
-The full report keeps complete source. Select a metric heading to sort, or
-**Source** to restore line order; sorting requires trusted notebook HTML output.
+Summaries omit blank lines, comments, and docstrings while keeping original line
+numbers. The full report keeps complete source. Column sorting requires trusted
+notebook HTML output.
 
-Rerunning a cell displays its new measurements while retaining previous runs
-in the cumulative report. Failed cells show available results and leave
-profiling active so you can fix the code and continue.
-
-Sampling can miss short cells. Zero samples and unavailable measurements are
-different: unknown values display as a dash. With `memory=True`, summaries show
-process RAM changes and retained Python allocation changes separately.
-
-Stop collection, then open or save the full report explicitly:
+Reruns show new measurements and retain earlier runs in the cumulative report.
+A failed cell leaves profiling active. To finish and show the full report:
 
 ```python
 profile.stop()
-result = session.result
 session.show(inline=True)
-report_path = session.save("notebook.html")
 ```
 
-Compact mode does not automatically show a full report at stop. For one cell,
-use `%%profile --backend trace --display cell-summary`.
-
-Live modes take collector snapshots at cell boundaries, which can add
-substantial overhead with memory tracking. See
-[backend performance](backends.md#performance) and the
+Compact mode does not show a full report automatically. Live modes add overhead,
+especially with memory tracking. See the
 [Quick Start notebook](../examples/notebooks/notebook_example.ipynb).
 
 ## Databricks
 
-Install `linescope` as a cluster library so child notebooks can import it too.
-Load the extension and use the same cell magic or start/stop API. LineScope uses
-the runtime's PySpark and Databricks SDK; it does not install them. Spark
-observation requires PySpark 3.5 or later and `spark=True` or `--spark`.
+Install LineScope as a cluster library so child notebooks can import it. Use
+the same cell magic and start/stop API. Spark observation needs the runtime's
+PySpark 3.5 or later and `spark=True` or `--spark`.
 
 ### Workspace source
 
-LineScope captures executed cells and keeps the workspace path when available.
-Otherwise, it uses a stable virtual notebook identifier.
+Captured cells keep their workspace path when available, or a stable virtual
+notebook ID otherwise.
 
 ### Inline `%run`
 
-`%run ./common` executes another notebook in the current environment. LineScope
-records notebook references and source exposed by the running shell, allowing
-later calls to link to captured definitions. Inaccessible source remains a
-reference; LineScope does not fetch it remotely.
+`%run ./common` executes in the current environment. LineScope records source
+and references exposed by the shell. Inaccessible source remains a reference;
+it is not fetched remotely.
 
 ### `dbutils.notebook.run`
 
-Calls made while profiling automatically include child source and, for Python
-notebooks, independently collected line measurements in the parent report.
-Nested child calls are included too. No profiler cells or manual merging are
-needed in the original child notebook.
+Python child notebooks are profiled automatically and merged into the parent
+report, including nested calls. This requires SDK authentication and permission
+to export the notebook and create/delete objects in its folder.
 
-LineScope runs a temporary sibling copy with profiling cells, passes the
-original arguments, and merges the child result. The child inherits the
-parent's backend and metric options, and report links retain the original
-notebook path. Temporary notebooks and profile files are deleted after success
-or failure. `dbutils.notebook.exit` preserves its return value; failed cells
-finalize available measurements.
+LineScope runs a temporary sibling copy with profiling cells. The copy inherits
+the parent's backend and metric options, receives the original arguments, and
+keeps report links to the original source. Temporary notebooks and result files
+are removed after success or failure. `dbutils.notebook.exit` keeps its return
+value.
 
-Automatic collection requires runtime SDK authentication and permission to
-export the notebook and create/delete objects in its folder. The temporary
-copy changes the context API's notebook path and cell positions. For workloads
-that depend on those values, disable child collection:
+The copy has a different context API path and cell positions. For code that
+depends on those values, disable child collection:
 
 ```python
 session = profile.start(child_notebooks=False)
 ```
 
-Parent-side observation still records the call. If preparation is unavailable,
-the original notebook runs once and any captured source remains readable.
-Non-Python notebooks have source but no line measurements. Kernel restarts or
-hard termination can prevent finalization; collection and cleanup limitations
-appear as warnings.
+If preparation fails, the original notebook runs once. Available source is
+still included; non-Python notebooks have no line measurements. Hard termination
+can prevent finalization or cleanup. Check report warnings for limitations.
 
-Parent wait time stays separate from child line measurements. Invocation
-metadata omits argument values, return content, and exception messages, but
-reports still embed source snapshots. Review them before sharing.
+Parent wait time and child measurements stay separate. Argument values, return
+content, and exception messages are excluded from invocation metadata. Source
+snapshots may still contain private data.
 
-See [Databricks checks](../development.md#databricks-checks) to validate support
-in your runtime.
+See [Databricks checks](../development.md#databricks-checks) for runtime
+testing.

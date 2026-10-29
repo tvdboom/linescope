@@ -1,7 +1,6 @@
 # SparkExecution
 
-Inspect `result.root_run.spark_executions` for actions observed during
-collection, their source locations, and available executed query plans.
+Observed actions in `result.root_run.spark_executions`.
 
 :: linescope.model:SparkExecution
     :: signature

@@ -1,7 +1,7 @@
 # MemoryStats
 
-Inspect a line's `memory` field for Python allocation measurements in bytes.
-Process RAM is recorded separately in [ProcessMemoryStats].
+Python allocation measurements in a line's `memory` field. For RAM, see
+[ProcessMemoryStats].
 
 :: linescope.model:MemoryStats
     :: signature

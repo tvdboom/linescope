@@ -1,10 +1,7 @@
 # profile
----------
 
-Use this shared, callable [ProfileController] instance to create sessions or
-collect across notebook cells. Import `profile` directly from `linescope`.
-[profiler] is another name for the same object: `profiler is profile` is `True`.
-Both names share the session started with `start()` and its result.
+The shared [ProfileController]. Import it with `from linescope import profile`.
+[profiler] is an alias for the same object.
 
 :: linescope:profile
     :: signature

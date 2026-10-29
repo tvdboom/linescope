@@ -123,6 +123,7 @@ nav:
       - Spark: user_guide/spark.md
       - GPU: user_guide/gpu.md
       - Reports: user_guide/reports.md
+      - AI suggestions: user_guide/ai.md
   - CLI:
       - linescope: cli/linescope.md
   - API:

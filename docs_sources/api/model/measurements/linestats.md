@@ -1,7 +1,6 @@
 # LineStats
 
-Inspect `result.root_run.lines` for measurements and navigation links attached
-to individual source lines. Unavailable measurements remain `None`.
+Line measurements and links in `result.root_run.lines`.
 
 :: linescope.model:LineStats
     :: signature

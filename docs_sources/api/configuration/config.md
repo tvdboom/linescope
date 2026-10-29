@@ -1,5 +1,4 @@
 # Config
---------
 
 :: linescope.config:Config
     :: signature

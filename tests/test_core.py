@@ -279,9 +279,74 @@ class TestSession:
         document = ReportDOM(session.html()).root
         table = document.find_all("section", id="functions")[0].find_all("table")[0]
         assert {
-            row.find_all("td")[3].text(): row.find_all("td")[4].text()
+            row.find_all("td")[5].text(): row.find_all("td")[4].text()
             for row in table.find_all("tr")[1:]
         } == {"compact()": "1", "outer()": "8", "outer.inner()": "2", "Worker.task()": "2"}
+
+    @pytest.mark.parametrize("recursive", [False, True])
+    @pytest.mark.parametrize("failed", [False, True])
+    def test_active_function_has_unknown_calls_and_keeps_measured_time(
+        self, tmp_path, *, recursive: bool, failed: bool
+    ):
+        """Keep missed entries unavailable while retaining observed body work.
+
+        A later complete invocation cannot repair a partially captured call
+        count. Trace ownership must also be restored when the workload fails.
+
+        Parameters
+        ----------
+        tmp_path : Path
+            Isolated source directory accepted by the trace collector.
+
+        recursive : bool
+            Invoke the already active function again inside the profile.
+
+        failed : bool
+            Fail in the measured helper to verify error cleanup.
+
+        """
+        call = "main(1)" if recursive else "helper()"
+        source = (
+            "def helper():\n"
+            "    if failed:\n"
+            "        raise ValueError('workload failure')\n"
+            "    return 42\n"
+            "def never():\n"
+            "    return -1\n"
+            "def main(depth=0):\n"
+            "    if depth:\n"
+            "        return helper()\n"
+            "    with session:\n"
+            f"        value = {call}\n"
+            "    return value\n"
+            "answer = main()\n"
+        )
+        path = tmp_path / "active.py"
+        path.write_text(source, encoding="utf-8")
+        session = Session(
+            backend="trace", root=str(tmp_path), display="none", notebooks=False, spark=False
+        )
+        namespace = {"session": session, "failed": failed}
+        previous = sys.gettrace()
+        if failed:
+            with pytest.raises(ValueError, match="workload failure"):
+                exec(compile(source, str(path), "exec"), namespace)
+        else:
+            exec(compile(source, str(path), "exec"), namespace)
+            assert namespace["answer"] == 42
+        assert sys.gettrace() is previous
+        functions = {item.qualified_name: item for item in session.result.root_run.functions}
+        assert functions["main"].calls is None
+        assert functions["main"].total_time_ns is not None
+        assert functions["helper"].calls == 1
+        assert functions["never"].calls == 0
+        page = ReportDOM(session.html()).root.find_all("section", id="functions")[0]
+        row = next(
+            row
+            for row in page.find_all("tr", css="heat-row")
+            if row.attributes["data-name"] == "main"
+        )
+        assert [cell.text() for cell in row.find_all("td")][1:3] == ["—", "—"]
 
     def test_external_work_stays_on_calling_line(self, tmp_path, monkeypatch):
         """Verify external work stays on calling line.

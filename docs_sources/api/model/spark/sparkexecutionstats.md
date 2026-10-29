@@ -1,7 +1,6 @@
 # SparkExecutionStats
 
-Inspect an action's `stats` for driver duration and available executor metrics.
-Driver wall time and cumulative executor work are separate measurements.
+An action's `stats`. Driver duration and cumulative task work stay separate.
 
 :: linescope.model:SparkExecutionStats
     :: signature

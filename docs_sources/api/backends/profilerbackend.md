@@ -1,8 +1,6 @@
 # ProfilerBackend
------------------
 
-Implement this protocol when registering a custom collector through
-[register_backend]. Select built-in collectors with `profile(backend=...)`.
+Collector protocol for [register_backend].
 
 :: linescope.backends:ProfilerBackend
     :: signature

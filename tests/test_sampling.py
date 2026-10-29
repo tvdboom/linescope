@@ -525,17 +525,19 @@ def test_sampling_counts_in_all_report_views_and_serialization(known):
     function_table = document.find_all("section", id="functions")[0].find_all("table")[0]
     assert [header.text() for header in function_table.find_all("th")] == [
         "Time",
+        "Calls",
+        "Avg / call",
         "Location",
-        "Samples",
-        "Source",
         "Lines",
+        "Source",
     ]
     assert cell_values(function_table.find_all("tr")[-1]) == [
         "10.00 ms",
+        "—",
+        "—",
         "cell:1",
-        expected,
-        "work()",
         "2",
+        "work()",
     ]
     rows = document.find_all("tr", css="source-row")
     table = document.find_all("table", css="source-table")[0]

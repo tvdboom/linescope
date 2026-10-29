@@ -1,113 +1,61 @@
 # Frequently asked questions
-----------------------------
-
-Here we try to give answers to some questions that have popped up regularly. If
-you have any other questions, don't hesitate to create a new
-[discussion](https://github.com/tvdboom/linescope/discussions)!
 
 ??? faq "Which backend should I choose?"
-    Trace is the default and records exact execution counts and line timings.
-    Choose Scalene for CPU sampling or supported GPU measurements, or Tachyon
-    for sampling on Python 3.15. All three support optional process RAM and
-    retained Python allocation tracking. See
-    [backends](user_guide/backends.md) for their scope and tradeoffs.
+    Use Trace for exact execution counts, Scalene for sampling or GPU metrics,
+    and Tachyon for sampling on Python 3.15. See
+    [backends](user_guide/backends.md).
 
-??? faq "Do I need to change my script to profile it?"
-    No. Run an existing script or importable module through the CLI:
+??? faq "Do I need to edit my script?"
+    Run `linescope your_script.py` or `linescope -m your_package.your_module`.
+    Use the `profile` context manager to measure only part of the program.
 
-    ```console
-    linescope --output report.html your_script.py
-    linescope --output report.html -m your_package.your_module
-    ```
-
-    Put LineScope options before the script path; arguments after the path go
-    to your script. To profile only part of a workload, use the `profile`
-    context manager. See [getting started](getting_started.md#usage).
-
-??? faq "Where is time spent inside pandas, NumPy, or other libraries shown?"
-    Library work is attributed to the nearest relevant project line, such as
-    the call that enters the library. Reports keep your source in view and
-    hide third-party internals. This includes time waiting for I/O or native
-    code; line time is not a separate CPU counter for each dependency. See
+??? faq "Where is time inside pandas or NumPy shown?"
+    Library and I/O work is attributed to the calling project line.
+    Third-party source is hidden. See
     [profiling scope](user_guide/backends.md#profiling-scope).
 
-??? faq "Does a missing time mean a line never ran?"
-    No. Sampling may miss short lines. Hit counts are shown only when
-    measured by the backend; samples are not execution counts. Unavailable
-    measurements use a dash.
+??? faq "Does missing time mean a line never ran?"
+    No. Sampling can miss short lines. A dash means unavailable; samples are
+    observations, not execution counts.
 
-??? faq "Will profiling make my program slower?"
-    Profiling adds overhead. Trace observes every line event and can affect
-    tight Python loops noticeably. Sampling avoids recording every event,
-    but can miss brief operations. Memory collection and live notebook reports
-    add work too. Compare results with the same backend and inputs, and check
-    improvements with an unprofiled run. See
-    [performance](user_guide/backends.md#performance).
+??? faq "Why can a function have time but no call count?"
+    Profiling may have started inside it, after its entry. Its measured time
+    stays in the report; Calls and Avg / call are unavailable.
 
-??? faq "Where does the report open?"
-    Reports display inside notebook cells automatically and open a browser
-    elsewhere. Choose the destination with `session.show(inline=True)` or
-    `session.show(inline=False)`. Use `display="cell-summary"` for a compact
-    inline overview after each cell while debugging. Use `display="none"` to
-    suppress automatic display and `session.save("report.html")` to keep a
-    file explicitly.
+??? faq "How much overhead does profiling add?"
+    Trace can noticeably slow tight loops. Memory tracking and live notebook
+    reports add work too. Compare runs with the same settings and verify gains
+    without the profiler. See [performance](user_guide/backends.md#performance).
 
-??? faq "Can I profile several notebook cells in one report?"
-    Yes. Call `profile.start()` before the cells you want to measure and
-    `profile.stop()` after them. The default produces one cumulative report
-    at stop. Use `display="cell"` for live cumulative reports or
-    `display="cell-summary"` for each cell's own compact overview. See
-    [notebooks](user_guide/notebooks.md#profile-several-cells).
+??? faq "How do I save without opening a report?"
+    Set `display="none"`, then call `session.save("report.html")`.
+    Reports display inline in notebooks by default and in a browser elsewhere.
 
-??? faq "What do the memory measurements include?"
-    Enable `memory=True` or `--memory` to collect process RAM and net retained
-    Python allocation changes. RAM includes native library buffers and
-    profiler overhead; allocation tracking covers traced Python allocations.
-    These values measure different things and should not be added together.
-    Separate worker processes, Spark executors, and GPU memory are outside
-    driver RAM measurements. See [memory](user_guide/backends.md#memory).
+??? faq "Can I profile several notebook cells?"
+    Start with `profile.start()`, run the cells, then call `profile.stop()`.
+    See [notebook display modes](user_guide/notebooks.md#profile-several-cells).
 
-??? faq "Can I collect GPU metrics?"
-    Yes. Enable `gpu=True` or `--gpu` with Scalene on a supported device.
-    See [GPU](user_guide/gpu.md). Trace and Tachyon do not provide GPU metrics.
-    Trace warns and continues Python profiling if GPU collection is requested;
-    Tachyon rejects the request.
+??? faq "What does memory include?"
+    Process RAM includes native buffers and profiler overhead. Retained Python
+    allocations are measured separately; do not add them to RAM. Workers and
+    GPU memory are outside driver RAM. See
+    [memory](user_guide/backends.md#memory).
 
-??? faq "Does LineScope trigger extra Spark actions?"
-    No. It observes the actions your workload already performs and never
-    forces `count`, `collect`, or another action to measure a lazy
-    transformation. It does not create a Spark session. See
-    [lazy execution](user_guide/spark.md#lazy-execution).
+??? faq "Does profiling trigger Spark actions?"
+    No. It observes existing actions. Parallel task time can exceed driver wall
+    time, and executor Python lines are not profiled. See
+    [Spark](user_guide/spark.md).
 
-??? faq "Why can a Spark task total exceed elapsed time?"
-    Tasks execute concurrently. Summed executor/task time is cumulative
-    work, while wall time is elapsed time observed by the driver. These
-    measurements are labeled separately.
+??? faq "Are Databricks child notebooks profiled?"
+    Python children called through `dbutils.notebook.run` are collected and
+    merged by default. This needs LineScope in the child environment and
+    workspace permissions. See [Databricks](user_guide/notebooks.md#databricks).
 
-??? faq "Does it profile Python UDFs on Spark executors?"
-    LineScope profiles driver Python and available Spark execution context.
-    Separate executor Python processes require their own instrumentation
-    and correlation; driver measurements do not include their line profiles.
-
-??? faq "Does a child Databricks notebook get deep profiling automatically?"
-    Yes, by default for Python notebooks called with `dbutils.notebook.run`
-    while profiling. LineScope collects child source and line measurements
-    separately, then merges them into the parent report. This needs LineScope
-    in the child environment and workspace export/create/delete permissions.
-    Use `child_notebooks=False` for parent-side observation only. Collection
-    limitations appear as warnings; see
-    [Databricks](user_guide/notebooks.md#dbutilsnotebookrun).
-
-??? faq "Why are some function calls not clickable in the report?"
-    LineScope links a call only when its project definition can be resolved
-    conservatively. Dynamic dispatch, runtime imports, ambiguous names, and
-    third-party calls can remain unlinked. The line's available measurements
-    remain visible. See
+??? faq "Why are some calls not clickable?"
+    Dynamic dispatch, ambiguous definitions, and third-party calls may not have
+    a resolvable project target. See
     [source navigation](user_guide/reports.md#source-navigation).
 
-??? faq "Can I open reports offline?"
-    Yes. HTML reports contain their own assets and source snapshots, so they
-    work without a server or the original project files. Editing or deleting
-    the original source does not change a saved report. Review captured source
-    before sharing; see
-    [saving and sharing](user_guide/reports.md#saving-and-sharing).
+??? faq "Can I share a report or open it offline?"
+    Reports embed their source and assets. They work without the original
+    project or a server. Review captured source for private data before sharing.

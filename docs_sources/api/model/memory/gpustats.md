@@ -1,7 +1,6 @@
 # GPUStats
 
-Inspect a line's `gpu` field for optional GPU measurements. GPU time and device
-memory remain separate from Python driver wall time and process RAM.
+Device measurements in a line's `gpu` field, separate from driver time and RAM.
 
 :: linescope.model:GPUStats
     :: signature

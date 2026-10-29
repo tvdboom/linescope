@@ -1,7 +1,6 @@
 # ProcessMemoryStats
 
-Inspect a line's `ram` field for observed process RAM. RSS includes native
-libraries, shared pages, and profiler overhead.
+Process RAM in a line's `ram` field, including native buffers and shared pages.
 
 :: linescope.model:ProcessMemoryStats
     :: signature

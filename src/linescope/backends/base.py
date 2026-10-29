@@ -75,8 +75,10 @@ class RawBackendResult:
     warnings : list[str]
         Honest diagnostics about collection limits or failures.
 
-    function_calls : dict[tuple[str, str, int], int]
+    function_calls : dict[tuple[str, str, int], int | None]
         Exact call counts keyed by filename, qualified name, and first line.
+        None marks a function whose entry was missed because it was already
+        active when collection began.
 
     See Also
     --------
@@ -88,7 +90,7 @@ class RawBackendResult:
 
     lines: list[RawLine] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
-    function_calls: dict[tuple[str, str, int], int] = field(default_factory=dict)
+    function_calls: dict[tuple[str, str, int], int | None] = field(default_factory=dict)
 
 
 class ProfilerBackend(Protocol):

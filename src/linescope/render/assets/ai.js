@@ -44,6 +44,9 @@
   let generation = 0;
   let promptCurrent = false;
   let requestKind = '';
+  let modelController = null;
+  let modelGeneration = 0;
+  let modelTimer = null;
 
   // Saved reports use preset APIs directly; the viewer also runs local agents.
   byId('ai-provider').replaceChildren();
@@ -73,22 +76,123 @@
   function updateProvider() {
     const connection = connections.get(byId('ai-provider').value);
     byId('ai-api-fields').hidden = connection?.custom_endpoint !== true;
-    byId('ai-model').disabled = !connection;
     byId('ai-key').disabled = !connection;
     byId('ai-endpoint').disabled = connection?.custom_endpoint !== true;
-    byId('ai-model').placeholder = !connection ? 'Choose a provider first'
-      : connection.requires_model ? 'Model ID' : 'Optional; use the provider default';
     byId('ai-key').placeholder = draftKey ? 'Configured; leave blank to keep it'
       : !connection ? 'Choose a provider first'
       : connection.configured ? 'Use existing credential or login'
       : connection.kind === 'api' ? 'API key' : 'Optional; use existing login';
   }
 
+  function cancelModels() {
+    modelGeneration += 1;
+    clearTimeout(modelTimer);
+    if (modelController) modelController.abort();
+    modelController = null;
+    byId('ai-model-refresh').disabled = !connections.has(byId('ai-provider').value);
+  }
+
+  function resetModels(preferred = '') {
+    cancelModels();
+    const connection = connections.get(byId('ai-provider').value);
+    byId('ai-model').replaceChildren();
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = !connection ? 'Choose a provider first' : connection.kind === 'agent'
+      ? 'Default (use agent settings)' : 'Loading available models…';
+    byId('ai-model').append(option);
+    if (preferred) {
+      const saved = document.createElement('option');
+      saved.value = preferred;
+      saved.textContent = preferred;
+      byId('ai-model').append(saved);
+      byId('ai-model').value = preferred;
+    }
+    byId('ai-model').disabled = !connection || (connection.requires_model && !preferred);
+    byId('ai-model-status').textContent = '';
+  }
+
+  function scheduleModels() {
+    resetModels();
+    modelTimer = setTimeout(loadModels, 700);
+  }
+
+  async function loadModels() {
+    cancelModels();
+    const revision = modelGeneration;
+    const connection = connections.get(byId('ai-provider').value);
+    if (!connection) return;
+    const configuration = {
+      provider: connection.id,
+      endpoint: connection.custom_endpoint ? byId('ai-endpoint').value.trim() : connection.endpoint || '',
+      api_key: byId('ai-key').value.trim() || draftKey,
+    };
+    if (connection.kind === 'api' && ((!configuration.api_key && !connection.configured && !connection.custom_endpoint)
+      || !configuration.endpoint)) {
+      byId('ai-model').options[0].textContent = 'Connect to load models';
+      byId('ai-model-status').textContent = '';
+      return;
+    }
+    const preferred = byId('ai-model').value;
+    const active = new AbortController();
+    modelController = active;
+    byId('ai-model-refresh').disabled = true;
+    byId('ai-model-status').textContent = 'Loading available models…';
+    const timeout = setTimeout(() => active.abort(), 30000);
+    try {
+      let result;
+      if (token) {
+        const response = await fetch('/api/models', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-LineScope-Token': token },
+          credentials: 'omit', cache: 'no-store', body: JSON.stringify(configuration), signal: active.signal,
+        });
+        result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Could not load available models.');
+      } else {
+        result = await window.LineScopeAI.listModels(configuration, active.signal);
+      }
+      if (revision !== modelGeneration || !settingsDialog.open) return;
+      if (!result || !Array.isArray(result.models)) throw new Error('The provider returned an invalid model catalog.');
+      byId('ai-model').replaceChildren();
+      if (connection.kind === 'agent') {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'Default (use agent settings)';
+        byId('ai-model').append(option);
+      }
+      for (const model of result.models) {
+        if (!model || typeof model.id !== 'string' || typeof model.label !== 'string') continue;
+        const option = document.createElement('option');
+        option.value = model.id;
+        option.textContent = model.label;
+        byId('ai-model').append(option);
+      }
+      const options = Array.from(byId('ai-model').options);
+      const candidate = options.some(option => option.value === preferred) ? preferred
+        : connection.kind === 'agent' ? '' : result.default_model;
+      byId('ai-model').value = options.some(option => option.value === candidate) ? candidate : options[0]?.value || '';
+      byId('ai-model').disabled = !options.length;
+      byId('ai-model-status').textContent = '';
+    } catch (error) {
+      if (revision !== modelGeneration || !settingsDialog.open) return;
+      byId('ai-model-status').textContent = error.name === 'AbortError'
+        ? 'Loading models timed out. Refresh to retry.' : error.message || 'Could not load available models.';
+      if (connection.kind === 'api' && !byId('ai-model').value) byId('ai-model').options[0].textContent = 'Refresh to load models';
+    } finally {
+      clearTimeout(timeout);
+      if (revision === modelGeneration) {
+        modelController = null;
+        byId('ai-model-refresh').disabled = false;
+      }
+    }
+  }
+
   function connectionProblem(configuration = settings) {
     const connection = connections.get(configuration.provider);
     if (!connection) return 'Choose a model provider.';
     if (!connection.available) return 'This provider is unavailable.';
-    if (connection.requires_model && !configuration.model) return 'Enter a model.';
+    if (connection.requires_model && !configuration.model) return 'Load and select an available model.';
     if (connection.kind === 'api' && !configuration.endpoint) return 'Enter the custom API endpoint.';
     if (connection.kind === 'api' && !connection.custom_endpoint && !connection.configured && !configuration.api_key) return 'Enter a credential.';
     return '';
@@ -98,18 +202,20 @@
     draftKey = settings.api_key;
     draftEndpoint = settings.endpoint;
     byId('ai-provider').value = settings.provider;
-    byId('ai-model').value = settings.model;
     byId('ai-endpoint').value = settings.endpoint;
     byId('ai-key').value = '';
     byId('ai-settings-status').textContent = message;
     updateProvider();
+    resetModels(settings.model);
     settingsDialog.showModal();
+    loadModels();
   }
 
   function openSuggestion() {
     if (!target) return;
     cancelRequest();
     byId('ai-target').textContent = target.label;
+    byId('ai-suggestion-title').textContent = target.scope === 'spark' ? 'Improve Spark performance' : 'Improve this line';
     byId('ai-answer').textContent = '';
     byId('ai-preview-details').open = true;
     suggestionDialog.showModal();
@@ -150,6 +256,7 @@
           const context = JSON.parse(byId('linescope-ai-context').textContent);
           data = { prompt: window.LineScopeAI.buildPrompt(context, payload.source_id, payload.line, {
             goal: payload.goal, problem: payload.problem, include_related: payload.include_related,
+            scope: payload.scope, execution_id: payload.execution_id,
           }) };
         } else {
           data = { suggestion: await window.LineScopeAI.requestSuggestion(payload, payload.prompt, active.signal) };
@@ -198,6 +305,8 @@
     const response = await request('/api/prompt', {
       source_id: target.source,
       line: target.line,
+      scope: target.scope,
+      execution_id: target.execution,
       goal: byId('ai-goal').value,
       problem: byId('ai-problem').value,
       include_related: byId('ai-related').checked,
@@ -235,6 +344,8 @@
     draftEndpoint = byId('ai-endpoint').value;
     byId('ai-settings-status').textContent = '';
     updateProvider();
+    resetModels();
+    loadModels();
   });
   byId('ai-endpoint').addEventListener('input', () => {
     if (byId('ai-endpoint').value.trim() !== draftEndpoint) {
@@ -244,12 +355,14 @@
       draftEndpoint = byId('ai-endpoint').value.trim();
       updateProvider();
       if (hadCredential) byId('ai-settings-status').textContent = endpointCredentialMessage;
+      scheduleModels();
     }
   });
   byId('ai-key').addEventListener('input', () => {
     if (byId('ai-key').value.trim() && byId('ai-settings-status').textContent === endpointCredentialMessage) {
       byId('ai-settings-status').textContent = '';
     }
+    scheduleModels();
   });
   byId('ai-settings-form').addEventListener('submit', event => {
     event.preventDefault();
@@ -279,6 +392,7 @@
     button.addEventListener('click', () => byId(button.dataset.aiClose).close());
   });
   settingsDialog.addEventListener('close', () => {
+    cancelModels();
     byId('ai-key').value = '';
     draftKey = '';
     pendingLine = false;
@@ -312,13 +426,19 @@
     });
   });
   document.addEventListener('click', event => {
-    const button = event.target.closest('.ai-line-button');
+    const button = event.target.closest('.ai-line-button, .ai-spark-button');
     if (!button) return;
     event.preventDefault();
     cancelRequest();
     activation = { button, pointer: event.detail > 0 };
     button.classList.remove('ai-pointer-dismissed');
-    target = { source: button.dataset.aiSource, line: Number(button.dataset.aiLine), label: button.dataset.aiLabel };
+    target = {
+      source: button.dataset.aiSource,
+      line: button.dataset.aiLine ? Number(button.dataset.aiLine) : undefined,
+      scope: button.dataset.aiScope || 'line',
+      execution: button.dataset.aiExecution,
+      label: button.dataset.aiLabel,
+    };
     const problem = connectionProblem();
     if (problem) {
       pendingLine = true;
@@ -328,6 +448,7 @@
     openSuggestion();
   });
   byId('ai-goal').addEventListener('change', invalidatePrompt);
+  byId('ai-model-refresh').addEventListener('click', loadModels);
   byId('ai-problem').addEventListener('input', invalidatePrompt);
   byId('ai-related').addEventListener('change', invalidatePrompt);
   prompt.addEventListener('input', updateControls);

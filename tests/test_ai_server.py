@@ -9,7 +9,8 @@ from http.client import HTTPConnection
 import json
 import select
 import socket
-from threading import Event, Thread
+from threading import Event, Lock, Thread
+from types import SimpleNamespace
 
 import pytest
 
@@ -28,6 +29,7 @@ from linescope.model import (
     ProfileRun,
     SourceLocation,
     SourceUnit,
+    SparkExecution,
 )
 from linescope.render.html import render_html
 from tests.test_render import ReportDOM
@@ -1002,3 +1004,101 @@ def test_serving_a_saved_viewer_copy_prioritizes_fresh_capabilities():
             assert second.token != first.token
             assert second.origin != first.origin
             assert reopened.index('<meta charset="utf-8">') < 1024
+
+
+def test_model_discovery_uses_only_connection_settings(monkeypatch: pytest.MonkeyPatch):
+    """Forward authentication without exposing source to model discovery.
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        Restore the model catalog substitution after the request.
+
+    """
+    captured = {}
+
+    def catalog(**options) -> dict:
+        """Capture connection settings without receiving profile evidence.
+
+        Parameters
+        ----------
+        **options : Any
+            Validated provider, endpoint, and transient credential fields.
+
+        Returns
+        -------
+        dict
+            Deterministic offline model choices.
+
+        """
+        captured.update(options)
+        return {"models": [{"id": "model", "label": "Model"}], "default_model": "model"}
+
+    monkeypatch.setattr("linescope.ai.models.list_api_models", catalog)
+    handler = object.__new__(server._ReportHandler)
+    handler.server = SimpleNamespace(cancel_event=Event())
+    response = handler._models(
+        {"provider": "openai", "api_key": "request-key", "prompt": "private source"}
+    )
+    assert response["default_model"] == "model"
+    assert captured == {"provider": "openai", "endpoint": "", "api_key": "request-key"}
+
+
+def test_model_discovery_rejects_unconfigured_agents_and_releases_lock(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Keep executable selection server-owned and release failed discovery.
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        Restore the controlled agent failure after checking cleanup.
+
+    """
+    handler = object.__new__(server._ReportHandler)
+    handler.server = SimpleNamespace(
+        cancel_event=Event(), agent_command=agent_command("codex"), inference_lock=Lock()
+    )
+    with pytest.raises(ProviderError, match="Restart"):
+        handler._models({"provider": "claude", "command": "untrusted-command"})
+
+    def failed_catalog(*_args, **_kwargs):
+        """Fail an authorized catalog request without leaking diagnostics.
+
+        Parameters
+        ----------
+        *_args : Any
+            Server-owned native command arguments.
+
+        **_kwargs : Any
+            Transient authentication and shutdown signal.
+
+        """
+        raise ProviderError("Discovery failed")
+
+    monkeypatch.setattr("linescope.ai.models.list_agent_models", failed_catalog)
+    with pytest.raises(ProviderError, match="Discovery failed"):
+        handler._models({"provider": "codex"})
+    assert handler.server.inference_lock.acquire(blocking=False)
+    handler.server.inference_lock.release()
+
+
+def test_spark_prompt_resolves_saved_action_anchors_without_source():
+    """Prepare an action review from saved evidence without a source link.
+
+    Reuse the actual rendered report context and reject an action absent from
+    that capture instead of consulting client-supplied replacement evidence.
+
+    """
+    profile = ProfileResult(
+        ProfileRun(spark_executions=[SparkExecution("action")]), {}, "trace", BackendCapabilities()
+    )
+    context = server._read_context(render_html(profile))
+    handler = object.__new__(server._ReportHandler)
+    handler.server = SimpleNamespace(context=context)
+    anchor = next(iter(context["spark_anchors"]))
+    response = handler._prompt({"scope": "spark", "execution_id": anchor})
+    assert '"id": "action"' in response["prompt"]
+    assert '"source_id": null' in response["prompt"]
+    with pytest.raises(ValueError, match="Spark action"):
+        handler._prompt({"scope": "spark", "execution_id": "missing"})

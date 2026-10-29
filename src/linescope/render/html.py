@@ -611,6 +611,26 @@ def _heat_controls(*, memory: bool = False, enabled: bool = True) -> str:
     )
 
 
+def _average_time(duration: int | None, count: int | None) -> int | None:
+    """Average a known total over positive recorded invocation counts.
+
+    Parameters
+    ----------
+    duration : int | None
+        Total measured time in nanoseconds, or None when unavailable.
+
+    count : int | None
+        Exact recorded count. Zero or unavailable counts have no average.
+
+    Returns
+    -------
+    int | None
+        Average nanoseconds, retaining zero duration with positive counts.
+
+    """
+    return duration // count if duration is not None and count is not None and count > 0 else None
+
+
 def _summary_table(
     headers: list[tuple[str, str]],
     rows: list[list[str]],
@@ -1217,7 +1237,7 @@ def _spark_action_table(executions: list[SparkExecution], sources: dict[str, Sou
                     (
                         f'<a class="spark-action-link" href="#{_key("spark", execution.id)}">'
                         f"{escape(execution.name)} <small>#{escape(execution.id[:8])}</small>"
-                        f"</a>{status}"
+                        f"</a>{_ai_spark_button(execution)}{status}"
                     ),
                     _spark_trigger(execution.location, sources),
                     f'<strong class="hot-time">{_time(execution.stats.wall_time_ns)}</strong>',
@@ -1810,6 +1830,33 @@ def _ai_button(unit: SourceUnit, line: int) -> str:
         f' data-ai-label="{escape(label, quote=True)}"'
         f' aria-label="Ask AI to improve {escape(label, quote=True)}"'
         f' title="Ask AI to improve this line">{_ai_icon()}</button>'
+    )
+
+
+def _ai_spark_button(execution: SparkExecution | None = None) -> str:
+    """Offer a review of one Spark action or the complete Spark overview.
+
+    Keep the action available even when source correlation is unavailable.
+    The opaque action anchor resolves to the captured execution in context.
+
+    Parameters
+    ----------
+    execution : [SparkExecution] | None, default=None
+        Captured action to inspect, or None to compare all captured actions.
+
+    Returns
+    -------
+    str
+        Accessible icon button with an explicit Spark context target.
+
+    """
+    label = execution.name if execution else "Spark overview"
+    target = f' data-ai-execution="{_key("spark", execution.id)}"' if execution else ""
+    return (
+        '<button type="button" class="ai-spark-button" data-ai-scope="spark"'
+        f'{target} data-ai-label="{escape(label, quote=True)}"'
+        f' aria-label="Ask AI to improve {escape(label, quote=True)}"'
+        f' title="Ask AI to improve {escape(label, quote=True)}">{_ai_icon()}</button>'
     )
 
 
@@ -2820,16 +2867,17 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
     function_rows = [
         [
             _time(item.total_time_ns),
+            _count(item.calls),
+            _time(_average_time(item.total_time_ns, item.calls)),
             (
                 f'<a href="{_source_link(item.source_id, item.first_line)}">'
                 f"{escape(source_names.get(item.source_id, item.source_id))}:{item.first_line}</a>"
             ),
-            _count(item.samples if sampled else item.calls),
+            _count(item.line_count),
             (
                 f'<a href="{_source_link(item.source_id, item.first_line)}'
                 f'">{escape(item.qualified_name)}()</a>'
             ),
-            _count(item.line_count),
         ]
         for item in functions
     ]
@@ -2839,7 +2887,8 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
             "line": item.first_line,
             "lines": item.line_count,
             "time": item.total_time_ns,
-            "count": item.samples if sampled else item.calls,
+            "count": item.calls,
+            "average": _average_time(item.total_time_ns, item.calls),
         }
         for item in functions
     ]
@@ -2959,16 +3008,20 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
         f"</p>{_summary_table(file_columns, file_rows, file_values)}"
         f"{invocations}</section>"
     )
-    function_headers = [*_profile_headers("Samples" if sampled else "Calls"), "Lines"]
-    function_columns = list(
-        zip(function_headers, ["time", "line", "count", "name", "lines"], strict=True)
-    )
+    function_columns = [
+        ("Time", "time"),
+        ("Calls", "count"),
+        ("Avg / call", "average"),
+        ("Location", "line"),
+        ("Lines", "lines"),
+        ("Source", "name"),
+    ]
     pages.append(
         f'<section id="functions" class="page" hidden><div class="summary-header">'
         f"<h1>Functions</h1>"
         f"{_heat_controls(enabled=False)}</div>"
-        f'<p class="muted">Time spent on each function\'s own lines, excluding time'
-        f" in other project functions it calls."
+        '<p class="muted">Time totals all calls on each function\'s own lines, excluding'
+        " other project functions it calls. Avg / call is Time divided by Calls."
         f"</p>{_summary_table(function_columns, function_rows, function_values)}</section>"
     )
     for run in runs[1:]:
@@ -3009,7 +3062,8 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
             show_title=False,
         )
         pages.append(
-            f'<section id="spark" class="page" hidden><h1>Spark</h1>'
+            '<section id="spark" class="page" hidden><div class="summary-header">'
+            f"<h1>Spark</h1>{_ai_spark_button()}</div>"
             '<p class="intro">Compare captured actions and their largest reported operator costs.'
             "</p>"
             f"{_spark_summary(executions)}"
@@ -3121,7 +3175,8 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
         )
         pages.append(
             f'<section id="{_key("spark", execution.id)}" class="page" hidden>'
-            f"<h1>{escape(execution.name)}</h1>"
+            '<div class="summary-header">'
+            f"<h1>{escape(execution.name)}</h1>{_ai_spark_button(execution)}</div>"
             f'<p class="spark-trigger">{trigger}</p><div class="stats overview-stats spark-stats">'
             f"{cost_cards}</div>"
             f"{_spark_plan_overview(execution)}"
@@ -3202,6 +3257,9 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
     ai_payload["source_anchors"] = {
         _key("source", identity): identity for identity in ai_payload["sources"]
     }
+    ai_payload["spark_anchors"] = {
+        _key("spark", execution.id): execution.id for execution in executions
+    }
     ai_context = (
         json.dumps(ai_payload, ensure_ascii=True, separators=(",", ":"))
         .replace("<", "\\u003c")
@@ -3265,10 +3323,12 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
         f""" autocomplete="off">{source_nav or '<p class="muted">No source captured</p>'}"""
         f"""</div></aside><div class="workspace"><header class="topbar"><div"""
         f' class="header-details">{header_details}</div><button id="ai-settings-toggle"'
+        ' class="icon-button"'
         ' type="button" aria-label="Configure AI suggestions" aria-haspopup="dialog"'
         ' data-ai-ready="false" title="Configure AI suggestions">'
-        f'{_ai_icon()}</button><button id="theme-toggle"'
-        f' type="button" aria-label="Switch color theme">◐</button></header><main id="main"'
+        f'{_ai_icon()}</button><button id="theme-toggle" class="icon-button"'
+        ' type="button" aria-label="Switch color theme" title="Switch color theme">'
+        f'◐</button></header><main id="main"'
         f""" tabindex="-1">{"".join(pages)}</main></div>{ai_dialogs}"""
         f"""<script>{javascript}</script><script>{ai_javascript}</script>"""
         '<script id="linescope-ai-context" type="application/json">'

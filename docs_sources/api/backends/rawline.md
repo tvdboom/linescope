@@ -1,8 +1,7 @@
 # RawLine
----------
 
-Include these records in [RawBackendResult] to report a collector's measurements
-for individual source lines. Unsupported metrics remain `None`.
+Per-line measurements returned in [RawBackendResult]. Unavailable metrics
+are `None`.
 
 :: linescope.backends:RawLine
     :: signature

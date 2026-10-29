@@ -1,7 +1,6 @@
 # ProfileRun
 
-Inspect `result.root_run` for the root profiling scope. Its `children` retain
-separately executed notebook runs and inline references.
+The root scope is `result.root_run`; `children` holds child notebook runs.
 
 :: linescope.model:ProfileRun
     :: signature

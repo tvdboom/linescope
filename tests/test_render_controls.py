@@ -316,7 +316,7 @@ def test_summary_columns_sort_and_heat_defaults_to_none(page_id: str, *, sampled
         Summary page to inspect.
 
     sampled : bool
-        Whether the report displays Samples instead of Calls.
+        Whether file summaries include sampling observations.
 
     """
     document = ReportDOM(render_html(_profile(sampled=sampled))).root
@@ -331,7 +331,7 @@ def test_summary_columns_sort_and_heat_defaults_to_none(page_id: str, *, sampled
     sorters = table.find_all("button", css="table-sort")
     assert len(headings) == len(sorters)
     expected_keys = (
-        ["time", "line", "count", "name", "lines"]
+        ["time", "count", "average", "line", "lines", "name"]
         if page_id == "functions"
         else ["time", "name", *(["samples"] if sampled else []), "kind", "lines"]
     )
@@ -369,11 +369,8 @@ def test_summary_rows_preserve_unknowns_zeroes_heat_and_navigation(*, sampled: b
     assert [row.attributes["data-name"] for row in functions] == ["zulu", "Alpha", "unknown"]
     assert [row.attributes["data-time"] for row in functions] == ["2000", "0", ""]
     assert [row.attributes["data-lines"] for row in functions] == ["2", "1", ""]
-    assert [row.attributes["data-count"] for row in functions] == [
-        "10" if sampled else "1234",
-        "0",
-        "",
-    ]
+    assert [row.attributes["data-count"] for row in functions] == ["1234", "0", ""]
+    assert [row.attributes["data-average"] for row in functions] == ["1", "", ""]
     assert [row.attributes["data-heat-time"] for row in functions] == [
         "1.00000",
         "0.00000",
@@ -395,6 +392,48 @@ def test_summary_rows_preserve_unknowns_zeroes_heat_and_navigation(*, sampled: b
     assert profile.root_run.functions[0].total_time_ns is None
     assert profile.root_run.functions[2].calls == 1234
     assert cell_values(functions[2])[0] == "—"
+
+
+@pytest.mark.parametrize(
+    ("duration", "calls", "average", "raw_average"),
+    [
+        (12_000_000, 4, "3.00 ms", "3000000"),
+        (0, 4, "0 µs", "0"),
+        (12_000_000, 0, "—", ""),
+        (12_000_000, None, "—", ""),
+        (None, 4, "—", ""),
+    ],
+)
+def test_function_averages_keep_unknown_and_zero_measurements_distinct(
+    duration: int | None, calls: int | None, average: str, raw_average: str
+):
+    """Average total function time only over a positive recorded call count.
+
+    Parameters
+    ----------
+    duration : int | None
+        Controlled total function time in nanoseconds, or unavailable.
+
+    calls : int | None
+        Recorded entries, including zero and unavailable counts.
+
+    average : str
+        Expected readable average or unavailable marker.
+
+    raw_average : str
+        Expected sortable nanoseconds, or blank for an unavailable average.
+
+    """
+    profile = _profile()
+    function = profile.root_run.functions[2]
+    function.total_time_ns = duration
+    function.calls = calls
+    page = ReportDOM(render_html(profile)).root.find_all("section", id="functions")[0]
+    row = next(
+        row for row in page.find_all("tr", css="heat-row") if row.attributes["data-name"] == "zulu"
+    )
+    assert cell_values(row)[2] == average
+    assert row.attributes["data-average"] == raw_average
 
 
 @pytest.mark.parametrize("sampled", [False, True])

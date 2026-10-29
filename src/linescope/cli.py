@@ -126,17 +126,15 @@ def main(
 ):
     """Profile your Python source, line by line.
 
-    Place LineScope options before the script path or `-m MODULE`; subsequent
-    arguments are passed to the target. Reports also finalize on workload
-    errors. Open the HTML report in a new browser tab by default. Use
-    `--display none -o report.html` for headless collection.
-    Unspecified options follow the project configuration and API defaults.
+    Put profiler options before the target; subsequent arguments go to it.
+    Reports retain measurements after workload errors. Use
+    `--display none -o report.html` to save without opening a browser.
+    Unspecified flags use project settings and API defaults.
 
     Parameters
     ----------
     --backend, -b : str | None, default=None
-        Collector name. Default to Trace on every supported Python version.
-        Registered custom backend names are also accepted.
+        Built-in or registered collector. Defaults to Trace.
 
     --include, -i : tuple[str, ...], default=()
         Package names, paths, or globs to include. Repeat for multiple entries.
@@ -153,13 +151,11 @@ def main(
         Python profiling without GPU measurements.
 
     --sample-rate : int | None, default=None
-        Target samples per second for Scalene or Tachyon. Use the backend
-        default when omitted. Trace ignores this setting.
-        The achieved rate can differ depending on operating-system timer
-        resolution and scheduling settings.
+        Target samples per second for Scalene or Tachyon; default: 1000.
+        Trace ignores this setting. The achieved rate can vary.
 
     --spark/--no-spark : bool | None, default=None
-        Enable or disable lazy Spark action observation. Enabled by default.
+        Observe existing Spark actions. Disabled by default; requires PySpark.
 
     --notebooks/--no-notebooks : bool | None, default=None
         Enable or disable notebook source capture. Enabled by default.

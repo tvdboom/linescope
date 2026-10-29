@@ -1,7 +1,6 @@
 # FunctionStats
 
-Inspect `result.root_run.functions` for costs aggregated from each function's
-visible source lines. Sampling observations do not imply invocation counts.
+Function totals in `result.root_run.functions`. Samples are not call counts.
 
 :: linescope.model:FunctionStats
     :: signature

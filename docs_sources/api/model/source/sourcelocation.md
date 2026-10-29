@@ -1,7 +1,6 @@
 # SourceLocation
 
-Use `source_id` to find the snapshot in `result.sources`, then use the one-based
-`line` and optional zero-based `column` to locate the measured source.
+`source_id` selects a snapshot in `result.sources`; `line` is one-based.
 
 :: linescope.model:SourceLocation
     :: signature

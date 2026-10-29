@@ -1,7 +1,7 @@
 # MemorySample
 
-Inspect `result.root_run.memory_samples` for process RAM observations ordered
-by elapsed collection time. Unavailable readings remain `None`.
+Process RAM readings in `result.root_run.memory_samples`, ordered by elapsed
+time.
 
 :: linescope.model:MemorySample
     :: signature

@@ -46,7 +46,7 @@ _session_lock = threading.Lock()
 
 
 class Session:
-    """Collect one source profiling run and render portable HTML.
+    """Collect source measurements and render an HTML report.
 
     Parameters
     ----------
@@ -65,8 +65,8 @@ class Session:
         Project discovery, frozen source snapshots, and notebook aliases.
 
     result : [ProfileResult]
-        Complete normalized result containing captured source, the run tree,
-        measurements, capabilities, and diagnostics. Finalized by `stop()`.
+        Captured source, measurements, child runs, and warnings. Finalized by
+        `stop()`.
 
     state : [SessionState]
         Lifecycle state; a session starts once and remains stopped.
@@ -408,7 +408,7 @@ class Session:
     def _function_stats(
         self,
         lines: dict[tuple[str, int], LineStats],
-        calls: dict[tuple[str, str, int], int],
+        calls: dict[tuple[str, str, int], int | None],
     ) -> list[FunctionStats]:
         """Index function costs from visible source lines and exact call counts.
 
@@ -421,8 +421,9 @@ class Session:
         lines : dict[tuple[str, int], LineStats]
             Visible source line measurements keyed by snapshot and line.
 
-        calls : dict[tuple[str, str, int], int]
-            Exact invocation counts keyed by filename, qualified name, and line.
+        calls : dict[tuple[str, str, int], int | None]
+            Exact invocation counts keyed by filename, qualified name, and
+            line. None means collection missed an already active invocation.
 
         Returns
         -------
@@ -503,6 +504,9 @@ class Session:
                             and first_line == first
                             and name.rsplit(".", 1)[-1] == node.name
                         ):
+                            if value is None:
+                                count = None
+                                break
                             count += value
 
                 functions.append(
@@ -738,11 +742,10 @@ class Session:
 
 
 class ProfileController:
-    """Offer callable contexts and explicit notebook-wide start/stop ergonomics.
+    """Manage context blocks and explicit profiling sessions.
 
-    The package exports one shared instance as [profile] and [profiler].
-    These names refer to the same object and retain the same explicit session.
-    Construct this class directly when an independent controller is needed.
+    The shared instance is exported as [profile] and [profiler]. Create a
+    separate controller for independent session ownership.
 
     Attributes
     ----------
@@ -750,10 +753,8 @@ class ProfileController:
         Most recent explicit session, or None before `start` is called.
 
     result : [ProfileResult]
-        Complete normalized result of the most recent explicit session,
-        including source snapshots, measurements, the run tree, capabilities,
-        and diagnostics. Read-only access to the same object as
-        `session.result`; finalized after `stop` completes.
+        Read-only access to the latest explicit session's `session.result`.
+        Finalized by `stop()`.
 
     See Also
     --------
@@ -786,11 +787,9 @@ class ProfileController:
         self._session: Session | None = None
 
     def __call__(self, **options: Any) -> Session:
-        """Create a context-managed session using explicit [Config] options.
+        """Create a session with [Config] options.
 
-        Calling the controller creates a fresh [Session] without replacing
-        the session retained by `start()`. The package's [profile] and
-        [profiler] names refer to the same callable controller instance.
+        This does not replace the session retained by `start()`.
 
         Parameters
         ----------

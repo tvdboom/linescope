@@ -138,8 +138,10 @@ class TraceBackend:
     _lines : dict[tuple[str, int], [RawLine]]
         Accumulated line times and exact execution counts.
 
-    _calls : dict[tuple[str, str, int], int]
+    _calls : dict[tuple[str, str, int], int | None]
         Exact function calls keyed by filename, qualified name, and line.
+        None records an incomplete invocation count for an already active
+        function; later complete calls do not make that count exact.
 
     _old_frames : list[tuple[FrameType, Any]]
         Already active frames and their original local trace callbacks.
@@ -228,7 +230,7 @@ class TraceBackend:
         self._running = False
         self._frames: dict[int, _Frame] = {}
         self._lines: dict[tuple[str, int], RawLine] = {}
-        self._calls: dict[tuple[str, str, int], int] = {}
+        self._calls: dict[tuple[str, str, int], int | None] = {}
         self._old_frames: list[tuple[FrameType, Any]] = []
         self._suspended: dict[int, FrameType] = {}
         self._previous_trace: Any = None
@@ -390,13 +392,18 @@ class TraceBackend:
 
             self._frames[key] = _Frame(frame.f_code.co_filename, 0, now, parent)
 
-            if event == "call" and key not in self._suspended:
-                call = (
-                    frame.f_code.co_filename,
-                    frame.f_code.co_qualname,
-                    frame.f_code.co_firstlineno,
-                )
-                self._calls[call] = self._calls.get(call, 0) + 1
+            call = (
+                frame.f_code.co_filename,
+                frame.f_code.co_qualname,
+                frame.f_code.co_firstlineno,
+            )
+            if event != "call":
+                # Body measurements cannot recover a missed entry event.
+                self._calls[call] = None
+            elif key not in self._suspended:
+                count = self._calls.get(call, 0)
+                if count is not None:
+                    self._calls[call] = count + 1
 
             self._suspended.pop(key, None)
 

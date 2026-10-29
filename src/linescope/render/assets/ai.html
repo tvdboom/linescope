@@ -1,20 +1,21 @@
 <dialog id="ai-settings" class="ai-dialog" aria-labelledby="ai-settings-title">
   <form id="ai-settings-form" autocomplete="off">
-    <div class="ai-dialog-heading"><h2 id="ai-settings-title">AI suggestions</h2><button type="button" class="ai-close" data-ai-close="ai-settings" aria-label="Close AI settings">×</button></div>
-    <p class="muted">Find performance and memory improvements in this profile.</p>
+    <div class="ai-dialog-heading"><h2 id="ai-settings-title">AI suggestions</h2><div class="ai-dialog-controls"><a class="ai-help-link ai-icon-button" href="https://tvdboom.github.io/linescope/user_guide/ai/" target="_blank" rel="noopener noreferrer" aria-label="Open AI setup guide" title="AI setup guide"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="M9 8a3 3 0 0 1 6 0c0 2-3 2.5-3 5"/><circle cx="12" cy="17" r=".9" fill="currentColor" stroke="none"/></svg></a><button type="button" class="ai-close ai-icon-button" data-ai-close="ai-settings" aria-label="Close AI settings" title="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div></div>
+    <p class="muted">Use AI to help you find performance and memory improvements.</p>
     <label for="ai-provider">Model provider</label>
     <select id="ai-provider"><option value="" selected>Choose a provider</option></select>
-    <label for="ai-model">Model</label><input id="ai-model" type="text" maxlength="200" placeholder="Model available to your provider" spellcheck="false">
     <div id="ai-api-fields" hidden>
       <label for="ai-endpoint">Endpoint</label><input id="ai-endpoint" type="url" maxlength="2000" placeholder="Full URL supplied by your provider" spellcheck="false">
     </div>
     <label for="ai-key">Credential</label><input id="ai-key" type="password" autocomplete="off" spellcheck="false" placeholder="API key">
+    <label for="ai-model">Model</label><div class="ai-model-control"><select id="ai-model" aria-describedby="ai-model-status" disabled><option value="">Choose a provider first</option></select><button type="button" id="ai-model-refresh" class="ai-icon-button" aria-label="Refresh models" title="Refresh models"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.6-1L20 12M4 12l2.3 6A7 7 0 0 0 17.9 17"/></svg></button></div>
+    <p id="ai-model-status" class="ai-field-help muted" role="status" aria-live="polite"></p>
     <p id="ai-settings-status" class="ai-status" role="status" aria-live="polite"></p>
     <div class="ai-actions"><button type="submit" class="ai-primary">Save settings</button><button type="button" data-ai-close="ai-settings">Cancel</button></div>
   </form>
 </dialog>
 <dialog id="ai-suggestion" class="ai-dialog ai-suggestion-dialog" aria-labelledby="ai-suggestion-title">
-  <div class="ai-dialog-heading"><h2 id="ai-suggestion-title">Improve this line</h2><button type="button" class="ai-close" data-ai-close="ai-suggestion" aria-label="Close suggestion">×</button></div>
+  <div class="ai-dialog-heading"><h2 id="ai-suggestion-title">Improve this line</h2><button type="button" class="ai-close ai-icon-button" data-ai-close="ai-suggestion" aria-label="Close suggestion" title="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
   <p id="ai-target" class="ai-target"></p>
   <label for="ai-goal">Optimization goal</label><select id="ai-goal"><option value="both">Performance and memory</option><option value="time">Performance</option><option value="memory">Memory usage</option></select>
   <label for="ai-problem">Problem and constraints</label><textarea id="ai-problem" rows="3" maxlength="4000" placeholder="Describe the workload, what feels slow, memory limits, and behavior to preserve."></textarea>

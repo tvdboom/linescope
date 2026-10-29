@@ -137,17 +137,31 @@
     }
   }
 
-  async function requestSuggestion(settings, prompt, signal) {
+  async function requestProvider(settings, prompt, signal, catalog = false, cursor = '') {
     if (!settings || typeof settings !== 'object') throw failed('Choose an API connection.');
     const connection = connectionFor(settings.provider);
     const adapter = adapters[connection.protocol];
-    if (typeof settings.model !== 'string' || !settings.model.trim() || settings.model.length > 256) {
+    if (!catalog && (typeof settings.model !== 'string' || !settings.model.trim() || settings.model.length > 256)) {
       throw failed('Enter a model identifier of at most 256 characters.');
     }
-    if (typeof prompt !== 'string' || !prompt.trim() || new TextEncoder().encode(prompt).byteLength > 500000) {
+    if (!catalog && (typeof prompt !== 'string' || !prompt.trim() || new TextEncoder().encode(prompt).byteLength > 500000)) {
       throw failed('Provide a nonempty prompt of at most 500 KB.');
     }
-    const endpoint = endpointFor(connection, settings.endpoint || '');
+    let endpoint = endpointFor(connection, settings.endpoint || '');
+    if (catalog) {
+      const url = new URL(endpoint);
+      const path = url.pathname.replace(/\/$/, '');
+      if (connection.custom_endpoint && !path.endsWith('/chat/completions')) {
+        throw failed('Use a Chat Completions endpoint to discover its models.');
+      }
+      url.pathname = connection.custom_endpoint ? path.slice(0, -'/chat/completions'.length) + '/models'
+        : path.slice(0, path.lastIndexOf('/')) + '/models';
+      if (connection.protocol === 'anthropic-messages') {
+        url.searchParams.set('limit', '1000');
+        if (cursor) url.searchParams.set('after_id', cursor);
+      }
+      endpoint = url.href;
+    }
     if (typeof settings.api_key !== 'string') throw failed('Enter a valid connection credential.');
     const key = settings.api_key.trim();
     if (key.length > 8192 || /[^\x20-\x7e]/.test(key)) {
@@ -159,15 +173,15 @@
     const cancel = () => controller.abort();
     signal?.addEventListener('abort', cancel, { once: true });
     let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, 60000);
+    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, catalog ? 15000 : 60000);
     const headers = { 'Content-Type': 'application/json', Accept: 'application/json', ...adapter.headers };
     if (key) headers.Authorization = 'Bearer ' + key;
     try {
       let response;
       try {
         response = await fetch(endpoint, {
-          method: 'POST', headers,
-          body: JSON.stringify(adapter.body(settings.model.trim(), prompt)),
+          method: catalog ? 'GET' : 'POST', headers,
+          body: catalog ? undefined : JSON.stringify(adapter.body(settings.model.trim(), prompt)),
           mode: 'cors', credentials: 'omit', cache: 'no-store', redirect: 'error',
           referrerPolicy: 'no-referrer', signal: controller.signal,
         });
@@ -185,6 +199,7 @@
         if (error.name === 'TypeError') throw failed(networkError);
         throw error;
       }
+      if (catalog) return payload;
       const suggestion = textResult(payload, connection.protocol);
       return key ? suggestion.split(key).join('[redacted credential]') : suggestion;
     } catch (error) {
@@ -198,6 +213,42 @@
     }
   }
 
+  async function listModels(settings, signal) {
+    const connection = connectionFor(settings.provider);
+    const records = [];
+    const cursors = new Set();
+    let cursor = '';
+    for (let page = 0; page < 10; page += 1) {
+      const payload = await requestProvider(settings, '', signal, true, cursor);
+      if (!payload || !Array.isArray(payload.data)) throw failed('The provider returned an invalid model catalog.');
+      records.push(...payload.data);
+      if (connection.protocol !== 'anthropic-messages' || !payload.has_more) break;
+      if (typeof payload.last_id !== 'string' || !payload.last_id || cursors.has(payload.last_id) || page === 9) {
+        throw failed('The provider returned an invalid model cursor.');
+      }
+      cursor = payload.last_id;
+      cursors.add(cursor);
+    }
+    const key = settings.api_key.trim();
+    const choices = new Map();
+    for (const record of records) {
+      if (!record || typeof record !== 'object' || record.hidden === true) continue;
+      const id = record.model ?? record.id;
+      if (typeof id !== 'string' || !id || id.length > 200 || id.startsWith('-') || /[\s\x00-\x1f\x7f]/.test(id) || (key && id.includes(key))) continue;
+      if (settings.provider === 'openai' && (!/^(gpt-|o1|o3|o4)/.test(id) || /image|audio|realtime|transcribe|search|instruct/.test(id))) continue;
+      const family = ['Astra', 'Sol', 'Terra', 'Luna', 'Opus', 'Sonnet', 'Haiku'].find(name => id.split('-').includes(name.toLowerCase()));
+      let label = record.displayName || record.display_name || (family ? family + ' · ' + id : id);
+      if (typeof label !== 'string') label = id;
+      if (key) label = label.split(key).join('[redacted]');
+      choices.set(id, { id, label: label.slice(0, 200) });
+    }
+    const models = Array.from(choices.values()).sort((a, b) => Number(b.id.includes('sol')) - Number(a.id.includes('sol'))
+      || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+    if (!models.length) throw failed('No text models were returned by this provider.');
+    return { models, default_model: models[0].id };
+  }
+
   window.LineScopeAI = window.LineScopeAI || {};
-  window.LineScopeAI.requestSuggestion = requestSuggestion;
+  window.LineScopeAI.requestSuggestion = (settings, prompt, signal) => requestProvider(settings, prompt, signal);
+  window.LineScopeAI.listModels = listModels;
 })();

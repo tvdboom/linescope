@@ -18,6 +18,7 @@ from linescope.model import (
     ProfileRun,
     SourceLocation,
     SourceUnit,
+    SparkExecution,
 )
 from linescope.render.html import render_html
 from tests.test_render import ReportDOM
@@ -189,10 +190,9 @@ def test_ai_connection_fields_are_shared_by_agents_and_model_apis():
     assert not connection.find_all(id="ai-setup")
     api_fields = connection.find_all("div", id="ai-api-fields")[0]
     assert [entry.attributes["id"] for entry in api_fields.find_all("input")] == ["ai-endpoint"]
-    assert connection.find_all("input", id="ai-model")
+    assert connection.find_all("select", id="ai-model")
     assert connection.find_all("input", id="ai-key")
     assert [entry.attributes["id"] for entry in connection.find_all("input")] == [
-        "ai-model",
         "ai-endpoint",
         "ai-key",
     ]
@@ -261,3 +261,64 @@ def test_ai_targets_keep_absolute_paths_out_of_visible_markup():
     assert payload["source_anchors"][button.attributes["data-ai-source"]] == path
     assert payload["sources"][path]["path"] == path
     assert button.attributes["data-ai-label"] == "main.py:1"
+
+
+def test_spark_actions_have_ai_targets_even_without_source_correlation():
+    """Offer overview, summary-row, and action-page Spark suggestions.
+
+    Use opaque action targets and escape hostile labels without requiring
+    a captured source line for a Spark review.
+
+    """
+    profile = _profile()
+    profile.root_run.spark_executions = [SparkExecution('action"<', name='<join & "scan">')]
+    document = ReportDOM(render_html(profile)).root
+    context = json.loads(document.find_all("script", id="linescope-ai-context")[0].text())
+    buttons = document.find_all("button", css="ai-spark-button")
+    assert len(buttons) == 3
+    overview = next(button for button in buttons if "data-ai-execution" not in button.attributes)
+    assert overview.attributes["data-ai-label"] == "Spark overview"
+    for button in buttons:
+        assert button.attributes["data-ai-scope"] == "spark"
+        assert button.find_all("svg", css="ai-icon")
+        assert button.attributes["type"] == "button"
+        if "data-ai-execution" in button.attributes:
+            assert context["spark_anchors"][button.attributes["data-ai-execution"]] == 'action"<'
+            assert button.attributes["data-ai-label"] == '<join & "scan">'
+    assert document.find_all("button", id="theme-toggle")[0].attributes["class"] == "icon-button"
+    assert (
+        document.find_all("button", id="ai-settings-toggle")[0].attributes["class"]
+        == "icon-button"
+    )
+
+
+def test_settings_offer_model_choices_and_link_to_the_setup_guide():
+    """Expose model selection without a free-text model name field.
+
+    Keep terminal setup instructions in the guide linked from the report.
+
+    """
+    document = ReportDOM(render_html(_profile())).root
+    assert document.find_all("select", id="ai-model")
+    assert not document.find_all("input", id="ai-model")
+    assert document.find_all("button", id="ai-model-refresh")
+    assert not document.find_all(id="ai-provider-help")
+    assert "codex login" not in document.text()
+    assert "--ai-agent codex" not in document.text()
+    guide = document.find_all("a", css="ai-help-link")[0]
+    assert guide.attributes["href"].endswith("/user_guide/ai/")
+    assert guide.attributes["aria-label"] == "Open AI setup guide"
+    assert guide.text() == ""
+    assert guide.find_all("svg")
+    controls = document.find_all("div", css="ai-dialog-controls")[0]
+    assert controls.find_all("a")[0] is guide
+    close = controls.find_all("button")[0]
+    assert close.attributes["aria-label"] == "Close AI settings"
+    assert close.text() == ""
+    assert close.find_all("svg")
+    model_controls = document.find_all("div", css="ai-model-control")[0]
+    assert model_controls.find_all("select")[0].attributes["id"] == "ai-model"
+    refresh = model_controls.find_all("button")[0]
+    assert refresh.attributes["aria-label"] == "Refresh models"
+    assert refresh.text() == ""
+    assert refresh.find_all("svg")

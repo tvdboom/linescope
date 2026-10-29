@@ -23,6 +23,7 @@ from linescope.model import (
     SourceUnit,
     SparkExecution,
     SparkExecutionStats,
+    SparkOperator,
     SymbolRef,
 )
 
@@ -243,9 +244,141 @@ def test_prompt_keeps_spark_driver_and_executor_work_distinct():
     assert actions[0]["stats"]["wall_time_ns"] == 1_000
     assert actions[0]["stats"]["executor_time_ns"] == 8_000
     assert actions[0]["executed_plan"] == "Final captured plan"
-    assert "Obsolete initial plan" not in prompt
+    assert actions[0]["initial_plan"] == "Obsolete initial plan"
     assert "spark-metadata-secret" not in prompt
     assert "cumulative task work, not driver wall duration" in prompt
+
+
+def test_spark_context_keeps_complete_plans_operators_stages_and_provenance():
+    """Keep captured Spark evidence without the former short plan limit.
+
+    Snapshot mutable counters, preserve unavailable values, and exclude
+    arbitrary execution metadata from the preview.
+
+    """
+    profile = _profile()
+    execution = SparkExecution(
+        "action",
+        location=SourceLocation("main", 2),
+        executed_plan="Final AQE plan\n" * 400,
+        initial_plan="Initial physical plan",
+        optimized_plan="Optimized logical plan",
+        parsed_plan="Parsed logical plan",
+        analyzed_plan="Analyzed logical plan",
+        operators=[
+            SparkOperator(
+                "join",
+                "BroadcastHashJoin",
+                metrics={"time": {"name": "time to build", "type": "timing", "value": 42}},
+                children=[SparkOperator("scan", "Scan", metrics={"rows": 200})],
+            )
+        ],
+        stages=[{"id": 3, "tasks": 4, "duration_p95_ns": 1200}],
+        jobs=[7],
+        metadata={"plan_origin": "query listener", "aqe_final_plan": True, "token": "private"},
+    )
+    profile.root_run.spark_executions = [execution]
+    context = build_context(profile)
+    execution.stages[0]["tasks"] = 999
+    execution.operators[0].metrics["time"]["value"] = 999
+    execution.jobs.append(8)
+    action = _data(build_prompt(context, "main", 2))["spark_executions"][0]
+
+    assert action["executed_plan"] == execution.executed_plan
+    assert action["initial_plan"] == execution.initial_plan
+    assert action["optimized_plan"] == execution.optimized_plan
+    assert action["parsed_plan"] == execution.parsed_plan
+    assert action["analyzed_plan"] == execution.analyzed_plan
+    assert action["operators"][0]["metrics"]["time"]["value"] == 42
+    assert action["operators"][0]["children"][0]["metrics"]["rows"] == 200
+    assert action["stages"][0]["tasks"] == 4
+    assert action["jobs"] == [7]
+    assert action["stats"]["peak_memory_bytes"] is None
+    assert action["plan_context"] == {"plan_origin": "query listener", "aqe_final_plan": True}
+    assert not action["context_omitted"]
+    assert "private" not in json.dumps(context)
+
+
+def test_spark_overview_includes_child_actions_and_actions_without_source():
+    """Review all captured actions without requiring a source location.
+
+    Preserve distinct run identities and support a focused action selection
+    while keeping source disclosure optional.
+
+    """
+    profile = _profile()
+    profile.root_run.spark_executions = [SparkExecution("root-action")]
+    profile.root_run.children[0].spark_executions = [
+        SparkExecution("child-action", location=SourceLocation("main", 2))
+    ]
+    context = build_context(profile)
+    overview = _data(build_prompt(context, scope="spark"))
+    assert [(item["id"], item["run_id"]) for item in overview["spark_executions"]] == [
+        ("root-action", "root"),
+        ("child-action", "child"),
+    ]
+    assert overview["spark_executions"][0]["source_id"] is None
+    assert overview["sources"][0]["reason"] == "Spark action trigger"
+    selected = _data(
+        build_prompt(context, scope="spark", execution_id="child-action", include_related=False)
+    )
+    assert selected["sources"] == []
+    assert [item["id"] for item in selected["spark_executions"]] == ["child-action"]
+
+
+def test_spark_line_retains_explicitly_linked_actions_without_location():
+    """Use recorded action links without guessing missing source positions.
+
+    The line's own correlation remains useful when the action collector
+    could not resolve a trigger location independently.
+
+    """
+    profile = _profile()
+    profile.root_run.lines[0].spark_executions = ["linked"]
+    profile.root_run.spark_executions = [SparkExecution("linked")]
+    action = _data(build_prompt(build_context(profile), "main", 2))["spark_executions"][0]
+    assert action["id"] == "linked"
+    assert action["source_id"] is None
+
+
+def test_large_spark_evidence_marks_partial_fields_and_stays_within_budget():
+    """Bound plans and nested metrics while retaining reviewable JSON.
+
+    JSON escaping counts toward the limit, including in operator descriptions
+    and stage details. Omitted evidence must be explicitly labeled.
+
+    """
+    profile = _profile()
+    profile.root_run.spark_executions = [
+        SparkExecution(
+            "large",
+            executed_plan="\x00" * 100_000,
+            operators=[SparkOperator("scan", "Scan", "large" * 20_000)],
+            stages=[{"id": index, "detail": "\x00" * 1000} for index in range(100)],
+        )
+    ]
+    prompt = build_prompt(build_context(profile), scope="spark")
+    action = _data(prompt)["spark_executions"][0]
+    assert len(prompt) <= 80_000
+    assert action["id"] == "large"
+    assert action["context_omitted"]
+    assert "[omitted]" in action["executed_plan"]
+
+
+@pytest.mark.parametrize(
+    "options", [{"scope": "spark"}, {"scope": "spark", "execution_id": "missing"}]
+)
+def test_spark_selection_rejects_missing_captured_actions(options):
+    """Reject selections that have no captured Spark evidence.
+
+    Parameters
+    ----------
+    options : dict[str, str]
+        Overview or action selection supplied by the report UI.
+
+    """
+    with pytest.raises(ValueError, match="Spark action"):
+        build_prompt(build_context(_profile()), **options)
 
 
 @pytest.mark.parametrize(

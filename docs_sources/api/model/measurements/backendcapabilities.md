@@ -1,7 +1,6 @@
 # BackendCapabilities
 
-Inspect `result.capabilities` before interpreting measurements. Unsupported
-metrics remain `None`; sampling observations are separate from exact hits.
+Collector features available through `result.capabilities`.
 
 :: linescope.model:BackendCapabilities
     :: signature

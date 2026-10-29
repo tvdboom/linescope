@@ -2,70 +2,43 @@
 
 ## Installation
 
-### Latest release
+Install LineScope in your script or notebook's environment. Python 3.11–3.15
+is supported.
 
-Install or upgrade to the latest release from PyPI with
-[uv](https://docs.astral.sh/uv/):
+### Latest release
 
 ```console
 uv pip install -U linescope
 ```
 
-See [dependencies](dependencies.md) for package versions and platform support.
-
 ### Latest source
 
-Install the latest source directly from the repository's `main` branch when
-you want changes that have not reached a release yet.
+For unreleased changes from `main`:
 
 ```console
-uv pip install -U git+https://github.com/tvdboom/linescope.git
+uv pip install -U git+https://github.com/tvdboom/linescope.git@main
 ```
 
 ### Optional dependencies
 
-Choose the extras needed by your workload. Each command installs LineScope and
-the dependencies for that integration. The base package remains sufficient for
-Python source profiling and driver memory collection.
-
-#### Scalene
-
-The `scalene` extra installs the Scalene sampling backend for CPU profiling and
-supported GPU measurements. It is available on Python 3.11–3.14. Select it
-explicitly with `backend="scalene"` in the [profile]:
-
-```console
-uv pip install -U "linescope[scalene]"
-```
-
-On Python 3.15, use Trace or the built-in Tachyon sampling backend instead.
-See [backends](user_guide/backends.md) for measurement and platform support.
-
-#### Notebooks
-
-The `notebook` extra installs IPython and ipykernel for cell magics, notebook
-execution hooks, and inline reports. Use it in the environment running your
-Jupyter kernel:
-
-```console
-uv pip install -U "linescope[notebook]"
-```
-
-See [notebooks](user_guide/notebooks.md) for single-cell and whole-session use.
-
-#### All integrations
-
-The `full` extra combines `scalene` and `notebook`:
+| Extra | Adds |
+| --- | --- |
+| `scalene` | CPU sampling and supported GPU metrics on Python 3.11–3.14 |
+| `notebook` | IPython cell magics and inline reports |
+| `full` | Both extras |
 
 ```console
 uv pip install -U "linescope[full]"
 ```
 
+Scalene is omitted on Python 3.15. See [dependencies](dependencies.md) for
+platform support.
+
 ## Usage
 
 ### From Python
 
-Wrap the code you want to measure in `profile`:
+Wrap the code to measure in `profile`:
 
 ```python
 from linescope import profile
@@ -75,12 +48,10 @@ with profile(memory=True):
     total = sum(value * value for value in values)
 ```
 
-Run this in a Python script. When the block exits, LineScope opens an HTML
-report in your browser. The default Trace backend records line timings and
-exact execution counts. With `memory=True`, it also collects process RAM and
-net retained Python allocation changes.
+The report opens when the block ends. Trace is the default backend;
+`memory=True` adds process RAM and retained Python allocation measurements.
 
-To save a report for later, set `display="none"` and keep the session:
+To save without opening a browser:
 
 ```python
 from linescope import profile
@@ -91,86 +62,49 @@ with profile(display="none") as session:
 session.save("linescope.html")
 ```
 
-See [reports](user_guide/reports.md) for source navigation and report controls.
-
 ### From the CLI
-
-Use the `linescope` command to run an existing Python script under the profiler
-without changing its source:
 
 ```console
 linescope your_script.py
-```
-
-The report opens in your browser when the script exits. To run an importable
-module, use `-m` as you would with `python -m`:
-
-```console
 linescope -m your_package.your_module
 ```
 
-Place LineScope options before the script path or `-m`. Arguments after the
-script path or module name go to your program. For example, enable memory
-collection, save the report, and pass `--rows` to your script:
+The report opens when the program exits. Put profiler options before the
+target; arguments after it go to your program:
 
 ```console
-linescope --memory --output linescope.html your_script.py --rows 100000
+linescope --memory --output report.html your_script.py --rows 100000
 ```
 
-Use `--display none` with `--output` when running without a browser:
-
-```console
-linescope --display none --output linescope.html your_script.py
-```
-
-Trace is the default backend. After installing the [Scalene extra](#scalene),
-select sampling explicitly with `--backend`:
-
-```console
-linescope --backend scalene --memory your_script.py
-```
-
-Run `linescope --help` or see the [CLI reference](cli/linescope.md) for all
-options. See [backends](user_guide/backends.md) for the available measurements.
+Use `--display none` to suppress the browser, or `--backend scalene` to select
+sampling. See the [CLI reference](cli/linescope.md) for all options.
 
 ### From a notebook
 
-After installing the [notebook extra](#notebooks), load the extension in your
-notebook:
+Install the `notebook` extra, then load the extension:
 
 ```python
 %load_ext linescope
 ```
 
-Put `%%profile` on the first line of a cell and request an inline summary:
+Profile a cell:
 
 ```python
-%%profile --backend trace --display cell-summary
+%%profile --display cell-summary
 
-values = list(range(100_000))
-total = sum(value * value for value in values)
+total = sum(value * value for value in range(100_000))
 ```
 
-After the cell finishes, a compact table appears inline with its source,
-line timings, and execution counts. Add `--memory` to include memory changes.
-Omit `--display cell-summary` to show the full report for that cell instead.
-
-To show a summary after each cell across several cells, start a session:
+For several cells, start a session, run your cells, then stop:
 
 ```python
 from linescope import profile
 
-session = profile.start(backend="trace", display="cell-summary")
+session = profile.start(display="end")
 ```
-
-Run the cells you want to measure normally. Each cell displays its own summary
-inline, while the session collects results for the complete notebook report.
-Finish in a separate cell and display the full report:
 
 ```python
 profile.stop()
-session.show(inline=True)
 ```
 
-You can also save it with `session.save("notebook.html")`. See
-[notebooks](user_guide/notebooks.md) for notebook-wide profiling and Spark use.
+See [notebooks](user_guide/notebooks.md) for display modes and Databricks.

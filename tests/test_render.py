@@ -566,13 +566,13 @@ class TestSourceReport:
         ("backend", "capabilities", "count_header"),
         [
             ("trace", BackendCapabilities(hit_counts=True), "Calls"),
-            ("scalene", BackendCapabilities(sampled=True, sample_counts=True), "Samples"),
-            ("tachyon", BackendCapabilities(sampled=True, sample_counts=True), "Samples"),
-            ("custom", BackendCapabilities(sampled=True), "Samples"),
+            ("scalene", BackendCapabilities(sampled=True, sample_counts=True), "Calls"),
+            ("tachyon", BackendCapabilities(sampled=True, sample_counts=True), "Calls"),
+            ("custom", BackendCapabilities(sampled=True), "Calls"),
         ],
     )
-    @pytest.mark.parametrize("count", [None, 0, 1234])
-    def test_function_count_column_follows_collection_method(
+    @pytest.mark.parametrize("count", [None, 0, 4, 1234])
+    def test_function_calls_and_averages_preserve_collection_semantics(
         self,
         result: ProfileResult,
         backend: str,
@@ -580,7 +580,7 @@ class TestSourceReport:
         count_header: str,
         count: int | None,
     ):
-        """Match the Files page order and select the collector's count label.
+        """Distinguish total function time from observed calls and averages.
 
         Preserve unknown counts, measured zeroes, and descending measured-time
         order for tracing, sampling, and custom collectors.
@@ -597,7 +597,7 @@ class TestSourceReport:
             Collection method and supported count measurements.
 
         count_header : str
-            Expected label for the count column after the location.
+            Call-count label retained even when sampling counts are available.
 
         count : int | None
             Recorded count, including unavailable and measured-zero cases.
@@ -614,16 +614,24 @@ class TestSourceReport:
 
         assert [header.text() for header in table.find_all("th")] == [
             "Time",
-            "Location",
             count_header,
-            "Source",
+            "Avg / call",
+            "Location",
             "Lines",
+            "Source",
         ]
         rows = table.find_all("tr")[1:]
-        expected_count = "—" if count is None else f"{count:,}"
+        expected_count = "—" if capabilities.sampled or count is None else f"{count:,}"
+        averages = {
+            4: ("17.50 ms", "12.50 ms"),
+            1234: ("56.7 µs", "40.5 µs"),
+        }
+        expected_average = (
+            averages.get(count, ("—", "—")) if not capabilities.sampled else ("—", "—")
+        )
         assert [cell_values(row) for row in rows] == [
-            ["70.00 ms", "main.py:1", expected_count, "foo()", "1"],
-            ["50.00 ms", "main.py:2", expected_count, "bar()", "1"],
+            ["70.00 ms", expected_count, expected_average[0], "main.py:1", "1", "foo()"],
+            ["50.00 ms", expected_count, expected_average[1], "main.py:2", "1", "bar()"],
         ]
         for row, line in zip(rows, [1, 2], strict=True):
             link = row.find_all("a")[0]
@@ -631,11 +639,13 @@ class TestSourceReport:
                 "data-line"
             ] == str(line)
 
-    def test_mixed_function_counts_keep_traced_calls_unavailable(self, result: ProfileResult):
-        """Keep tracing calls out of the mixed report's Samples column.
+    def test_mixed_function_counts_preserve_traced_calls_and_unknown_sampled_calls(
+        self, result: ProfileResult
+    ):
+        """Preserve exact calls without substituting sampling observations.
 
-        Use sampled child measurements to select Samples and retain unknown
-        markers for the traced parent functions.
+        Sampled child functions retain unavailable call counts and averages.
+        The traced parent keeps its own observed calls and total durations.
 
         Parameters
         ----------
@@ -662,15 +672,16 @@ class TestSourceReport:
 
         assert [header.text() for header in table.find_all("th")] == [
             "Time",
+            "Calls",
+            "Avg / call",
             "Location",
-            "Samples",
-            "Source",
             "Lines",
+            "Source",
         ]
         assert [cell_values(row) for row in table.find_all("tr")[1:]] == [
-            ["90.00 ms", "child.py:1", "23", "sampled()", "2"],
-            ["70.00 ms", "main.py:1", "—", "foo()", "1"],
-            ["50.00 ms", "main.py:2", "—", "bar()", "1"],
+            ["90.00 ms", "—", "—", "child.py:1", "2", "sampled()"],
+            ["70.00 ms", "1", "70.00 ms", "main.py:1", "1", "foo()"],
+            ["50.00 ms", "1", "50.00 ms", "main.py:2", "1", "bar()"],
         ]
         assert result.root_run.functions[0].calls == 1
 
@@ -682,7 +693,7 @@ class TestSourceReport:
         """Explain function time and display available source line counts.
 
         Distinguish unavailable spans from real counts and keep the description
-        to one sentence for both traced and sampled reports.
+        clear for both traced and sampled reports.
 
         Parameters
         ----------
@@ -703,11 +714,11 @@ class TestSourceReport:
         table = page.find_all("table")[0]
         expected = "—" if line_count is None else f"{line_count:,}"
 
-        assert cell_values(table.find_all("tr")[1])[-1] == expected
+        assert cell_values(table.find_all("tr")[1])[-2] == expected
         assert "Self time" not in page.text()
         assert page.find_all("p", css="muted")[0].text() == (
-            "Time spent on each function's own lines, excluding time"
-            " in other project functions it calls."
+            "Time totals all calls on each function's own lines, excluding"
+            " other project functions it calls. Avg / call is Time divided by Calls."
         )
         assert function.line_count == line_count
         assert function.total_time_ns == 70_000_000
@@ -1162,7 +1173,9 @@ class TestReportNavigation:
         assert len(ids) == len(set(ids))
         for link in document.find_all("a"):
             target = link.attributes.get("href", "")
-            if "header-detail" in (link.attributes.get("class") or "").split():
+            if {"header-detail", "ai-help-link"}.intersection(
+                (link.attributes.get("class") or "").split()
+            ):
                 continue
             assert target.startswith("#")
             assert target[1:] in ids
@@ -1872,7 +1885,10 @@ class TestSparkMetricPresentation:
         ]
         assert [row.attributes["data-column-2"] for row in rows] == ["1000", ""]
         assert table.find_all("th")[2].attributes["aria-sort"] == "descending"
-        assert [button.attributes["data-sort-type"] for button in table.find_all("button")] == [
+        assert [
+            button.attributes["data-sort-type"]
+            for button in table.find_all("button", css="table-sort")
+        ] == [
             "text",
             "text",
             "number",
@@ -2721,8 +2737,11 @@ class TestReportSafety:
             for node in document.find_all("a")
             if (node.attributes.get("href") or "").startswith(("http:", "https:"))
         ]
-        assert external_links == document.find_all("a", css="header-detail")
-        assert len(external_links) == 3
+        assert external_links == [
+            *document.find_all("a", css="header-detail"),
+            *document.find_all("a", css="ai-help-link"),
+        ]
+        assert len(external_links) == 4
         assert all(
             link.attributes["href"].startswith("https://tvdboom.github.io/linescope/user_guide/")
             for link in external_links

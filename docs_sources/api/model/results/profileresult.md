@@ -1,8 +1,6 @@
 # ProfileResult
 
-Read `session.result` or `profile.result` for the complete profile, including
-source snapshots, warnings, and child runs. Normal profiling returns this
-object without requiring you to construct it.
+The result available through `session.result` or `profile.result`.
 
 :: linescope.model:ProfileResult
     :: signature

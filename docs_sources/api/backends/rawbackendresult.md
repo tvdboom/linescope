@@ -1,8 +1,7 @@
 # RawBackendResult
-------------------
 
-Return this record from [ProfilerBackend.result][profilerbackend-result] with
-raw line measurements, elapsed driver time, and collection diagnostics.
+Return from [ProfilerBackend.result][profilerbackend-result] with line
+measurements, call counts, and diagnostics.
 
 :: linescope.backends:RawBackendResult
     :: signature

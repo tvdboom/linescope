@@ -51,24 +51,18 @@ class Config:
     Parameters
     ----------
     backend : str | [Backend], default=default_backend()
-        Built-in backend member, its string value, or a registered engine
-        name. Default to Trace on Python 3.11-3.15. Select `scalene` for
-        Python 3.11-3.14 sampling or `tachyon` for Python 3.15 sampling.
+        Built-in or registered collector name. Defaults to Trace.
 
     memory : bool, default=False
-        Collect process RAM and retained Python allocation changes
-        separately, using the shared memory collector.
+        Collect process RAM and retained Python allocations separately.
 
     gpu : bool, default=False
         Collect supported Scalene GPU utilization and device memory. Trace
         warns and continues Python profiling without GPU measurements.
 
     sample_rate : int | None, default=None
-        Target samples per second for Scalene or Tachyon. None preserves
-        the backend default of 1000 for Scalene and Tachyon. Higher
-        rates increase collection overhead. Trace ignores this setting.
-        The achieved rate can differ depending on operating-system timer
-        resolution and scheduling settings.
+        Target samples per second for Scalene or Tachyon. None uses 1000.
+        Trace ignores this setting; the achieved rate can vary.
 
     root : str | None, default=None
         Project directory; otherwise discover the nearest `pyproject.toml`.
@@ -80,23 +74,19 @@ class Config:
         Package names, filesystem paths, or project-relative glob patterns.
 
     spark : bool, default=False
-        Observe Spark driver actions lazily when Spark methods are used.
-        Require PySpark to be available in the existing environment.
-        Leave PySpark unloaded and its JVM listener dormant until needed.
+        Observe existing Spark actions. Requires PySpark; no actions are
+        forced.
 
     notebooks : bool, default=True
-        Snapshot notebook cells and instrument available notebook
-        integrations.
+        Capture executed notebook cells and their source links.
 
     child_notebooks : bool, default=True
-        Automatically snapshot and profile Databricks child notebooks using
-        temporary workspace copies when SDK access permits it.
+        Profile Databricks child notebooks through temporary workspace copies.
+        Requires SDK access and workspace permissions.
 
     display : str | [DisplayMode], default=[DisplayMode].END
-        Display a full report at completion (`end`) or after each cell (`cell`),
-        compact inline cell results (`cell-summary`), or only on request
-        (`none`). Cell summaries do not automatically display a full report
-        at stop.
+        Full report at stop (`end`), cumulative report after each cell (`cell`),
+        compact cell results (`cell-summary`), or no automatic display (`none`).
 
     output : str | None, default=None
         Explicit report destination. None opens a temporary HTML report.
@@ -104,13 +94,10 @@ class Config:
     Attributes
     ----------
     backend : str | [Backend]
-        Built-in backend member, its string value, or a registered engine name.
-        Default to Trace on Python 3.11-3.15. Select `scalene` for Python
-        3.11-3.14 sampling or `tachyon` for Python 3.15 sampling.
+        Built-in or registered collector name. Defaults to Trace.
 
     memory : bool
-        Collect process RAM and retained Python allocation changes separately,
-        using the shared memory collector.
+        Collect process RAM and retained Python allocations separately.
 
     gpu : bool
         Collect supported Scalene GPU utilization and device memory. Trace
@@ -126,30 +113,26 @@ class Config:
         Package names, filesystem paths, or project-relative glob patterns.
 
     spark : bool
-        Observe Spark driver actions lazily when Spark methods are used.
-        Require PySpark in the existing environment when enabled. Leave PySpark
-        unloaded and its JVM listener dormant until needed.
+        Observe existing Spark actions. Requires PySpark; no actions are
+        forced.
 
     notebooks : bool
-        Snapshot notebook cells and instrument available notebook integrations.
+        Capture executed notebook cells and their source links.
 
     child_notebooks : bool
-        Automatically snapshot and profile Databricks child notebooks using
-        temporary workspace copies when SDK access permits it.
+        Profile Databricks child notebooks through temporary workspace copies.
+        Requires SDK access and workspace permissions.
 
     display : str | [DisplayMode]
-        Full report at completion (`end`) or after each cell (`cell`), compact
-        inline cell results (`cell-summary`), or only on request (`none`).
+        Full report at stop (`end`), cumulative report after each cell (`cell`),
+        compact cell results (`cell-summary`), or no automatic display (`none`).
 
     output : str | None
         Explicit report destination. None opens a temporary HTML report.
 
     sample_rate : int | None
-        Target samples per second for Scalene or Tachyon. None preserves the
-        backend default of 1000 for Scalene and Tachyon. Higher rates
-        increase collection overhead. Trace ignores this setting.
-        The achieved rate can differ depending on operating-system timer
-        resolution and scheduling settings.
+        Target samples per second for Scalene or Tachyon. None uses 1000.
+        Trace ignores this setting; the achieved rate can vary.
 
     See Also
     --------

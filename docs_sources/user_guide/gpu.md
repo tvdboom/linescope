@@ -1,60 +1,45 @@
 # GPU
------
 
-Use Scalene to collect GPU measurements alongside Python line time. Install
-`linescope[scalene]` or `linescope[full]` on Python 3.11–3.14, then enable
-collection:
+Install `linescope[scalene]` on Python 3.11–3.14, then enable GPU collection:
 
 ```python
 from linescope import profile
 
-with profile(backend="scalene", gpu=True) as session:
+with profile(backend="scalene", gpu=True):
     train_model()
 ```
 
-For scripts, use `linescope --backend scalene --gpu train.py`. Notebook cell
-magic also accepts `--backend scalene --gpu`. See the
-[GPU notebook](../examples/notebooks/gpu_example.ipynb) for a CUDA example.
+The CLI equivalent is `linescope --backend scalene --gpu train.py`.
+Cell magic accepts the same flags. See the
+[GPU notebook](../examples/notebooks/gpu_example.ipynb) for a CUDA workload.
 
-Python can launch device work and return before it finishes. Synchronize queued
-work within the session when you need it included in the observation period.
-`gpu=True` enables measurement; your workload's device selection still
-determines where calculations run.
-
-!!! warning "Select Scalene for GPU measurements"
-    Trace is the default and cannot collect GPU metrics. Requesting `gpu=True`
-    with Trace emits a `RuntimeWarning`, records it in
-    `session.result.warnings`, and continues Python profiling. Tachyon rejects
-    GPU requests.
+Synchronize queued device work inside the session to include it in the
+measurement period. `gpu=True` collects metrics; it does not select a device
+for your calculations.
 
 ## Collection support
 
-Scalene's NVIDIA and AWS Neuron collectors supply device measurements. Apple
-MPS metrics are unavailable through the adapter. Missing devices, unsupported
-runtimes, or failed samples leave measurements unavailable and record
-collection diagnostics.
+Scalene supports NVIDIA and AWS Neuron metrics. Apple MPS metrics are
+unavailable. Trace warns and continues without GPU data; Tachyon rejects GPU
+requests.
 
-NVIDIA utilization can include other processes when per-process accounting is
-unavailable. Device-memory readings refer to the profiled process, but NVIDIA
-WDDM drivers on Windows do not expose them through NVML. GPU time sampling can
-continue when memory readings are unavailable.
+NVIDIA utilization may include other processes when per-process accounting is
+unavailable. Device memory refers to the profiled process, but Windows WDDM
+drivers do not expose it through NVML. GPU time can still be collected.
 
 ## Read the GPU view
 
-Select **GPU** to compare attributed GPU time and sampled memory peaks with
-**Driver time**, then follow a source link to the measured line. Source tables
-also include **GPU time** and **GPU peak memory**. When memory is unavailable,
-the GPU view shows the recorded collection reason if one is available.
+The **GPU** view and source tables show estimated device time and sampled peak
+memory beside driver time. Collection failures appear as diagnostics.
 
-GPU time can overlap CPU work, so do not add it to driver wall time. Device
-memory is separate from [Python process RAM](backends.md#memory) and
-[Spark executor metrics](spark.md#plans-and-metrics). Peaks are sampled and can
-miss short spikes.
+GPU and CPU work can overlap. Do not add GPU time to driver wall time. Device
+memory is separate from [process RAM](backends.md#memory) and
+[Spark metrics](spark.md#plans-and-metrics). Sampled peaks can miss brief
+spikes.
 
 ## Measurement model
 
-[GPUStats](../api/model/memory/gpustats.md) stores estimated GPU time and
-sampled peak device memory for a source line. A
-[custom backend](backends.md#custom-backends) can supply these through
-`RawLine.gpu` and declare
-`BackendCapabilities.gpu=True`.
+[GPUStats](../api/model/memory/gpustats.md) stores line-level device
+measurements.
+A [custom backend](backends.md#custom-backends) supplies them through
+`RawLine.gpu` with `BackendCapabilities.gpu=True`.

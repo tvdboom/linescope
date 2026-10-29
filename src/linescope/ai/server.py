@@ -396,7 +396,7 @@ class _ReportHandler(BaseHTTPRequestHandler):
         """
         if not self._authorized(mutation=True):
             return
-        if self.path not in ("/api/prompt", "/api/suggest"):
+        if self.path not in ("/api/prompt", "/api/suggest", "/api/models"):
             self._json(404, {"error": "Not found."})
             return
         if (
@@ -427,9 +427,12 @@ class _ReportHandler(BaseHTTPRequestHandler):
             self._json(400, {"error": "The request must be a JSON object."})
             return
         try:
-            result = (
-                self._prompt(payload) if self.path == "/api/prompt" else self._suggest(payload)
-            )
+            handler = {
+                "/api/prompt": self._prompt,
+                "/api/suggest": self._suggest,
+                "/api/models": self._models,
+            }[self.path]
+            result = handler(payload)
         except ProviderError as error:
             self._json(502, {"error": str(error)})
             return
@@ -439,6 +442,53 @@ class _ReportHandler(BaseHTTPRequestHandler):
             )
             return
         self._json(200, result)
+
+    def _models(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """List models using only the selected connection's authentication.
+
+        The browser cannot replace the server-owned agent command. Model
+        discovery never receives captured source or invokes inference.
+
+        Parameters
+        ----------
+        payload : dict[str, Any]
+            Connection identifier, optional endpoint, and transient credential.
+
+        Returns
+        -------
+        dict[str, Any]
+            Model choices without credentials or account metadata.
+
+        """
+        from linescope.ai.models import list_agent_models, list_api_models
+
+        values = {name: payload.get(name, "") for name in ("provider", "endpoint", "api_key")}
+        if any(not isinstance(value, str) for value in values.values()):
+            raise ValueError("Invalid connection settings")
+        connection = Connection(values["provider"])
+        server = cast(_ReportServer, self.server)
+        if server.cancel_event.is_set():
+            raise ProviderError("The local viewer is shutting down.")
+        if connection in (Connection.OPENAI, Connection.ANTHROPIC, Connection.COMPATIBLE):
+            return list_api_models(**values)
+        if connection != configured_agent(server.agent_command):
+            raise ProviderError("Restart the viewer with the selected --ai-agent to load models.")
+        if not server.inference_lock.acquire(blocking=False):
+            raise ProviderError(
+                "The agent is busy. Keep Default or load models after it finishes."
+            )
+        try:
+            return list_agent_models(
+                server.agent_command,
+                api_key=values["api_key"],
+                cancel_event=server.cancel_event,
+            )
+        except OSError:
+            raise ProviderError(
+                "Could not start model discovery. Check the agent installation."
+            ) from None
+        finally:
+            server.inference_lock.release()
 
     def _prompt(self, payload: dict[str, Any]) -> dict[str, str]:
         """Build a prompt from the viewer's captured report.
@@ -459,16 +509,23 @@ class _ReportHandler(BaseHTTPRequestHandler):
         from linescope.ai.context import build_prompt
 
         context = cast(_ReportServer, self.server).context
-        source_id = payload["source_id"]
+        scope_options = {key: payload[key] for key in ("scope", "execution_id") if key in payload}
+        execution_id = scope_options.get("execution_id")
+        if isinstance(execution_id, str):
+            scope_options["execution_id"] = context.get("spark_anchors", {}).get(
+                execution_id, execution_id
+            )
+        source_id = payload.get("source_id")
         if isinstance(source_id, str):
             source_id = context.get("source_anchors", {}).get(source_id, source_id)
         prompt = build_prompt(
             context,
             source_id,
-            payload["line"],
+            payload.get("line"),
             goal=payload.get("goal", "both"),
             problem=payload.get("problem", ""),
             include_related=payload.get("include_related", True),
+            **scope_options,
         )
         return {"prompt": prompt}
 

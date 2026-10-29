@@ -1,7 +1,6 @@
 # DisplayMode
 
-Import `DisplayMode` from `linescope` to choose when a session displays its
-report. Enum constructors also accept the supported string values.
+Import from `linescope`, or use a supported string value.
 
 :: linescope.enums:DisplayMode
     :: signature

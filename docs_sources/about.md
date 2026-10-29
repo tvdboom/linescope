@@ -1,26 +1,19 @@
 # About
--------
-## What is it?
-LineScope is an open-source source profiler for Python. It puts your code at the
-center of a readable HTML report, with timing heatmaps, function links, notebook
-cells, memory measurements and Spark execution plans. Work inside third-party
-libraries stays attributed to the project line that called them. The goal is
-simple: find the expensive lines, understand what they do, and make your code
-faster. Click [here][getting-started] to get started.
-<br>
-## What can I do with it?
-Profile a script, a package or a notebook, inspect complete source files and
-follow functions into their definitions. Choose a collector for your workload,
-inspect available memory and GPU metrics, and correlate Spark actions with their
-executed plans. Click on the icons to read more about its main functionalities.
+
+LineScope profiles Python scripts, packages, and notebooks. Its HTML reports
+show timings beside captured source, with memory metrics, definition links,
+and Spark plans. Library costs stay attributed to the calling project line.
+
+[Get started](getting_started.md) or browse the guides below.
+
 <div class="row">
 <div class="column">
 <div class="icon">
 <a
-href="../user_guide/backends/#performance" draggable="false"><img
-src="../img/icons/performance.svg" alt="Performance"
+href="../user_guide/ai/" draggable="false"><img
+src="../img/icons/ai.svg" alt="AI suggestions"
 draggable="false"><figcaption style="margin-top:
--8px"><strong>Performance</strong></figcaption></a></div></div> <div
+-8px"><strong>AI suggestions</strong></figcaption></a></div></div> <div
 class="column"><div class="icon"><a href="../user_guide/reports/"
 draggable="false"><img src="../img/icons/reports.svg" alt="HTML reports"
 draggable="false"><figcaption style="margin-top: -8px"><strong>HTML
@@ -52,22 +45,12 @@ class="icon"><a href="../user_guide/backends/" draggable="false"><img
 src="../img/icons/backends.svg" alt="Backends" draggable="false"><figcaption
 style="margin-top: -8px"><strong>Backends</strong></figcaption></a></div></div>
 </div>
-## Who is it intended for?
-* **Everyday Python users** who want to quickly find bottlenecks and make their
-  scripts faster without learning a complex profiling toolchain.
-* **Notebook users and data scientists** who want to understand where a cell or
-  an entire analysis spends its time.
-* **Data engineers** who want to connect Python driver code to Spark actions,
-  query plans and the executor metrics their environment makes available.
-* **Learners and educators** who want clear, visual feedback about algorithms,
-  library calls and memory use. LineScope focuses on practical insights and
-  meaningful improvements. Its timings are not a substitute for dedicated
-  microbenchmarks when tuning differences of milliseconds down to nanoseconds.
-<br>
+
 ## Support
-LineScope recognizes the support from [JetBrains](https://www.jetbrains.com) by
-providing core project contributors with a set of developer tools free of
-charge.
+
+[JetBrains](https://www.jetbrains.com) provides free development tools to
+project contributors.
+
 <div class="support-logos">
 <a href="https://www.jetbrains.com/community/opensource/#support"><img
 src="../img/support/jetbrains.png" alt="JetBrains"></a> <a

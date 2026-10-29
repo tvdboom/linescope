@@ -113,7 +113,7 @@ def test_enrolled_frame_without_call_and_stopped_forwarding(collector):
     """
     active = frame()
     assert collector._trace(active, "line", None) == collector._trace
-    assert collector.result().function_calls == {}
+    assert collector.result().function_calls == {("main.py", "work", 1): None}
     local = Mock(return_value="forwarded")
     collector._previous_locals[id(active)] = local
     collector._running = False

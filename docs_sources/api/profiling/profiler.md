@@ -1,10 +1,6 @@
 # profiler
-----------
 
-Use this alias for [profile], the shared, callable [ProfileController] instance.
-Import `profiler` directly from `linescope`. The identity `profiler is profile`
-is `True`: calling either name creates a session, and their `start()`, `stop()`,
-and `result` operate on the same retained session.
+An alias for [profile]. Both names use the same controller and session.
 
 :: linescope:profiler
     :: signature

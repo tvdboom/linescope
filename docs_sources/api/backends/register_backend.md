@@ -1,5 +1,6 @@
 # register_backend
-------------------
+
+Register a [ProfilerBackend] factory returning [RawBackendResult] measurements.
 
 :: linescope:register_backend
     :: signature
@@ -8,7 +9,3 @@
         - parameters
         - returns
     :: see also
-
-Implement [ProfilerBackend] to register a custom collector. Its result uses
-[RawBackendResult] and [RawLine] records before LineScope normalizes
-measurements for reporting.

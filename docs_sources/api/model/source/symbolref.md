@@ -1,8 +1,6 @@
 # SymbolRef
 
-Inspect a line's `calls` for individual source tokens linked to definitions.
-LineScope creates these links only when their destinations resolve
-conservatively.
+Resolved definition links in a line's `calls` field.
 
 :: linescope.model:SymbolRef
     :: signature

@@ -1,9 +1,7 @@
 # ProfileController
--------------------
 
-Create a controller when you need an independent owner for explicit profiling
-sessions. The shared [profile] and [profiler] entry points are instances of this
-class. Import `ProfileController` directly from `linescope`.
+Create a separate controller for independent session ownership. For the shared
+controller, use [profile].
 
 :: linescope.api:ProfileController
     :: signature

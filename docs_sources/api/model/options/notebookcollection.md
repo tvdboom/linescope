@@ -1,7 +1,6 @@
 # NotebookCollection
 
-Inspect child notebook collection metadata for the data available from a
-separate invocation. Import `NotebookCollection` from `linescope.enums`.
+Child notebook collection status. Import from `linescope.enums`.
 
 :: linescope.enums:NotebookCollection
     :: signature

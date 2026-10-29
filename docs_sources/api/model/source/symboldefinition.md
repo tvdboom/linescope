@@ -1,7 +1,6 @@
 # SymbolDefinition
 
-Inspect `result.symbols` for statically resolved project definitions. Each
-record identifies its snapshot and the location where the definition begins.
+Project definitions in `result.symbols`.
 
 :: linescope.model:SymbolDefinition
     :: signature

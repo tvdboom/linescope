@@ -1,7 +1,6 @@
 # SourceUnit
 
-Access complete captured source through `result.sources`. Snapshot identifiers
-connect source text to measurements and navigation links.
+Source snapshots in `result.sources`, keyed by their identifiers.
 
 :: linescope.model:SourceUnit
     :: signature

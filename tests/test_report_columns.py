@@ -104,17 +104,20 @@ def test_shared_columns_keep_order_and_extra_metrics(
         "files": ["Time", "Location", *count_headers, "Kind", "Lines"],
         "functions": [
             "Time",
+            "Calls",
+            "Avg / call",
             "Location",
-            "Samples" if sampled else "Calls",
-            "Source",
             "Lines",
+            "Source",
         ],
     }
     for page_id, expected in expected_headers.items():
         table = document.find_all("section", id=page_id)[0].find_all("table")[0]
         assert [header.text() for header in table.find_all("th")] == expected
         assert all(len(cell_values(row)) == len(expected) for row in table.find_all("tr")[1:])
-        if sampled:
+        if sampled and page_id == "functions":
+            assert cell_values(table.find_all("tr")[1])[1:3] == ["—", "—"]
+        elif sampled:
             assert cell_values(table.find_all("tr")[1])[2] == ("3" if known_samples else "—")
 
     shared = ["", "Time", *(["Samples"] if known_samples else [])]
