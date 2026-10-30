@@ -1102,3 +1102,65 @@ def test_spark_prompt_resolves_saved_action_anchors_without_source():
     assert '"source_id": null' in response["prompt"]
     with pytest.raises(ValueError, match="Spark action"):
         handler._prompt({"scope": "spark", "execution_id": "missing"})
+
+
+def test_quick_selection_resolves_snapshot_and_retains_inclusive_range():
+    """Build immediate replacement prompts from the viewer-owned snapshot.
+
+    Validate range bounds after resolving an opaque source anchor so a client
+    cannot replace the snapshot or select a different notebook revision.
+
+    """
+    source = SourceUnit("captured", "worker.py", "values = []\nvalues.append(1)\n")
+    profile = ProfileResult(ProfileRun(), {source.id: source}, "trace", BackendCapabilities())
+    context = server._read_context(render_html(profile))
+    handler = object.__new__(server._ReportHandler)
+    handler.server = SimpleNamespace(context=context)
+    anchor = next(iter(context["source_anchors"]))
+    response = handler._prompt(
+        {"source_id": anchor, "line": 1, "end_line": 2, "response_mode": "quick"}
+    )
+    prompt = response["prompt"]
+    data = json.loads(prompt[prompt.index('{"goal":') :])
+    assert data["selection"] == {"start_line": 1, "end_line": 2}
+    assert data["sources"][0]["source_id"] == "captured"
+    assert [item["text"] for item in data["sources"][0]["source_lines"]] == [
+        "values = []",
+        "values.append(1)",
+    ]
+    assert "Return one fenced Python code block" in prompt
+    assert "at most four short lines" in prompt
+    assert "No performance gain to update." in prompt
+    assert data["goal"] == "time"
+    with pytest.raises(ValueError, match="valid range"):
+        handler._prompt({"source_id": anchor, "line": 1, "end_line": 3})
+
+
+def test_disjoint_selection_resolves_snapshot_and_preserves_exact_lines():
+    """Forward exact selected lines without trusting client source contents.
+
+    Keep intervening source available as context in both response modes.
+
+    """
+    source = SourceUnit("captured", "worker.py", "first = 1\ncontext = 2\nlast = 3\n")
+    profile = ProfileResult(ProfileRun(), {source.id: source}, "trace", BackendCapabilities())
+    context = server._read_context(render_html(profile))
+    handler = object.__new__(server._ReportHandler)
+    handler.server = SimpleNamespace(context=context)
+    anchor = next(iter(context["source_anchors"]))
+    for mode in ("detailed", "quick"):
+        response = handler._prompt(
+            {
+                "source_id": anchor,
+                "line": 1,
+                "end_line": 3,
+                "selected_lines": [1, 3],
+                "response_mode": mode,
+            }
+        )
+        prompt = response["prompt"]
+        data = json.loads(prompt[prompt.index('{"goal":') :])
+        assert data["selection"] == {"start_line": 1, "end_line": 3, "lines": [1, 3]}
+        assert data["sources"][0]["source_id"] == "captured"
+    with pytest.raises(ValueError, match="valid lines"):
+        handler._prompt({"source_id": anchor, "line": 1, "selected_lines": [1, 4]})

@@ -12,7 +12,6 @@ from importlib.metadata import version
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 from tempfile import TemporaryDirectory
 from threading import Event
@@ -22,7 +21,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit, urlunsplit
 from urllib.request import Request, build_opener
 
-from linescope.ai.agents import LocalAgent, _stop_process, agent_command
+from linescope.ai.agents import LocalAgent, _agent_executable, _stop_process, agent_command
 from linescope.ai.connections import Connection, configured_agent, credential_environment
 from linescope.ai.providers import ProviderError, _endpoint, _NoRedirect
 
@@ -263,9 +262,9 @@ def _codex_models(
     """
     if command != agent_command(LocalAgent.CODEX):
         raise ProviderError("Configure the Codex preset before loading its models.")
-    executable = shutil.which(command[0])
+    executable = _agent_executable(command)
     if executable is None or Path(executable).suffix.lower() in {".bat", ".cmd"}:
-        raise ProviderError("Install a native Codex CLI and run codex login first.")
+        raise ProviderError("Codex is unavailable in this viewer.")
     if len(api_key) > 8192 or any(
         ord(character) < 32 or ord(character) > 126 for character in api_key
     ):

@@ -11,10 +11,12 @@ from pathlib import Path
 import subprocess
 import sys
 from threading import Event, Timer
+from types import SimpleNamespace
 
 from click.testing import CliRunner
 import pytest
 
+from linescope.ai import agents
 from linescope.ai.agents import LocalAgent, agent_command, request_agent_suggestion
 from linescope.cli import main
 
@@ -102,6 +104,56 @@ def test_agent_presets_are_noninteractive_and_restrict_tools():
     assert "--safe-mode" in claude
     assert claude[claude.index("--disallowedTools") + 1] == "*"
     assert "--no-session-persistence" in claude
+
+
+@pytest.mark.parametrize("path_command", [None, "codex.cmd"])
+def test_windows_codex_finds_desktop_cli(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, path_command: str | None
+):
+    """Use the newest desktop CLI when a terminal lacks a native command.
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        Restore platform, PATH lookup, and installation directory overrides.
+
+    tmp_path : Path
+        Isolated desktop installation tree with two native CLI versions.
+
+    path_command : str | None
+        Missing command or unsupported batch wrapper returned by PATH lookup.
+
+    """
+    monkeypatch.setattr(agents, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr(agents.shutil, "which", lambda _name: path_command)
+    directory = tmp_path / "OpenAI" / "Codex" / "bin"
+    old = directory / "old" / "codex.exe"
+    recent = directory / "recent" / "codex.exe"
+    for path in (old, recent):
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"native CLI fixture")
+    os.utime(old, (100, 100))
+    os.utime(recent, (200, 200))
+
+    assert agents._agent_executable(agent_command("codex")) == str(recent.resolve())
+    assert agents._agent_executable(("custom-agent",)) == path_command
+
+
+def test_windows_codex_prefers_native_command_on_path(monkeypatch: pytest.MonkeyPatch):
+    """Respect a native CLI on PATH even when a batch wrapper shadows it.
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        Restore platform and executable lookup substitutions.
+
+    """
+    monkeypatch.setattr(agents, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(
+        agents.shutil, "which", {"codex": "codex.cmd", "codex.exe": "codex.exe"}.get
+    )
+    assert agents._agent_executable(agent_command("codex")) == "codex.exe"
 
 
 def test_agent_shutdown_cancels_running_process(tmp_path):

@@ -16,7 +16,7 @@ from urllib.error import HTTPError
 
 import pytest
 
-from linescope.ai import models
+from linescope.ai import agents, models
 from linescope.ai.agents import agent_command
 from linescope.ai.providers import ProviderError
 
@@ -253,6 +253,7 @@ def codex_process(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     transcript = tmp_path / "messages.jsonl"
     state = {
         "children": [],
+        "commands": [],
         "script": """
 import json
 import sys
@@ -292,6 +293,7 @@ for line in sys.stdin:
         """
         if command[0] == "taskkill":
             return original(command, **kwargs)
+        state["commands"].append(command)
         assert command[1:] == ["app-server", "--listen", "stdio://"]
         assert kwargs["shell"] is False
         child = original(
@@ -300,7 +302,7 @@ for line in sys.stdin:
         state["children"].append((child, kwargs))
         return child
 
-    monkeypatch.setattr(models.shutil, "which", lambda _name: sys.executable)
+    monkeypatch.setattr(agents.shutil, "which", lambda _name: sys.executable)
     monkeypatch.setattr(models.subprocess, "Popen", launch)
     state["transcript"] = transcript
     try:
@@ -310,6 +312,52 @@ for line in sys.stdin:
             if child.poll() is None:
                 child.kill()
             child.wait()
+
+
+def test_codex_catalog_finds_desktop_cli_without_terminal_path(
+    codex_process: dict, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """Load models with the installed desktop CLI outside terminal PATH.
+
+    Parameters
+    ----------
+    codex_process : dict
+        Offline app server with protocol and child process captures.
+
+    monkeypatch : pytest.MonkeyPatch
+        Restore platform, installation location, and PATH substitutions.
+
+    tmp_path : Path
+        Isolated native desktop executable location.
+
+    """
+    executable = tmp_path / "OpenAI" / "Codex" / "bin" / "desktop" / "codex.exe"
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"native CLI fixture")
+    monkeypatch.setattr(agents, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr(agents.shutil, "which", lambda _name: None)
+
+    result = models.list_agent_models(agent_command("codex"))
+    assert {item["label"] for item in result["models"]} == {"Sol", "Astra"}
+    assert codex_process["commands"][0][0] == str(executable.resolve())
+    child, options = codex_process["children"][0]
+    assert child.poll() is not None
+    assert not Path(options["cwd"]).exists()
+
+
+def test_missing_codex_catalog_reports_availability(monkeypatch: pytest.MonkeyPatch):
+    """Report an unavailable client without installation copy in the panel.
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        Restore the missing executable lookup after the request.
+
+    """
+    monkeypatch.setattr(models, "_agent_executable", lambda _command: None)
+    with pytest.raises(ProviderError, match="Codex is unavailable in this viewer"):
+        models.list_agent_models(agent_command("codex"))
 
 
 def test_codex_catalog_initializes_lists_pages_and_cleans_up(codex_process: dict):

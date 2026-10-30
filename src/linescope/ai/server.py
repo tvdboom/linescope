@@ -509,7 +509,11 @@ class _ReportHandler(BaseHTTPRequestHandler):
         from linescope.ai.context import build_prompt
 
         context = cast(_ReportServer, self.server).context
-        scope_options = {key: payload[key] for key in ("scope", "execution_id") if key in payload}
+        scope_options = {
+            key: payload[key]
+            for key in ("scope", "execution_id", "end_line", "selected_lines", "response_mode")
+            if key in payload
+        }
         execution_id = scope_options.get("execution_id")
         if isinstance(execution_id, str):
             scope_options["execution_id"] = context.get("spark_anchors", {}).get(

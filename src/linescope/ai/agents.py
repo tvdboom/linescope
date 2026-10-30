@@ -14,6 +14,7 @@ from pathlib import Path
 import shutil
 import signal
 import subprocess
+import sys
 from tempfile import TemporaryDirectory
 from threading import Event
 import time
@@ -116,6 +117,42 @@ def agent_command(agent: str | LocalAgent) -> tuple[str, ...]:
         "--silent",
         "--log-level=none",
     )
+
+
+def _agent_executable(command: tuple[str, ...]) -> str | None:
+    """Find the configured executable and an installed Windows Codex client.
+
+    Prefer the caller's PATH. The Windows desktop app keeps its native CLI
+    outside a normal terminal's PATH; use its newest installed executable
+    when the exact Codex preset cannot find a native command. Custom agents
+    never use this fallback and batch files remain unsupported.
+
+    Parameters
+    ----------
+    command : tuple[str, ...]
+        Validated executable name and literal agent arguments.
+
+    Returns
+    -------
+    str | None
+        Executable path, or None when no matching installation is available.
+
+    """
+    executable = shutil.which(command[0])
+    if command != agent_command(LocalAgent.CODEX) or sys.platform != "win32":
+        return executable
+    if executable and Path(executable).suffix.lower() not in {".bat", ".cmd"}:
+        return executable
+    native = shutil.which("codex.exe")
+    if native and Path(native).suffix.lower() == ".exe":
+        return native
+    local_data = os.environ.get("LOCALAPPDATA")
+    if local_data:
+        directory = Path(local_data) / "OpenAI" / "Codex" / "bin"
+        candidates = [path for path in directory.glob("*/codex.exe") if path.is_file()]
+        if candidates:
+            return str(max(candidates, key=lambda path: path.stat().st_mtime).resolve())
+    return executable
 
 
 def _stop_process(process: subprocess.Popen[bytes]):
@@ -232,7 +269,7 @@ def request_agent_suggestion(
         raise ValueError("The agent timeout must be positive.")
     if cancel_event is not None and cancel_event.is_set():
         raise ValueError("The local viewer stopped the agent request.")
-    executable = shutil.which(command[0])
+    executable = _agent_executable(command)
     if executable is None:
         raise ValueError("Agent executable not found. Install it and sign in before retrying.")
     if Path(executable).suffix.lower() in {".cmd", ".bat"}:

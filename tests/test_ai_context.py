@@ -155,6 +155,201 @@ def test_prompt_can_exclude_related_files_and_select_unmeasured_lines():
     assert all(record["line"] != 3 for record in data["sources"][0]["measurements"])
 
 
+@pytest.mark.parametrize("response_mode", ["detailed", "quick"])
+def test_range_prompt_preserves_selected_lines_and_measurement_semantics(response_mode: str):
+    """Target an inclusive range without guessing unmeasured line costs.
+
+    Parameters
+    ----------
+    response_mode : str
+        Detailed explanation or immediate replacement-code request.
+
+    """
+    prompt = build_prompt(
+        build_context(_profile()), "main", 1, end_line=3, response_mode=response_mode
+    )
+    data = _data(prompt)
+    assert data["selection"] == {"start_line": 1, "end_line": 3}
+    assert data["sources"][0]["source_lines"] == [
+        {"line": 1, "text": "def work():"},
+        {"line": 2, "text": "    return helper()"},
+        {"line": 3, "text": "# unmeasured"},
+    ]
+    assert data["sources"][0]["measurements"][1]["wall_time_ns"] is None
+    assert {source["source_id"] for source in data["sources"]} == {"main", "helper", "caller"}
+    if response_mode == "quick":
+        assert "Return one fenced Python code block" in prompt
+        assert "at most four short lines" in prompt
+        assert "No performance gain to update." in prompt
+        assert "Do not echo unchanged code" in prompt
+        assert "Return: (1) diagnosis" not in prompt
+        assert data["goal"] == "time"
+
+
+@pytest.mark.parametrize("response_mode", ["detailed", "quick"])
+def test_disjoint_selection_preserves_exact_lines_and_surrounding_context(response_mode: str):
+    """Keep gaps as context rather than silently selecting their contents.
+
+    Parameters
+    ----------
+    response_mode : str
+        Detailed review or quick performance suggestion format.
+
+    """
+    prompt = build_prompt(
+        build_context(_profile()),
+        "main",
+        1,
+        selected_lines=[3, 1],
+        response_mode=response_mode,
+    )
+    data = _data(prompt)
+    assert data["selection"] == {"start_line": 1, "end_line": 3, "lines": [1, 3]}
+    assert [item["line"] for item in data["sources"][0]["source_lines"]] == [1, 2, 3]
+    assert "only those exact line numbers are selected" in prompt
+    assert _data(build_prompt(build_context(_profile()), "main", 3, selected_lines=[3]))[
+        "selection"
+    ] == {"start_line": 3, "end_line": 3, "lines": [3]}
+
+
+@pytest.mark.parametrize("selected_lines", [[], [0], [4], [True], [1, "3"], "1,3", [2, 3]])
+def test_disjoint_selection_rejects_invalid_or_mismatched_lines(selected_lines: object):
+    """Validate every requested line against the exact captured snapshot.
+
+    Parameters
+    ----------
+    selected_lines : object
+        Invalid line values or a selection missing its declared first line.
+
+    """
+    with pytest.raises(ValueError, match=r"[Ss]elect"):
+        build_prompt(build_context(_profile()), "main", 1, selected_lines=selected_lines)
+
+
+def test_disjoint_selection_rejects_mismatched_end_and_spark_scope():
+    """Reject conflicting bounds and line selections attached to Spark.
+
+    Keep request validation independent from the browser's gesture handling.
+
+    """
+    context = build_context(_profile())
+    with pytest.raises(ValueError, match="range bounds"):
+        build_prompt(context, "main", 1, end_line=2, selected_lines=[1, 3])
+    with pytest.raises(ValueError, match="source lines"):
+        build_prompt(context, scope="spark", selected_lines=[1])
+
+
+def test_disjoint_selection_retains_distant_lines_before_filling_context():
+    """Preserve both selected endpoints when intervening code is too large.
+
+    Keep omission flags honest while retaining complete selected source.
+
+    """
+    profile = _profile()
+    profile.sources["main"] = replace(profile.sources["main"], source="value = 1\n" * 3000)
+    data = _data(
+        build_prompt(
+            build_context(profile), "main", 1, selected_lines=[1, 3000], response_mode="quick"
+        )
+    )
+    assert data["selection"] == {"start_line": 1, "end_line": 3000, "lines": [1, 3000]}
+    source = data["sources"][0]
+    assert source["source_omitted"] is True
+    assert source["source_lines"][0] == {"line": 1, "text": "value = 1"}
+    assert source["source_lines"][-1] == {"line": 3000, "text": "value = 1"}
+
+
+def test_quick_review_shares_evidence_and_constraints_with_detailed_review():
+    """Preserve the full review context while allowing a small surrounding edit.
+
+    Compare the actual prompt payloads so quick mode retains callers,
+    definitions, unknown measurements, and user constraints independently of
+    its shorter response format.
+
+    """
+    profile = _profile()
+    profile.root_run.spark_executions = [
+        SparkExecution(
+            "action",
+            location=SourceLocation("main", 2),
+            executed_plan="Final AQE plan",
+            operators=[SparkOperator("scan", "Scan", metrics={"rows": 200})],
+        )
+    ]
+    context = build_context(profile)
+    options = {"goal": "time", "problem": "Preserve order and exception behavior", "end_line": 2}
+    detailed = build_prompt(context, "main", 2, **options)
+    quick = build_prompt(context, "main", 2, response_mode="quick", **options)
+
+    assert _data(quick) == _data(detailed)
+    assert _data(quick)["problem"] == options["problem"]
+    assert _data(quick)["spark_executions"][0]["executed_plan"] == "Final AQE plan"
+    assert [item["source_id"] for item in _data(quick)["sources"]] == ["main", "helper", "caller"]
+    common = detailed[: detailed.index("Return: (1) diagnosis")]
+    assert quick.startswith(common)
+    assert "not a strict replacement boundary" in quick
+    assert "smallest surrounding code block" in quick
+    assert "including required imports" in quick
+    assert "samples are observations, not hits" in quick
+    assert "Spark executor_time_ns is cumulative task work" in quick
+    assert "Do not force Spark actions" in quick
+
+
+def test_quick_review_preserves_related_source_exclusion_and_performance_priority():
+    """Honor source disclosure and workload constraints in immediate reviews.
+
+    A quick suggestion prioritizes performance even if a detailed review was
+    configured for memory, without re-enabling excluded project files.
+
+    """
+    prompt = build_prompt(
+        build_context(_profile()),
+        "main",
+        2,
+        goal="memory",
+        problem="Keep the public API unchanged",
+        include_related=False,
+        response_mode="quick",
+    )
+    data = _data(prompt)
+    assert data["goal"] == "time"
+    assert data["problem"] == "Keep the public API unchanged"
+    assert [item["source_id"] for item in data["sources"]] == ["main"]
+
+
+@pytest.mark.parametrize("end_line", [0, 1, 4, True, "3", 2.5])
+def test_range_prompt_rejects_invalid_or_cross_snapshot_bounds(end_line: object):
+    """Reject a range that does not fit the exact captured snapshot.
+
+    Parameters
+    ----------
+    end_line : object
+        Invalid end position for a range beginning on line two.
+
+    """
+    with pytest.raises(ValueError, match="valid range"):
+        build_prompt(build_context(_profile()), "main", 2, end_line=end_line)
+
+
+def test_quick_prompt_targets_single_lines_and_refuses_truncated_replacements():
+    """Keep code replacements complete and preserve single-line targeting.
+
+    A huge selection must not silently produce replacement code for only
+    the retained fragment of a source snapshot.
+
+    """
+    profile = _profile()
+    prompt = build_prompt(build_context(profile), "main", 2, response_mode="quick")
+    assert _data(prompt)["selection"] == {"start_line": 2, "end_line": 2}
+    profile.sources["main"] = replace(profile.sources["main"], source="value = 1\n" * 3000)
+    with pytest.raises(ValueError, match="Select fewer lines"):
+        build_prompt(build_context(profile), "main", 1, end_line=3000)
+    with pytest.raises(ValueError, match="source lines"):
+        build_prompt(build_context(profile), scope="spark", response_mode="quick")
+    with pytest.raises(ValueError, match="not a valid _ResponseMode"):
+        build_prompt(build_context(profile), "main", 1, response_mode="unknown")
+
+
 def test_prompt_does_not_guess_links_to_unknown_or_ambiguous_definitions():
     """Ignore destinations without captured source and leave unlinked files out.
 

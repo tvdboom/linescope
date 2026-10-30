@@ -8,20 +8,45 @@
       <label for="ai-endpoint">Endpoint</label><input id="ai-endpoint" type="url" maxlength="2000" placeholder="Full URL supplied by your provider" spellcheck="false">
     </div>
     <label for="ai-key">Credential</label><input id="ai-key" type="password" autocomplete="off" spellcheck="false" placeholder="API key">
-    <label for="ai-model">Model</label><div class="ai-model-control"><select id="ai-model" aria-describedby="ai-model-status" disabled><option value="">Choose a provider first</option></select><button type="button" id="ai-model-refresh" class="ai-icon-button" aria-label="Refresh models" title="Refresh models"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.6-1L20 12M4 12l2.3 6A7 7 0 0 0 17.9 17"/></svg></button></div>
+    <label for="ai-model">Model</label><div class="ai-model-control" aria-busy="false"><select id="ai-model" aria-describedby="ai-model-status" disabled><option value="">Choose a provider first</option></select><button type="button" id="ai-model-refresh" class="ai-icon-button" aria-label="Refresh models" aria-busy="false" title="Refresh models"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.6-1L20 12M4 12l2.3 6A7 7 0 0 0 17.9 17"/></svg></button></div>
     <p id="ai-model-status" class="ai-field-help muted" role="status" aria-live="polite"></p>
     <p id="ai-settings-status" class="ai-status" role="status" aria-live="polite"></p>
     <div class="ai-actions"><button type="submit" class="ai-primary">Save settings</button><button type="button" data-ai-close="ai-settings">Cancel</button></div>
   </form>
 </dialog>
+<dialog id="ai-quick" class="ai-dialog ai-suggestion-dialog ai-quick-dialog" aria-label="Quick AI suggestion">
+  <button type="button" class="ai-close ai-icon-button" data-ai-close="ai-quick" aria-label="Close quick suggestion" title="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+  <p id="ai-quick-status" class="ai-status" role="status" aria-live="polite"></p>
+  <button type="button" id="ai-quick-retry" hidden>Retry</button>
+  <pre id="ai-quick-answer" tabindex="0" aria-label="Replacement code" hidden></pre>
+  <p id="ai-quick-explanation" tabindex="0" hidden></p>
+</dialog>
+<div id="ai-selection" class="ai-selection-toolbar" role="toolbar" aria-label="AI actions for selected lines" hidden>
+  <span id="ai-selection-label" role="status" aria-live="polite" aria-atomic="true"></span>
+  <button type="button" id="ai-selection-review" data-ai-selection="true" aria-label="Ask AI to improve selected lines" title="Ask AI to improve selected lines">__AI_REVIEW_ICON__</button>
+  <button type="button" id="ai-selection-quick" data-ai-selection="true" data-ai-quick="true" aria-label="Quick AI code suggestion for selected lines" title="Quick AI code suggestion">__AI_QUICK_ICON__</button>
+  <button type="button" id="ai-selection-clear" aria-label="Clear line selection" title="Clear selection (Esc)"><svg class="ai-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+</div>
 <dialog id="ai-suggestion" class="ai-dialog ai-suggestion-dialog" aria-labelledby="ai-suggestion-title">
-  <div class="ai-dialog-heading"><h2 id="ai-suggestion-title">Improve this line</h2><button type="button" class="ai-close ai-icon-button" data-ai-close="ai-suggestion" aria-label="Close suggestion" title="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
+  <div class="ai-dialog-heading"><h2 id="ai-suggestion-title">AI Suggestion</h2><button type="button" class="ai-close ai-icon-button" data-ai-close="ai-suggestion" aria-label="Close suggestion" title="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
   <p id="ai-target" class="ai-target"></p>
-  <label for="ai-goal">Optimization goal</label><select id="ai-goal"><option value="both">Performance and memory</option><option value="time">Performance</option><option value="memory">Memory usage</option></select>
+  <fieldset id="ai-goal" class="ai-goal">
+    <legend>Optimization goal</legend>
+    <div class="ai-goal-control">
+      <label class="ai-goal-option"><input type="radio" name="ai-goal" value="time" checked><span>Performance</span></label>
+      <label class="ai-goal-option"><input type="radio" name="ai-goal" value="memory"><span>Memory</span></label>
+      <label class="ai-goal-option"><input type="radio" name="ai-goal" value="both"><span>Both</span></label>
+    </div>
+  </fieldset>
   <label for="ai-problem">Problem and constraints</label><textarea id="ai-problem" rows="3" maxlength="4000" placeholder="Describe the workload, what feels slow, memory limits, and behavior to preserve."></textarea>
   <label class="ai-check"><input id="ai-related" type="checkbox" checked> Include relevant captured project files</label>
-  <details id="ai-preview-details"><summary>Context sent to the AI</summary><p class="ai-field-help muted">Captured source and measured costs are included below. Remove anything you do not want to share before generating.</p><label for="ai-prompt">Request preview</label><textarea id="ai-prompt" rows="12" spellcheck="false"></textarea></details>
+  <details id="ai-preview-details" aria-busy="false">
+    <summary aria-label="Context sent" aria-disabled="true"><span id="ai-preview-label" role="status" aria-live="polite" aria-atomic="true">Context sent</span><span id="ai-preview-spinner" aria-hidden="true" hidden></span></summary>
+    <div class="ai-preview-content">
+      <textarea id="ai-prompt" rows="16" spellcheck="false" aria-label="Context sent"></textarea>
+    </div>
+  </details>
   <p id="ai-suggestion-status" class="ai-status" role="status" aria-live="polite"></p>
-  <div class="ai-actions"><button type="button" id="ai-refresh">Update context</button><button type="button" id="ai-generate" class="ai-primary" disabled>Generate suggestion</button><button type="button" id="ai-cancel" hidden>Cancel request</button></div>
+  <div class="ai-actions"><button type="button" id="ai-generate" class="ai-primary" disabled>Generate suggestion</button><button type="button" id="ai-cancel" hidden>Cancel request</button></div>
   <section id="ai-answer-section" hidden aria-labelledby="ai-answer-title"><h3 id="ai-answer-title">Suggested improvement</h3><p class="ai-field-help muted">Review the proposal and rerun profiling to verify its effect.</p><pre id="ai-answer" tabindex="0"></pre></section>
 </dialog>

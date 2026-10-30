@@ -1802,8 +1802,26 @@ def _ai_icon() -> str:
     )
 
 
+def _ai_quick_icon() -> str:
+    """Draw a lightning mark for an immediate code suggestion.
+
+    Returns
+    -------
+    str
+        Decorative SVG whose accessible name belongs to its button.
+
+    """
+    return (
+        '<svg class="ai-icon" viewBox="0 0 24 24" width="20" height="20"'
+        ' fill="none" stroke="currentColor" stroke-width="1.7"'
+        ' stroke-linecap="round" stroke-linejoin="round"'
+        ' aria-hidden="true" focusable="false">'
+        '<path d="m13 2-9 12h7l-1 8 10-13h-8Z"/></svg>'
+    )
+
+
 def _ai_button(unit: SourceUnit, line: int) -> str:
-    """Attach a suggestion action to an exact captured source line.
+    """Attach detailed and quick actions to an exact captured source line.
 
     Keep the button text empty so table text and source copies retain only
     the captured code. The shared icon supplies its visual mark and its
@@ -1825,11 +1843,16 @@ def _ai_button(unit: SourceUnit, line: int) -> str:
     """
     label = f"{_source_name(unit)}:{line}"
     return (
-        '<button type="button" class="ai-line-button"'
+        '<button type="button" class="ai-line-button ai-source-action"'
         f' data-ai-source="{_key("source", unit.id)}" data-ai-line="{line}"'
         f' data-ai-label="{escape(label, quote=True)}"'
         f' aria-label="Ask AI to improve {escape(label, quote=True)}"'
         f' title="Ask AI to improve this line">{_ai_icon()}</button>'
+        '<button type="button" class="ai-quick-button ai-source-action" data-ai-quick="true"'
+        f' data-ai-source="{_key("source", unit.id)}" data-ai-line="{line}"'
+        f' data-ai-label="{escape(label, quote=True)}"'
+        f' aria-label="Quick AI code for {escape(label, quote=True)}"'
+        f' title="Quick AI code suggestion">{_ai_quick_icon()}</button>'
     )
 
 
@@ -2019,7 +2042,8 @@ def _source_page(
             f' data-heat-time="{intensity:.5f}" data-heat-memory="{memory_intensity:.5f}"'
             f"{_sort_values(values)}>"
             f'<td class="line-number"><a href="#{anchor}-L{number}" aria-label="Line'
-            f' {number}">{number}</a></td>'
+            f' {number}" title="Shift-click another line number to select a range">'
+            f"{number}</a></td>"
             f'<td class="metric">{_time(duration)}</td>{sample_cell}'
             f"{hit_cells}{memory_cells}{gpu_cells}{context_cell}<td"
             f' class="source-code"><code>{_code(text, spans[unit.id].get(number, []), stats)}'
@@ -3249,9 +3273,12 @@ def render_html(result: ProfileResult, *, root: str | Path | None = None) -> str
     javascript = files("linescope.render").joinpath("assets/app.js").read_text(encoding="utf-8")
     ai_javascript = "\n".join(
         files("linescope.render").joinpath(f"assets/{name}").read_text(encoding="utf-8")
-        for name in ("ai-context.js", "ai-transport.js", "ai.js")
+        for name in ("ai-context.js", "ai-transport.js", "ai-selection.js", "ai.js")
     )
     ai_dialogs = files("linescope.render").joinpath("assets/ai.html").read_text(encoding="utf-8")
+    ai_dialogs = ai_dialogs.replace("__AI_REVIEW_ICON__", _ai_icon()).replace(
+        "__AI_QUICK_ICON__", _ai_quick_icon()
+    )
     ai_catalog = escape(json.dumps(browser_connections(), separators=(",", ":")), quote=True)
     ai_payload = build_context(result)
     ai_payload["source_anchors"] = {

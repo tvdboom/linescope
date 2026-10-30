@@ -51,8 +51,9 @@
     return result;
   }
 
-  function related(context, sourceId, line) {
-    const [start, end] = span(context, sourceId, line);
+  function related(context, sourceId, line, endLine = line) {
+    const [start, functionEnd] = span(context, sourceId, line);
+    const end = Math.max(functionEnd, endLine);
     const result = new Map();
     const notebookSources = new Map(context.runs.map(run => [run.id, run.source_id]));
     const records = context.runs.flatMap(run => run.lines);
@@ -82,9 +83,12 @@
       && own(context.sources, identity) && anchor >= 1 && anchor <= sourceLines(context.sources[identity].source).length);
   }
 
-  function excerpt(source, line, budget) {
+  function excerpt(source, line, budget, endLine = line, selectedLines = null) {
     const lines = sourceLines(source);
-    const indices = lines.map((_, index) => index).sort((a, b) => Math.abs(a + 1 - line) - Math.abs(b + 1 - line));
+    const focus = new Set(selectedLines || []);
+    const distance = index => Math.max(line - index - 1, index + 1 - endLine, 0);
+    const indices = lines.map((_, index) => index).sort((a, b) =>
+      Number(focus.size > 0 && !focus.has(a + 1)) - Number(focus.size > 0 && !focus.has(b + 1)) || distance(a) - distance(b));
     const selected = [];
     let used = 0;
     let clipped = false;
@@ -118,9 +122,9 @@
     return result;
   }
 
-  function sourceContext(context, sourceId, line, reason, budget) {
+  function sourceContext(context, sourceId, line, reason, budget, endLine = line, selectedLines = null) {
     const unit = context.sources[sourceId];
-    const [lines, omitted] = excerpt(unit.source, line, Math.floor(budget / 2));
+    const [lines, omitted] = excerpt(unit.source, line, Math.floor(budget / 2), endLine, selectedLines);
     const numbers = new Set(lines.map(item => item.line));
     const data = {
       source_id: clip(sourceId, 1000),
@@ -136,7 +140,10 @@
     };
     const records = context.runs.flatMap(run => run.lines
       .filter(record => record.location.source_id === sourceId).map(record => [record, run]));
-    records.sort((a, b) => Math.abs(a[0].location.line - line) - Math.abs(b[0].location.line - line));
+    const focus = new Set(selectedLines || []);
+    records.sort((a, b) => Number(focus.size > 0 && !focus.has(a[0].location.line))
+      - Number(focus.size > 0 && !focus.has(b[0].location.line))
+      || Math.abs(a[0].location.line - line) - Math.abs(b[0].location.line - line));
     let used = length(serialize(data));
     for (const [record, run] of records) {
       const measurement = metrics(record, run);
@@ -166,11 +173,9 @@
     + 'Fused pipeline timings cover multiple operators and must not be added to child costs. '
     + 'Rows and stage counters describe captured results; '
     + 'actual result datasets are not captured.\n'
-    + 'Return: (1) diagnosis citing file names, lines, and measurements; '
-    + '(2) a minimal proposed patch or replacement code; (3) time/memory tradeoffs '
-    + 'and correctness risks; (4) focused correctness tests and a repeatable profiling '
-    + 'plan to verify the change. Never invent benchmark results or promise a speedup. '
-    + 'Request missing context where necessary. Suggestions are not executed.\n\n'
+    + 'Follow the supplied optimization goal and workload constraints. '
+    + 'Never invent benchmark results or promise a speedup. '
+    + 'Suggestions are not executed.\n\n'
     + 'Measurement semantics: all *_ns values are nanoseconds, all *_bytes values '
     + 'are bytes. null or an absent measurement means unavailable, not zero. '
     + 'hits are exact traced executions; samples are observations, not hits. '
@@ -211,13 +216,43 @@
     if (!options || typeof options !== 'object' || Array.isArray(options)) {
       throw new Error('Use valid AI request options.');
     }
-    const goal = options.goal === undefined ? 'both' : options.goal;
+    let goal = options.goal === undefined ? 'both' : options.goal;
     const problem = options.problem === undefined ? '' : options.problem;
     const includeRelated = options.include_related === undefined ? true : options.include_related;
     const scope = options.scope === undefined ? 'line' : options.scope;
+    let endLine = options.end_line == null ? line : options.end_line;
+    let selectedLines = options.selected_lines;
+    const responseMode = options.response_mode === undefined ? 'detailed' : options.response_mode;
+    const quick = responseMode === 'quick';
+    const requestInstructions = instructions
+      + 'When selection.lines is present, only those exact line numbers are selected; '
+      + 'intervening lines are surrounding context, not additional selection.\n\n' + (quick
+      ? 'Give a compact optimization suggestion using the same captured source, '
+        + 'resolved callers and definitions, measurements, and constraints as a detailed '
+        + 'review. The selected line or range is the optimization focus, not a strict '
+        + 'replacement boundary. You may adjust the smallest surrounding code block '
+        + 'needed for a useful improvement, including required imports. Use only '
+        + 'complete captured source and preserve indentation.\n'
+        + 'Return one fenced Python code block containing the proposed change, '
+        + 'which may be one line or several lines, followed by a brief explanation '
+        + 'of at most four short lines. Explain why it may help and identify any '
+        + 'nearby lines or imports that also need changing. Do not include a preamble, '
+        + 'headings, tests, a long diagnosis, or questions.\n'
+        + 'If no safe performance improvement is supported by the captured context, '
+        + 'or the best suggestion is the existing code unchanged, return exactly: '
+        + 'No performance gain to update. Do not echo unchanged code or invent '
+        + 'a change merely to produce a suggestion.\n\n'
+      : 'Return: (1) diagnosis citing file names, lines, and measurements; '
+        + '(2) a minimal proposed patch or replacement code; (3) time/memory tradeoffs '
+        + 'and correctness risks; (4) focused correctness tests and a repeatable '
+        + 'profiling plan to verify the change. Request missing context where '
+        + 'necessary.\n\n');
     let executionId = options.execution_id === undefined ? null : options.execution_id;
     if (!['both', 'time', 'memory'].includes(goal)) throw new Error('Choose performance, memory, or both.');
+    if (quick) goal = 'time';
     if (!['line', 'spark'].includes(scope)) throw new Error('Select a valid AI review scope.');
+    if (!['detailed', 'quick'].includes(responseMode)) throw new Error('Select a valid response mode.');
+    if (scope !== 'line' && (options.end_line != null || selectedLines != null || quick)) throw new Error('Select source lines for a code replacement.');
     if (!context || context.version !== 1) throw new Error('This report uses an unsupported AI context version.');
     if (context.spark_anchors && own(context.spark_anchors, executionId)) executionId = context.spark_anchors[executionId];
     if (!context.sources || !Array.isArray(context.runs)) {
@@ -228,6 +263,21 @@
       if (typeof sourceId !== 'string' || !own(context.sources, sourceId)) throw new Error('Select a source captured in this report.');
       if (!Number.isInteger(line) || line < 1 || line > sourceLines(context.sources[sourceId].source).length) {
         throw new Error('Select a valid one-based line in the captured source.');
+      }
+      if (selectedLines != null) {
+        const count = sourceLines(context.sources[sourceId].source).length;
+        if (!Array.isArray(selectedLines) || !selectedLines.length || selectedLines.length > count
+          || selectedLines.some(number => !Number.isInteger(number) || number < 1 || number > count)) {
+          throw new Error('Select valid lines within one captured source.');
+        }
+        selectedLines = Array.from(new Set(selectedLines)).sort((a, b) => a - b);
+        if (selectedLines[0] !== line || options.end_line != null && selectedLines[selectedLines.length - 1] !== endLine) {
+          throw new Error('Selected lines must match the source range bounds.');
+        }
+        if (options.end_line == null) endLine = selectedLines[selectedLines.length - 1];
+      }
+      if (!Number.isInteger(endLine) || endLine < line || endLine > sourceLines(context.sources[sourceId].source).length) {
+        throw new Error('Select a valid range within one captured source.');
       }
       if (executionId !== null) throw new Error('Select Spark scope to review a captured action.');
     } else if (executionId !== null && typeof executionId !== 'string') {
@@ -245,8 +295,16 @@
     let selected = [];
     let anchors = [];
     if (scope === 'line') {
-      selected = [sourceContext(context, sourceId, line, 'selected line', 34000)];
-      anchors = includeRelated ? related(context, sourceId, line) : [];
+      selected = [sourceContext(context, sourceId, line, 'selected line', 34000, endLine, selectedLines)];
+      if (options.end_line != null || selectedLines != null || quick) {
+        const captured = new Map(selected[0].source_lines.map(item => [item.line, item.text]));
+        const original = sourceLines(context.sources[sourceId].source);
+        const focus = selectedLines || Array.from({ length: endLine - line + 1 }, (_, index) => line + index);
+        for (const number of focus) {
+          if (captured.get(number) !== original[number - 1]) throw new Error('Select fewer lines to include the complete replacement range.');
+        }
+      }
+      anchors = includeRelated ? related(context, sourceId, line, endLine) : [];
     } else if (includeRelated) {
       const triggers = new Map();
       for (const [, execution] of actions) {
@@ -271,7 +329,11 @@
       spark_executions: [],
       spark_executions_omitted: false,
     };
-    let used = length(instructions) + length(serialize(data));
+    if (scope === 'line' && (options.end_line != null || selectedLines != null || quick)) {
+      data.selection = { start_line: line, end_line: endLine };
+      if (selectedLines != null) data.selection.lines = selectedLines;
+    }
+    let used = length(requestInstructions) + length(serialize(data));
     const included = new Set(scope === 'line' ? [sourceId] : []);
     for (const [identity, [anchor, reason]] of anchors) {
       const source = sourceContext(context, identity, anchor, reason, 8000);
@@ -286,11 +348,11 @@
     }
     if (scope === 'line') {
       const linked = new Set(context.runs.flatMap(run => run.lines
-        .filter(record => record.location.source_id === sourceId && record.location.line === line)
+        .filter(record => record.location.source_id === sourceId && line <= record.location.line && record.location.line <= endLine)
         .flatMap(record => record.spark_executions)));
       actions = actions.filter(([, execution]) => linked.has(execution.id)
         || (execution.location && included.has(execution.location.source_id)));
-      const selectedAction = execution => execution.location?.source_id === sourceId && execution.location?.line === line;
+      const selectedAction = execution => execution.location?.source_id === sourceId && line <= execution.location.line && execution.location.line <= endLine;
       actions.sort((a, b) => Number(!selectedAction(a[1])) - Number(!selectedAction(b[1])));
     }
     for (const [index, [run, execution]] of actions.entries()) {
@@ -317,9 +379,47 @@
       data.spark_executions.push(retained);
       used += length(serialize(retained)) + 2;
     }
-    return instructions + serialize(data);
+    return requestInstructions + serialize(data);
+  }
+
+  function normalizeCode(value) {
+    const lines = sourceLines(value).map(line => line.trimEnd());
+    while (lines.length && !lines[0].trim()) lines.shift();
+    while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+    const indentation = lines.reduce((minimum, line) => line.trim()
+      ? Math.min(minimum, line.match(/^[ \t]*/)[0].length) : minimum, Infinity);
+    return lines.map(line => line.slice(indentation)).join('\n');
+  }
+
+  function formatQuickSuggestion(suggestion, source, line, endLine = line) {
+    const text = suggestion.trim();
+    const noGain = 'No performance gain to update.';
+    if (/^no (?:clear |safe |meaningful |measurable )?performance (?:gain|improvement)\b/i.test(text)
+      || /^(?:no changes?(?: needed| required| recommended)?|(?:do not|don't) change (?:anything|the code)|(?:keep|leave) (?:it|the code) unchanged)[.!]?$/i.test(text)) {
+      return { code: '', explanation: noGain };
+    }
+    const fenced = text.match(/(?:^|\n)```(?:python|py)?[ \t]*\r?\n([\s\S]*?)\r?\n```[ \t]*(?=\r?\n|$)/i);
+    const code = fenced ? fenced[1] : text;
+    const explanation = fenced
+      ? (text.slice(0, fenced.index) + text.slice(fenced.index + fenced[0].length)).trim()
+      : '';
+    const normalized = normalizeCode(code);
+    const count = sourceLines(normalized).length;
+    const original = sourceLines(source);
+    // A model can echo a larger surrounding block instead of just the clicked
+    // line. Only compare blocks covering the selection in this exact snapshot.
+    for (let start = Math.max(0, line - count); start <= Math.min(line - 1, original.length - count); start += 1) {
+      if (start + count >= endLine && normalized === normalizeCode(original.slice(start, start + count).join('\n'))) {
+        return { code: '', explanation: noGain };
+      }
+    }
+    return {
+      code,
+      explanation: explanation.split(/\r?\n/).map(line => line.trim()).filter(Boolean).slice(0, 4).join('\n'),
+    };
   }
 
   window.LineScopeAI = window.LineScopeAI || {};
   window.LineScopeAI.buildPrompt = buildPrompt;
+  window.LineScopeAI.formatQuickSuggestion = formatQuickSuggestion;
 })();

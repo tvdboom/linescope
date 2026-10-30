@@ -6,6 +6,7 @@ Description: Verify optional line actions and inert AI report context.
 """
 
 import json
+import re
 
 import pytest
 
@@ -204,11 +205,126 @@ def test_ai_connection_fields_are_shared_by_agents_and_model_apis():
     assert "You choose when to send" not in connection.text()
 
 
+def test_suggestion_context_is_collapsed_with_an_editable_preview_inside():
+    """Keep the context review within a single closed disclosure.
+
+    The primary action follows the disclosure without a manual refresh step.
+    Keep the request editable and its update behavior accessible to readers.
+
+    """
+    document = ReportDOM(render_html(_profile())).root
+    dialog = document.find_all("dialog", id="ai-suggestion")[0]
+    details = dialog.find_all("details", id="ai-preview-details")[0]
+    assert "open" not in details.attributes
+    assert details.attributes["aria-busy"] == "false"
+    summary = details.find_all("summary")[0]
+    assert summary.text() == "Context sent"
+    assert summary.attributes["aria-label"] == "Context sent"
+    assert summary.attributes["aria-disabled"] == "true"
+    label = summary.find_all("span", id="ai-preview-label")[0]
+    assert label.attributes["role"] == "status"
+    assert label.attributes["aria-live"] == "polite"
+    spinner = summary.find_all("span", id="ai-preview-spinner")[0]
+    assert "hidden" in spinner.attributes
+    assert spinner.attributes["aria-hidden"] == "true"
+    content = details.find_all("div", css="ai-preview-content")[0]
+    preview = content.find_all("textarea", id="ai-prompt")[0]
+    assert "readonly" not in preview.attributes
+    assert int(preview.attributes["rows"]) >= 16
+    assert preview.attributes["aria-label"] == "Context sent"
+    assert not content.find_all("label")
+    assert not content.find_all("p")
+    assert not dialog.find_all(id="ai-refresh")
+    actions = dialog.find_all("div", css="ai-actions")[0]
+    assert actions.find_all("button")[0].attributes["id"] == "ai-generate"
+    assert not details.find_all("button", id="ai-generate")
+    assert not dialog.find_all("p", id="ai-suggestion-status")[0].text()
+    assert "Context ready." not in document.text()
+    assert "Update context before generating" not in document.text()
+    assert "Preparing captured context…" not in document.text()
+
+
+def test_optimization_goal_uses_exclusive_segments_with_performance_selected():
+    """Offer three keyboard-accessible goals with a performance default.
+
+    Native radio semantics keep exactly one segment selected and support
+    arrow-key navigation without extra application state.
+
+    """
+    document = ReportDOM(render_html(_profile())).root
+    dialog = document.find_all("dialog", id="ai-suggestion")[0]
+    goals = dialog.find_all("fieldset", id="ai-goal")[0]
+    assert goals.find_all("legend")[0].text() == "Optimization goal"
+    assert not dialog.find_all("select", id="ai-goal")
+    segments = goals.find_all("label", css="ai-goal-option")
+    assert [segment.text() for segment in segments] == ["Performance", "Memory", "Both"]
+    inputs = goals.find_all("input", type="radio")
+    assert [item.attributes["value"] for item in inputs] == ["time", "memory", "both"]
+    assert {item.attributes["name"] for item in inputs} == {"ai-goal"}
+    assert [item.attributes["value"] for item in inputs if "checked" in item.attributes] == [
+        "time"
+    ]
+
+
+def test_quick_actions_share_exact_targets_without_options_or_copyable_text():
+    """Offer immediate code beside each detailed source action.
+
+    Quick actions use the same opaque snapshot identities. Their result
+    dialog contains no goal, constraints, or context confirmation controls.
+
+    """
+    document = ReportDOM(render_html(_profile())).root
+    detailed = document.find_all("button", css="ai-line-button")
+    quick = document.find_all("button", css="ai-quick-button")
+    assert len(quick) == len(detailed)
+    for review, immediate in zip(detailed, quick, strict=True):
+        assert immediate.text() == ""
+        assert immediate.attributes["data-ai-quick"] == "true"
+        for attribute in ("data-ai-source", "data-ai-line", "data-ai-label"):
+            assert immediate.attributes[attribute] == review.attributes[attribute]
+        assert immediate.attributes["aria-label"].startswith("Quick AI code for ")
+    dialog = document.find_all("dialog", id="ai-quick")[0]
+    assert not dialog.find_all("input")
+    assert not dialog.find_all("select")
+    assert not dialog.find_all("textarea")
+    assert not dialog.find_all("details")
+    assert "hidden" in dialog.find_all("pre", id="ai-quick-answer")[0].attributes
+    explanation = dialog.find_all("p", id="ai-quick-explanation")[0]
+    assert "hidden" in explanation.attributes
+    assert explanation.attributes["tabindex"] == "0"
+    toolbar = document.find_all("div", id="ai-selection")[0]
+    assert toolbar.attributes["role"] == "toolbar"
+    assert "hidden" in toolbar.attributes
+    assert (
+        toolbar.find_all("button", id="ai-selection-quick")[0].attributes["data-ai-quick"]
+        == "true"
+    )
+    actions = toolbar.find_all("button")
+    assert [button.attributes["id"] for button in actions] == [
+        "ai-selection-review",
+        "ai-selection-quick",
+        "ai-selection-clear",
+    ]
+    for button in actions:
+        assert button.text() == ""
+        assert button.attributes["aria-label"]
+        assert button.attributes["title"]
+        assert button.find_all("svg", css="ai-icon")
+    for selection_action, row_action in zip(actions[:2], (detailed[0], quick[0]), strict=True):
+        assert [path.attributes for path in selection_action.find_all("path")] == [
+            path.attributes for path in row_action.find_all("path")
+        ]
+    label = toolbar.find_all("span", id="ai-selection-label")[0]
+    assert label.attributes["role"] == "status"
+    assert label.attributes["aria-live"] == "polite"
+
+
 def test_header_and_source_actions_share_an_accessible_icon_without_text():
     """Use the same decorative mark without polluting source or table text.
 
-    The settings button opens a dialog; its readiness indicator is not a
-    toggle. Row actions retain their precise accessible source labels.
+    The settings button opens a dialog and uses color for readiness without
+    adding a dot over the smaller star. Row actions retain their precise
+    accessible source labels.
 
     """
     document = ReportDOM(render_html(_profile())).root
@@ -221,12 +337,18 @@ def test_header_and_source_actions_share_an_accessible_icon_without_text():
     assert header_icon.attributes["aria-hidden"] == "true"
     assert header_icon.attributes["focusable"] == "false"
     paths = [path.attributes for path in header_icon.find_all("path")]
+    assert len(paths) == 2
+    assert not header_icon.find_all("circle")
+    css = document.find_all("style")[0].text()
+    assert not re.search(r"#ai-settings-toggle[^{}]*::(?:before|after)\s*\{", css)
     for button in document.find_all("button", css="ai-line-button"):
         assert button.text() == ""
         assert button.attributes["aria-label"].startswith("Ask AI to improve ")
         icon = button.find_all("svg", css="ai-icon")[0]
         assert icon.attributes == header_icon.attributes
         assert [path.attributes for path in icon.find_all("path")] == paths
+    for icon in document.find_all("svg", css="ai-icon"):
+        assert not icon.find_all("circle")
 
 
 def test_missing_source_has_no_ai_action_in_overview():
@@ -317,8 +439,10 @@ def test_settings_offer_model_choices_and_link_to_the_setup_guide():
     assert close.text() == ""
     assert close.find_all("svg")
     model_controls = document.find_all("div", css="ai-model-control")[0]
+    assert model_controls.attributes["aria-busy"] == "false"
     assert model_controls.find_all("select")[0].attributes["id"] == "ai-model"
     refresh = model_controls.find_all("button")[0]
     assert refresh.attributes["aria-label"] == "Refresh models"
+    assert refresh.attributes["aria-busy"] == "false"
     assert refresh.text() == ""
     assert refresh.find_all("svg")

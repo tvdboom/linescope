@@ -8,6 +8,7 @@ pipeline.
 
 from __future__ import annotations
 
+from argparse import ArgumentParser
 from collections import defaultdict, deque
 import csv
 from dataclasses import dataclass
@@ -19,6 +20,7 @@ from statistics import fmean
 from time import sleep
 
 from linescope import profile
+from linescope.ai.agents import LocalAgent, agent_command
 
 
 @dataclass(frozen=True)
@@ -158,18 +160,45 @@ def analyze(grouped: dict[str, list[Reading]]) -> list[dict[str, float | str | i
     return summaries
 
 
-def main():
-    """Run main.
+def main(*, ai_agent: str | LocalAgent | None = None):
+    """Run the sensor pipeline and open its freshly generated report.
 
-    Run the pipeline and open one HTML report in a new browser tab.
+    Select an agent to save the current interface and measurements in
+    `.cache/linescope-demo.html`, then keep its local viewer running until
+    interrupted. Without an agent, open the usual standalone report.
+
+    Parameters
+    ----------
+    ai_agent : str | LocalAgent | None, default=None
+        Local agent preset using its existing CLI authentication. None opens
+        a standalone report without starting a local viewer.
 
     """
-    with profile(memory=True, root=str(Path(__file__).parent), spark=False):
+    selected_agent = LocalAgent(ai_agent) if ai_agent is not None else None
+    with profile(
+        memory=True,
+        root=str(Path(__file__).parent),
+        spark=False,
+        display="none" if selected_agent is not None else "end",
+    ) as session:
         # Cover full rolling windows and repeated outliers with per-line RAM reads.
         source = generate_csv(stations=4, minutes=120)
         readings = load_readings(source)
         analyze(group_readings(readings))
 
+    if selected_agent is not None:
+        from linescope.ai.server import serve_report
+
+        report = session.save(Path(".cache") / "linescope-demo.html")
+        serve_report(report, agent_command=agent_command(selected_agent))
+
 
 if __name__ == "__main__":
-    main()
+    parser = ArgumentParser(description="Profile the sensor demo and open a fresh report.")
+    parser.add_argument(
+        "--ai-agent",
+        type=LocalAgent,
+        choices=list(LocalAgent),
+        help="Open the fresh report in the local viewer using this agent's CLI login.",
+    )
+    main(ai_agent=parser.parse_args().ai_agent)

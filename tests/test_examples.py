@@ -6,6 +6,7 @@ Description: Check runnable examples and matching notebook workloads.
 """
 
 import ast
+from functools import partial
 import json
 import os
 from pathlib import Path
@@ -20,6 +21,7 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 from linescope import Session
+from linescope.ai.agents import agent_command
 from linescope.enums import SessionState
 from linescope.source import build_navigation
 
@@ -80,6 +82,7 @@ def test_examples_save_reports_with_trace_and_controlled_memory(
     script_path = _copy_example_project(tmp_path, script, report)
     launcher = (
         "import pathlib, runpy, sys, webbrowser\n"
+        "script_path = sys.argv[1]\n"
         "import linescope.memory as memory_module\n"
         "class DemoMemoryCollector:\n"
         "    def __init__(self, *args): pass\n"
@@ -90,9 +93,10 @@ def test_examples_save_reports_with_trace_and_controlled_memory(
         "    def allocations(self): return {}, []\n"
         "    def snapshot(self): return {}, [], [], False\n"
         "memory_module.ProcessMemoryCollector = DemoMemoryCollector\n"
-        "sys.path.insert(0, str(pathlib.Path(sys.argv[1]).parent))\n"
+        "sys.path.insert(0, str(pathlib.Path(script_path).parent))\n"
         "webbrowser.open = lambda *args, **kwargs: True\n"
-        "runpy.run_path(sys.argv[1], run_name='__main__')\n"
+        "sys.argv = [script_path]\n"
+        "runpy.run_path(script_path, run_name='__main__')\n"
         "assert 'linescope.backends.scalene' not in sys.modules\n"
     )
     completed = subprocess.run(
@@ -207,6 +211,60 @@ print(json.dumps({{
             "rolling_fast",
             "analyze",
         } <= set(result["timed_functions"])
+
+
+def test_script_demo_regenerates_report_before_serving_codex(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """Replace a stale demo with the current interface before serving it.
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        Restore the working directory, trace factory, and viewer substitution.
+
+    tmp_path : Path
+        Isolated project cache containing an older report to replace.
+
+    """
+    demo = runpy.run_path(str(REPO_ROOT / "examples/script_example.py"))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setitem(
+        demo["main"].__globals__, "profile", partial(Session, backend="trace", notebooks=False)
+    )
+    report = tmp_path / ".cache" / "linescope-demo.html"
+    report.parent.mkdir()
+    report.write_text("stale-demo-interface", encoding="utf-8")
+    previous_trace = sys.gettrace()
+    previous_memory_trace = tracemalloc.is_tracing()
+    served = []
+
+    def capture(path: Path, *, agent_command: tuple[str, ...]):
+        """Check the new report after profiling resources have been released.
+
+        Parameters
+        ----------
+        path : Path
+            Newly saved report passed to the local viewer.
+
+        agent_command : tuple[str, ...]
+            Exact native agent preset chosen by the demo owner.
+
+        """
+        assert sys.gettrace() is previous_trace
+        assert tracemalloc.is_tracing() is previous_memory_trace
+        assert not any(thread.name == "linescope-ram" for thread in threading.enumerate())
+        served.append((path, agent_command))
+
+    monkeypatch.setattr("linescope.ai.server.serve_report", capture)
+    demo["main"](ai_agent="codex")
+
+    assert served == [(report, agent_command("codex"))]
+    html = report.read_text(encoding="utf-8")
+    assert "stale-demo-interface" not in html
+    assert 'id="ai-quick"' in html
+    assert 'id="ai-goal"' in html
+    assert 'id="linescope-ai-context"' in html
 
 
 def test_script_demo_restores_memory_collection_after_workload_error(monkeypatch, tmp_path):

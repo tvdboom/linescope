@@ -1,14 +1,54 @@
 # AI suggestions
 
+Use the lightning button beside a source line for a quick performance
+suggestion. It sends the same captured source, related definitions, profiling
+measurements, and workload constraints as the detailed review through your
+saved connection. Configure a provider once if none is saved.
+
+The response contains a small code change and at most four short explanation
+lines. A change may include nearby lines or required imports when a single
+line is insufficient. If no safe performance improvement is supported, or the
+suggestion repeats the current code, the popup shows **No performance gain to
+update.** Suggestions are not applied to your source.
+
+Click a source row or line number to select it. Drag across rows to select a
+block, Shift-click to extend a range, or Ctrl-click (Cmd-click on macOS) to
+toggle individual lines. Ctrl/Cmd-drag adds or removes a block. Hold Alt while
+dragging to copy source text instead. Symbol links still navigate normally.
+
+The selection toolbar uses the same icons and order as the row actions:
+sparkles for a detailed review, then lightning for a quick code suggestion.
+The close icon or Escape clears the selection. Disjoint selections retain
+their exact line numbers. A selection stays within one source snapshot;
+notebook cells and revisions remain separate.
+
 Select the AI icon beside a source line or on a Spark view. Choose a provider
 in settings and save. A model is selected automatically; the dropdown lets you
-change it.
+change it. While models load, the dropdown and refresh button are disabled,
+and the refresh arrows rotate in place.
 
-Describe your workload and constraints, review **Context sent to the AI**, then
-select **Generate suggestion**. Suggestions appear in the report and are not
-applied to your code.
+Describe your workload and constraints, then select **Generate suggestion**.
+The segmented goal control defaults to **Performance**; choose **Memory** or
+**Both** to change the priority.
+Context updates automatically as you change the goal, constraints, or included
+files. While updating, the **Context sent** control shows a spinner and
+**Updating context…** in place. The old preview is cleared and cannot be opened
+until the new context is ready. Expand **Context sent** to review or edit it
+before generating. Suggestions appear in the report and are not applied to
+your code.
 
 ## Use your Codex subscription
+
+From a source checkout, regenerate and open the bundled demo in one step:
+
+```console
+uv run python examples/script_example.py --ai-agent codex
+```
+
+This reruns the workload and replaces `.cache/linescope-demo.html` with the
+current report interface. Keep the terminal running while using suggestions.
+The `--serve` option below opens an existing HTML snapshot; it does not
+regenerate its interface after source changes.
 
 Install the [Codex CLI][codex-cli], then run on the computer serving the report:
 
@@ -21,6 +61,9 @@ linescope --serve report.html --ai-agent codex
 Sign in with the ChatGPT account that has Codex access. LineScope selects
 **Codex** automatically. Leave **Credential** blank to use that login and keep
 **Default** to use the CLI's model setting.
+
+On Windows, LineScope can also use the native CLI bundled with the ChatGPT
+desktop app when it is not on your terminal's PATH.
 
 The **OpenAI** provider uses API keys and API billing. Subscription login goes
 through **Codex** and needs the local viewer. See [Codex authentication][auth].
@@ -79,7 +122,8 @@ are collected.
 
 ## Context and privacy
 
-Review code and plans before sending them. Notebook parameters and arbitrary
+Use the detailed review to inspect code and plans before sending them.
+Notebook parameters and arbitrary
 run metadata are excluded. **Generate suggestion** sends profile context;
 loading models sends only connection settings.
 
